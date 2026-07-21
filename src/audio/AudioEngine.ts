@@ -60,14 +60,27 @@ export class AudioEngine {
   private duckUntil = 0
   private melodyLoopHandle: number | null = null
   private announceToken = 0
+  private autoResumeInstalled = false
 
   get ready() {
     return this.ctx !== null
   }
 
-  /** Must be called from a user gesture (tap-to-start) to satisfy mobile autoplay rules. */
+  /**
+   * Must be called from a user gesture (tap-to-start) to satisfy mobile
+   * autoplay rules. iOS Safari in particular often creates the AudioContext
+   * already `suspended` even from a real tap, and separately requires
+   * speechSynthesis.speak() to run at least once synchronously inside a
+   * gesture before *later* (setTimeout-scheduled) speak() calls are allowed
+   * to actually produce sound — so both get an explicit kick here, plus an
+   * ongoing safety net in case anything still ends up suspended (e.g. after
+   * the phone screen locks and the page comes back).
+   */
   unlock() {
-    if (this.ctx) return
+    if (this.ctx) {
+      this.resumeContext()
+      return
+    }
     const Ctx = window.AudioContext || (window as any).webkitAudioContext
     this.ctx = new Ctx()
     this.master = this.ctx.createGain()
@@ -88,6 +101,52 @@ export class AudioEngine {
     this.noiseBuffer = this.buildNoiseBuffer()
     this.startAmbientBed()
     this.loadVoices()
+
+    this.resumeContext()
+    this.kickSilentBuffer()
+    this.primeSpeechSynthesis()
+    this.installAutoResume()
+  }
+
+  /** Resumes the AudioContext if the platform left it (or put it back) in a suspended state. */
+  private resumeContext() {
+    if (this.ctx && this.ctx.state !== 'running') {
+      this.ctx.resume().catch(() => {})
+    }
+  }
+
+  /** The old "silent 1-sample buffer" trick — belt-and-braces alongside resume() for older iOS/Safari builds. */
+  private kickSilentBuffer() {
+    if (!this.ctx) return
+    const buffer = this.ctx.createBuffer(1, 1, this.ctx.sampleRate)
+    const source = this.ctx.createBufferSource()
+    source.buffer = buffer
+    source.connect(this.ctx.destination)
+    source.start(0)
+  }
+
+  /** Speaking one silent utterance synchronously inside the gesture unlocks later async speak() calls on iOS Safari. */
+  private primeSpeechSynthesis() {
+    if (!('speechSynthesis' in window)) return
+    try {
+      speechSynthesis.cancel()
+      const primer = new SpeechSynthesisUtterance('.')
+      primer.volume = 0
+      primer.rate = 10
+      speechSynthesis.speak(primer)
+    } catch {
+      // Speech synthesis is best-effort — a priming failure shouldn't block the rest of unlock().
+    }
+  }
+
+  /** Keeps retrying resume() on later taps/visibility changes, in case the initial unlock didn't fully take. */
+  private installAutoResume() {
+    if (this.autoResumeInstalled) return
+    this.autoResumeInstalled = true
+    const retry = () => this.resumeContext()
+    document.addEventListener('visibilitychange', retry)
+    window.addEventListener('pageshow', retry)
+    document.addEventListener('pointerdown', retry)
   }
 
   private buildNoiseBuffer(): AudioBuffer {
