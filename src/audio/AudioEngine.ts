@@ -9,10 +9,14 @@ export interface AnnounceSegment {
 }
 
 const JA_VOICE_PREFERENCE = ['Google 日本語', 'O-Ren', 'Kyoko', 'Sayaka', 'Ayumi', 'Haruka']
-// Zarvox/Trinoids/Whisper/Fred/Albert are the classic synthetic-sounding
-// system voices (macOS/eSpeak) — genuinely retro-computer timbre when
-// available; real, clear voices remain the fallback so quality never drops.
-const EN_VOICE_PREFERENCE = ['Zarvox', 'Trinoids', 'Whisper', 'Fred', 'Albert', 'Google US English', 'Samantha', 'Daniel', 'Karen']
+// A natural, clear masculine voice for English — the retro chiptune fanfare
+// and chime already carry the "80s videogame" flavor, so the voice itself
+// should just read well (a robotic novelty voice here was tried and vetoed).
+const EN_VOICE_PREFERENCE = [
+  'Google UK English Male',
+  'Microsoft David', 'Microsoft Guy', 'Microsoft Mark', 'Microsoft Ryan',
+  'Daniel', 'Alex', 'Arthur', 'Oliver', 'Gordon', 'Aaron', 'Nathan', 'Tom',
+]
 const ES_VOICE_PREFERENCE = ['Google español', 'Mónica', 'Paulina', 'Jorge', 'Diego', 'Juan']
 
 const LANG_TAG: Record<AnnounceLang, string> = { ja: 'ja-JP', en: 'en-US', es: 'es-ES' }
