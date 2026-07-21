@@ -78,8 +78,10 @@ export class City {
   private videoScreenMaterials: THREE.ShaderMaterial[] = []
   private nightGlowMaterials: THREE.MeshStandardMaterial[] = []
   private lampMaterials: THREE.MeshStandardMaterial[] = []
+  private vendingMat!: THREE.MeshStandardMaterial
   private signEntries: SignEntry[] = []
   private passengerMesh!: THREE.InstancedMesh
+  private passengerHeadMesh!: THREE.InstancedMesh
   private passengerSlots: PassengerSlot[] = []
   private time = 0
 
@@ -94,10 +96,25 @@ export class City {
   private buildBuildings() {
     const perTheme = 200
     const dummy = new THREE.Object3D()
-    const windowTex = makeWindowGridTexture(6, 10)
+
+    // Each district gets its own facade rhythm: dense cool office grids for
+    // business/bay, warm small windows in shitamachi, and a splash of colored
+    // light in the youth/downtown nightlife districts.
+    // Facade tones are kept fairly light because they multiply against each
+    // theme's buildingColor — darker values here made every district read as
+    // near-black in daylight.
+    const windowStyles: Record<(typeof THEME_GROUPS)[number], ReturnType<typeof makeWindowGridTexture>> = {
+      business: makeWindowGridTexture(9, 14, { glass: '#6d7c92', facade: '#9aa4b2', litChance: 0.42, litColors: ['#eef3ff', '#dce8ff', '#fff6da'] }),
+      downtown: makeWindowGridTexture(6, 10, { glass: '#707684', facade: '#a09aa8', litChance: 0.5, litColors: ['#fff6da', '#ffe9b0', '#ffd2f0', '#c8f4ff'] }),
+      shitamachi: makeWindowGridTexture(4, 7, { glass: '#7a6f60', facade: '#a89c8c', litChance: 0.55, litColors: ['#ffdf9e', '#ffe9b0', '#fff6da'] }),
+      green: makeWindowGridTexture(4, 6, { glass: '#6f7c6c', facade: '#9aa694', litChance: 0.4, litColors: ['#ffe9b0', '#fff6da'] }),
+      youth: makeWindowGridTexture(5, 9, { glass: '#7a7090', facade: '#a49cb4', litChance: 0.52, litColors: ['#fff6da', '#ffb8e2', '#a5e8ff', '#ffe9b0'] }),
+      bay: makeWindowGridTexture(8, 13, { glass: '#6c7e8e', facade: '#98a8b6', litChance: 0.4, litColors: ['#e2f0ff', '#fff6da', '#d0e6ff'] }),
+    }
 
     for (const theme of THEME_GROUPS) {
       const geo = new THREE.BoxGeometry(1, 1, 1)
+      const windowTex = windowStyles[theme]
       const material = new THREE.MeshStandardMaterial({
         color: 0x555555,
         map: windowTex.map,
@@ -122,7 +139,10 @@ export class City {
     for (let s = 0; s < N; s++) {
       const station = STATIONS[s]
       const group = this.themeGroups.get(station.theme.district)!
-      group.material.color.setHex(station.theme.buildingColor)
+      // The theme palette doubles as each district's identity, but raw it
+      // multiplies down to near-black against the facade texture — lift it
+      // so daylight shows actual color instead of silhouettes.
+      group.material.color.setHex(station.theme.buildingColor).multiplyScalar(1.75)
 
       const markerA = this.track.markerFor(s).tFraction
       const markerB = this.track.markerFor((s + 1) % N).tFraction
@@ -207,8 +227,9 @@ export class City {
 
     const benchMat = new THREE.MeshStandardMaterial({ color: 0x2f6b46, roughness: 0.7 })
     const bench = new THREE.InstancedMesh(new THREE.BoxGeometry(0.7, 0.9, 2.4), benchMat, N)
-    const vendingMat = new THREE.MeshStandardMaterial({ color: 0xd7dde3, emissive: 0x224466, emissiveIntensity: 0.15, roughness: 0.4, metalness: 0.2 })
+    const vendingMat = new THREE.MeshStandardMaterial({ color: 0xd7dde3, emissive: 0x6fb8ff, emissiveIntensity: 0.15, roughness: 0.4, metalness: 0.2 })
     const vending = new THREE.InstancedMesh(new THREE.BoxGeometry(0.9, 1.9, 1.3), vendingMat, N)
+    this.vendingMat = vendingMat
     const clockPoleMat = new THREE.MeshStandardMaterial({ color: 0x333333, metalness: 0.5, roughness: 0.4 })
     const clockPole = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.05, 0.05, 2.6, 6), clockPoleMat, N)
     const clockFaceMat = new THREE.MeshStandardMaterial({ color: 0xf5f3ec, emissive: 0x111111, roughness: 0.5 })
@@ -377,15 +398,41 @@ export class City {
         break
       }
       case 'harajuku': {
-        const beam = new THREE.Mesh(new THREE.BoxGeometry(14, 1.2, 1.2), new THREE.MeshStandardMaterial({ color: 0xb5482f }))
-        beam.position.set(0, 9, 50)
-        const legGeo = new THREE.CylinderGeometry(0.6, 0.6, 9, 8)
-        const legMat = new THREE.MeshStandardMaterial({ color: 0xb5482f })
-        const legL = new THREE.Mesh(legGeo, legMat)
-        legL.position.set(-5.5, 4.5, 50)
-        const legR = new THREE.Mesh(legGeo, legMat)
-        legR.position.set(5.5, 4.5, 50)
-        group.add(beam, legL, legR)
+        // Grand vermilion torii flanked by pines — the youth stretch's
+        // landmark payoff. (Deliberately Inari-red rather than Meiji Jingu's
+        // unpainted cypress: this is a generic gate, and the red reads from
+        // the cab.) Myōjin style: kasagi with upturned tips + shimaki + nuki.
+        const vermilion = new THREE.MeshStandardMaterial({ color: 0xc0392b, roughness: 0.65 })
+        const kasagi = new THREE.Mesh(new THREE.BoxGeometry(22, 1.5, 1.6), vermilion)
+        kasagi.position.set(0, 13.6, 50)
+        for (const end of [-1, 1]) {
+          const tip = new THREE.Mesh(new THREE.BoxGeometry(2.6, 1.4, 1.6), vermilion)
+          tip.position.set(end * 11.6, 14.15, 50)
+          tip.rotation.z = -end * 0.3
+          tip.castShadow = true
+          group.add(tip)
+        }
+        const shimaki = new THREE.Mesh(new THREE.BoxGeometry(19, 1.1, 1.4), vermilion)
+        shimaki.position.set(0, 12.3, 50)
+        const nuki = new THREE.Mesh(new THREE.BoxGeometry(17, 0.9, 1.1), vermilion)
+        nuki.position.set(0, 9.2, 50)
+        const legGeo = new THREE.CylinderGeometry(0.85, 0.95, 13, 10)
+        const legL = new THREE.Mesh(legGeo, vermilion)
+        legL.position.set(-7, 6.5, 50)
+        const legR = new THREE.Mesh(legGeo, vermilion)
+        legR.position.set(7, 6.5, 50)
+        kasagi.castShadow = shimaki.castShadow = legL.castShadow = legR.castShadow = true
+        group.add(kasagi, shimaki, nuki, legL, legR)
+        const pineTrunkMat = new THREE.MeshStandardMaterial({ color: 0x4a3527 })
+        const pineMat = new THREE.MeshStandardMaterial({ color: 0x2e4a2e, roughness: 1 })
+        for (const [px, pz] of [[-13, 46], [12, 54], [-11, 57], [14, 44]]) {
+          const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.3, 0.45, 3.4, 6), pineTrunkMat)
+          trunk.position.set(px, 1.7, pz)
+          const foliage = new THREE.Mesh(new THREE.ConeGeometry(2.4, 6.4, 8), pineMat)
+          foliage.position.set(px, 6.4, pz)
+          trunk.castShadow = foliage.castShadow = true
+          group.add(trunk, foliage)
+        }
         for (let i = 0; i < 5; i++) {
           const shop = new THREE.Mesh(
             new THREE.BoxGeometry(8, 8 + Math.random() * 6, 8),
@@ -437,9 +484,16 @@ export class City {
     this.passengerMesh.castShadow = true
     this.passengerMesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(total * 3), 3)
 
+    // Matching head per passenger — same slot transforms, so both meshes
+    // stay in sync through the density-based show/hide scaling.
+    const headMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85 })
+    this.passengerHeadMesh = new THREE.InstancedMesh(new THREE.SphereGeometry(0.16, 8, 6), headMat, total)
+    this.passengerHeadMesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(total * 3), 3)
+
     const tempObj = new THREE.Object3D()
     const tint = new THREE.Color()
     const bodyTints = [0x2b2b2b, 0x3a3f4a, 0x555049, 0x2d4a4a, 0x4a2d2d, 0x40382e]
+    const skinTints = [0xf0c8a8, 0xe8bc9a, 0xd8a888, 0xc89878]
 
     for (let s = 0; s < N; s++) {
       const station = STATIONS[s]
@@ -465,10 +519,13 @@ export class City {
         this.passengerSlots.push({ basePosition: worldPos, baseQuaternion: q, phase: Math.random() * Math.PI * 2, visibilityRoll: Math.random() })
         tint.setHex(bodyTints[Math.floor(Math.random() * bodyTints.length)])
         this.passengerMesh.setColorAt(idx, tint)
+        tint.setHex(skinTints[Math.floor(Math.random() * skinTints.length)])
+        this.passengerHeadMesh.setColorAt(idx, tint)
       }
     }
     if (this.passengerMesh.instanceColor) this.passengerMesh.instanceColor.needsUpdate = true
-    this.scene.add(this.passengerMesh)
+    if (this.passengerHeadMesh.instanceColor) this.passengerHeadMesh.instanceColor.needsUpdate = true
+    this.scene.add(this.passengerMesh, this.passengerHeadMesh)
     this.updatePassengers(0.5)
   }
 
@@ -476,14 +533,19 @@ export class City {
     const dummy = new THREE.Object3D()
     for (let i = 0; i < this.passengerSlots.length; i++) {
       const slot = this.passengerSlots[i]
+      const visible = slot.visibilityRoll < density
       dummy.position.copy(slot.basePosition)
       dummy.quaternion.copy(slot.baseQuaternion)
       dummy.rotateY(Math.sin(this.time * 0.6 + slot.phase) * 0.12)
-      dummy.scale.setScalar(slot.visibilityRoll < density ? 1 : 0)
+      dummy.scale.setScalar(visible ? 1 : 0)
       dummy.updateMatrix()
       this.passengerMesh.setMatrixAt(i, dummy.matrix)
+      dummy.position.y += 0.78
+      dummy.updateMatrix()
+      this.passengerHeadMesh.setMatrixAt(i, dummy.matrix)
     }
     this.passengerMesh.instanceMatrix.needsUpdate = true
+    this.passengerHeadMesh.instanceMatrix.needsUpdate = true
   }
 
   update(dt: number, nightFactor: number, targetStationIndex: number, timeOfDay: number) {
@@ -497,6 +559,8 @@ export class City {
     for (const mat of this.lampMaterials) {
       mat.emissiveIntensity = nightFactor * 1.6
     }
+    // Vending machines hum with light around the clock, brighter after dark.
+    this.vendingMat.emissiveIntensity = 0.15 + nightFactor * 0.75
     for (const mat of this.nightGlowMaterials) {
       mat.emissiveIntensity = nightFactor * 0.9
     }

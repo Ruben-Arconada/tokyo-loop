@@ -3,16 +3,24 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { Track, TrackOffsetCurve, CatenaryCurve } from './Track'
 import { Train, notchLabel, MIN_NOTCH, MAX_NOTCH } from './Train'
 import { City } from './City'
+import { Scenery } from './Scenery'
 import { DayNightCycle } from './DayNightCycle'
 import { audio } from '../audio/AudioEngine'
 import { Controls } from '../ui/Controls'
 import { UI } from '../ui/UI'
 import { STATIONS } from '../data/stations'
 import { getStationMelody, DOOR_CHIME_OPEN, DOOR_CHIME_CLOSE } from '../data/melodies'
-import { makeBallastTexture, makeScuffedPanelTexture, makeDestinationTexture } from './signage'
+import { makeBallastTexture, makeScuffedPanelTexture, makeDestinationTexture, makeGroundTexture } from './signage'
 
 const LOOK_YAW_LIMIT = 1.7 // ~97°, enough to look out the side windows
 const LOOK_PITCH_LIMIT = 0.55
+
+/** Door-side wording per language, so every announcement really states the side. */
+function doorSidePhrases(side: 'left' | 'right'): { ja: string; en: string; es: string } {
+  return side === 'left'
+    ? { ja: '左側', en: 'left', es: 'izquierdo' }
+    : { ja: '右側', en: 'right', es: 'derecho' }
+}
 
 export class Game {
   private renderer: THREE.WebGLRenderer
@@ -21,7 +29,9 @@ export class Game {
   private track: Track
   private train: Train
   private city: City
+  private scenery: Scenery
   private dayNight: DayNightCycle
+  private headlight!: THREE.SpotLight
   private controls: Controls
   private ui: UI
   private clock = new THREE.Clock()
@@ -33,6 +43,7 @@ export class Game {
   private leverPivot!: THREE.Object3D
   private destinationMat!: THREE.MeshBasicMaterial
   private lastDestinationIdx = -1
+  private lastCrossingPhase = false
   private perfEl: HTMLDivElement | null = null
 
   constructor(mount: HTMLElement) {
@@ -54,7 +65,7 @@ export class Game {
     this.scene.environmentIntensity = 0.15
     pmrem.dispose()
 
-    this.camera = new THREE.PerspectiveCamera(68, window.innerWidth / window.innerHeight, 0.1, 4500)
+    this.camera = new THREE.PerspectiveCamera(68, window.innerWidth / window.innerHeight, 0.1, 9000)
     this.scene.add(this.camera)
 
     this.track = new Track()
@@ -68,9 +79,11 @@ export class Game {
       onDoorsClosingWarning: () => this.handleDoorsClosingWarning(),
     })
     this.city = new City(this.scene, this.track)
+    this.scenery = new Scenery(this.scene, this.track)
     this.dayNight = new DayNightCycle(this.scene)
     this.buildTrackVisual()
     this.buildCabRig()
+    this.buildHeadlight()
 
     this.controls = new Controls(mount, {
       onNotchChange: (n) => this.train.setNotch(n),
@@ -129,33 +142,44 @@ export class Game {
   /** The session's one-time welcome cue: next stop announced in JA/EN/ES with a retro chiptune fanfare. */
   private handleWelcomeAnnounce() {
     const next = STATIONS[this.train.targetStationIndex]
+    const sides = doorSidePhrases(next.doorSide)
     audio.announce(
       [
-        { lang: 'ja', text: `次は、${next.nameJa}、${next.nameJa}です。` },
-        { lang: 'en', text: `The next station is ${next.nameEn}.` },
-        { lang: 'es', text: `La próxima estación es ${next.nameEn}.` },
+        { lang: 'ja', text: `次は、${next.nameJa}、${next.nameJa}です。お出口は${sides.ja}です。` },
+        { lang: 'en', text: `The next station is ${next.nameEn}. Doors will open on the ${sides.en} side.` },
+        { lang: 'es', text: `Próxima estación: ${next.nameEn}. Las puertas se abrirán por el lado ${sides.es}.` },
       ],
-      { fanfare: true },
+      { fanfare: true, kind: 'depart' },
     )
   }
 
+  /** Every announcement runs in the three languages, always naming the door side — JA first (host country), then EN, then ES. */
   private handleDepartAnnounce(nextIdx: number) {
     const next = STATIONS[nextIdx]
-    audio.announce([
-      { lang: 'ja', text: `次は、${next.nameJa}、${next.nameJa}です。` },
-      { lang: 'en', text: `The next station is ${next.nameEn}.` },
-    ])
+    const sides = doorSidePhrases(next.doorSide)
+    audio.announce(
+      [
+        { lang: 'ja', text: `次は、${next.nameJa}、${next.nameJa}です。お出口は${sides.ja}です。` },
+        { lang: 'en', text: `The next station is ${next.nameEn}. Doors will open on the ${sides.en} side.` },
+        { lang: 'es', text: `Próxima estación: ${next.nameEn}. Las puertas se abrirán por el lado ${sides.es}.` },
+      ],
+      { kind: 'depart' },
+    )
   }
 
   private handleArrivingAnnounce(idx: number) {
     const station = STATIONS[idx]
-    const sideJa = station.doorSide === 'left' ? '左側' : '右側'
+    const sides = doorSidePhrases(station.doorSide)
     const transferJa = station.transferLines?.length ? ` ${station.transferLines.join('、')}はお乗り換えです。` : ''
     const transferEn = station.transferLines?.length ? ` Please change here for ${station.transferLines.join(', ')}.` : ''
-    audio.announce([
-      { lang: 'ja', text: `まもなく、${station.nameJa}、${station.nameJa}です。${transferJa} お出口は${sideJa}です。` },
-      { lang: 'en', text: `We will soon make a brief stop at ${station.nameEn}.${transferEn} The doors on the ${station.doorSide} side will open.` },
-    ])
+    audio.announce(
+      [
+        { lang: 'ja', text: `まもなく、${station.nameJa}、${station.nameJa}です。${transferJa} お出口は${sides.ja}です。` },
+        { lang: 'en', text: `We will soon arrive at ${station.nameEn}.${transferEn} The doors on the ${sides.en} side will open.` },
+        { lang: 'es', text: `Llegamos a ${station.nameEn}. Las puertas se abrirán por el lado ${sides.es}.` },
+      ],
+      { kind: 'arriving' },
+    )
   }
 
   private handleDoorsOpen(idx: number) {
@@ -167,13 +191,17 @@ export class Game {
   }
 
   private handleDoorsClosingWarning() {
-    // Stop future melody repeats so the (short) closing-warning window reads
+    // Stop future melody repeats so the closing-warning window reads
     // clearly instead of competing with the next loop iteration.
     audio.stopMelodyLoop()
-    audio.announce([
-      { lang: 'ja', text: 'ドアが閉まります。' },
-      { lang: 'en', text: 'The doors are closing.' },
-    ])
+    audio.announce(
+      [
+        { lang: 'ja', text: 'ドアが閉まります。ご注意ください。' },
+        { lang: 'en', text: 'The doors are closing.' },
+        { lang: 'es', text: 'Las puertas se cierran.' },
+      ],
+      { kind: 'closing' },
+    )
   }
 
   private handleDoorsClose() {
@@ -231,10 +259,15 @@ export class Game {
     sleepers.instanceMatrix.needsUpdate = true
     this.scene.add(sleepers)
 
-    // Wide ground plane so the world doesn't feel like it ends at the ballast edge.
+    // Wide ground plane so the world doesn't feel like it ends at the ballast
+    // edge — with a faint city-block texture so it reads as streets from the
+    // cab. Sized well past the skyline belt at LOOP_SCALE 3 so no edge is
+    // ever visible, even with the longer night fog range.
+    const groundTex = makeGroundTexture()
+    groundTex.repeat.set(56, 56)
     const ground = new THREE.Mesh(
-      new THREE.PlaneGeometry(6000, 6000),
-      new THREE.MeshStandardMaterial({ color: 0x232a24, roughness: 1 }),
+      new THREE.PlaneGeometry(14000, 14000),
+      new THREE.MeshStandardMaterial({ color: 0xffffff, map: groundTex, roughness: 1 }),
     )
     ground.rotation.x = -Math.PI / 2
     ground.position.y = -0.5
@@ -370,6 +403,33 @@ export class Game {
     this.leverPivot.add(knob)
   }
 
+  /** Train headlight — a soft forward spot that only matters after dusk, when it sweeps the ballast ahead of the cab. */
+  private buildHeadlight() {
+    this.headlight = new THREE.SpotLight(0xfff4d8, 0, 130, 0.42, 0.55, 1.2)
+    this.headlight.castShadow = false
+    this.scene.add(this.headlight)
+    this.scene.add(this.headlight.target)
+  }
+
+  private readonly headlightPos = new THREE.Vector3()
+  private readonly headlightDir = new THREE.Vector3()
+
+  private updateHeadlight() {
+    const night = this.dayNight.nightFactor
+    // Fully off (and skipped by the renderer) in daylight — an intensity-0
+    // spot still costs per-fragment work in every standard material.
+    this.headlight.visible = night > 0.01
+    if (!this.headlight.visible) return
+    const t = this.train.progressFraction
+    this.track.pointAt(t, this.headlightPos)
+    this.track.tangentAt(t, this.headlightDir).normalize()
+    const y = this.headlightPos.y
+    this.headlight.position.set(this.headlightPos.x, y + 2.2, this.headlightPos.z)
+    this.headlight.target.position.copy(this.headlightPos).addScaledVector(this.headlightDir, 60).setY(y + 0.3)
+    this.headlight.target.updateMatrixWorld()
+    this.headlight.intensity = night * 260
+  }
+
   private updateLever() {
     this.leverPivot.rotation.x = THREE.MathUtils.mapLinear(this.train.notch, MIN_NOTCH, MAX_NOTCH, 0.5, -0.35)
     if (this.train.targetStationIndex !== this.lastDestinationIdx) {
@@ -417,6 +477,13 @@ export class Game {
     this.dayNight.update(dt * this.timeScale, this.camera.position)
     this.train.update(dt)
     this.city.update(dt, this.dayNight.nightFactor, this.train.targetStationIndex, this.dayNight.timeOfDay)
+    this.scenery.update(dt, this.dayNight, this.train.progressFraction)
+    // Kan-kan: one bell strike per blink flip while the crossing is active.
+    if (this.scenery.crossingBlinkPhase !== this.lastCrossingPhase) {
+      this.lastCrossingPhase = this.scenery.crossingBlinkPhase
+      if (this.scenery.crossingBellActive) audio.crossingTick(0.7)
+    }
+    this.updateHeadlight()
     audio.updateAmbient(this.train.speed01, this.train.brakeAmount01)
     this.controls.syncNotch(this.train.notch)
     this.updateCameraFromTrain()

@@ -241,9 +241,23 @@ export function makeTactilePavingTexture(): THREE.CanvasTexture {
   return tex
 }
 
+export interface WindowGridOptions {
+  /** Unlit window glass tint. */
+  glass?: string
+  /** Facade tone between windows (multiplied by the material color). */
+  facade?: string
+  /** Chance each window is lit at night. */
+  litChance?: number
+  /** Pool of lit-window colors — mostly warm whites, sometimes a colorful one. */
+  litColors?: string[]
+}
+
 /** Procedural window-lit texture for building facades: a grid of rectangles, some randomly "lit". */
-export function makeWindowGridTexture(cols: number, rows: number): { map: THREE.CanvasTexture; emissiveMap: THREE.CanvasTexture } {
-  const size = 512
+export function makeWindowGridTexture(cols: number, rows: number, opts: WindowGridOptions = {}): { map: THREE.CanvasTexture; emissiveMap: THREE.CanvasTexture } {
+  const { glass = '#3d4552', facade = '#2a2e36', litChance = 0.4, litColors = ['#fff6da', '#fff6da', '#fff6da', '#ffe9b0'] } = opts
+  // 256² is indistinguishable at the distances facades are ever seen from,
+  // and a quarter of the VRAM of the old 512² canvases.
+  const size = 256
   const canvas = document.createElement('canvas')
   canvas.width = size
   canvas.height = size
@@ -253,7 +267,7 @@ export function makeWindowGridTexture(cols: number, rows: number): { map: THREE.
   emCanvas.height = size
   const emCtx = emCanvas.getContext('2d')!
 
-  ctx.fillStyle = '#2a2e36'
+  ctx.fillStyle = facade
   ctx.fillRect(0, 0, size, size)
   emCtx.fillStyle = '#000000'
   emCtx.fillRect(0, 0, size, size)
@@ -266,10 +280,10 @@ export function makeWindowGridTexture(cols: number, rows: number): { map: THREE.
       const y = r * stepY + stepY * 0.18
       const w = stepX * 0.64
       const h = stepY * 0.64
-      ctx.fillStyle = '#3d4552'
+      ctx.fillStyle = glass
       ctx.fillRect(x, y, w, h)
-      if (Math.random() < 0.4) {
-        emCtx.fillStyle = Math.random() < 0.15 ? '#ffe9b0' : '#fff6da'
+      if (Math.random() < litChance) {
+        emCtx.fillStyle = litColors[Math.floor(Math.random() * litColors.length)]
         emCtx.fillRect(x, y, w, h)
       }
     }
@@ -279,4 +293,157 @@ export function makeWindowGridTexture(cols: number, rows: number): { map: THREE.
   const emissiveMap = new THREE.CanvasTexture(emCanvas)
   emissiveMap.colorSpace = THREE.SRGBColorSpace
   return { map, emissiveMap }
+}
+
+/** Soft radial glow disc for the sun — bright core fading out, so it reads as a glowing body instead of a hard square sprite. */
+export function makeSunTexture(): THREE.CanvasTexture {
+  const size = 256
+  const canvas = document.createElement('canvas')
+  canvas.width = size
+  canvas.height = size
+  const ctx = canvas.getContext('2d')!
+  const g = ctx.createRadialGradient(size / 2, size / 2, 0, size / 2, size / 2, size / 2)
+  g.addColorStop(0, 'rgba(255,255,255,1)')
+  g.addColorStop(0.18, 'rgba(255,246,214,1)')
+  g.addColorStop(0.34, 'rgba(255,230,160,0.55)')
+  g.addColorStop(0.62, 'rgba(255,214,130,0.16)')
+  g.addColorStop(1, 'rgba(255,200,110,0)')
+  ctx.fillStyle = g
+  ctx.fillRect(0, 0, size, size)
+  const tex = new THREE.CanvasTexture(canvas)
+  tex.colorSpace = THREE.SRGBColorSpace
+  return tex
+}
+
+/** Full moon with subtle maria blotches and a soft halo. */
+export function makeMoonTexture(): THREE.CanvasTexture {
+  const size = 256
+  const canvas = document.createElement('canvas')
+  canvas.width = size
+  canvas.height = size
+  const ctx = canvas.getContext('2d')!
+  const halo = ctx.createRadialGradient(size / 2, size / 2, size * 0.3, size / 2, size / 2, size / 2)
+  halo.addColorStop(0, 'rgba(222,230,255,0.35)')
+  halo.addColorStop(1, 'rgba(222,230,255,0)')
+  ctx.fillStyle = halo
+  ctx.fillRect(0, 0, size, size)
+  ctx.fillStyle = '#e8edfa'
+  ctx.beginPath()
+  ctx.arc(size / 2, size / 2, size * 0.3, 0, Math.PI * 2)
+  ctx.fill()
+  // Maria: a few soft gray blotches, deterministic layout so every load matches.
+  const blotches = [
+    [0.42, 0.38, 0.10], [0.58, 0.45, 0.08], [0.5, 0.6, 0.12], [0.38, 0.55, 0.06], [0.62, 0.6, 0.05],
+  ]
+  ctx.fillStyle = 'rgba(150,160,190,0.4)'
+  for (const [bx, by, br] of blotches) {
+    ctx.beginPath()
+    ctx.arc(size * bx, size * by, size * br, 0, Math.PI * 2)
+    ctx.fill()
+  }
+  const tex = new THREE.CanvasTexture(canvas)
+  tex.colorSpace = THREE.SRGBColorSpace
+  return tex
+}
+
+/** Soft cumulus blob — several overlapping radial gradients on a transparent canvas. */
+export function makeCloudTexture(): THREE.CanvasTexture {
+  const w = 256
+  const h = 128
+  const canvas = document.createElement('canvas')
+  canvas.width = w
+  canvas.height = h
+  const ctx = canvas.getContext('2d')!
+  const puffs = [
+    [0.32, 0.62, 0.30], [0.5, 0.5, 0.34], [0.68, 0.6, 0.28], [0.42, 0.44, 0.24], [0.58, 0.4, 0.2], [0.22, 0.7, 0.18], [0.78, 0.7, 0.16],
+  ]
+  for (const [px, py, pr] of puffs) {
+    const g = ctx.createRadialGradient(w * px, h * py, 0, w * px, h * py, h * pr * 2)
+    g.addColorStop(0, 'rgba(255,255,255,0.85)')
+    g.addColorStop(0.6, 'rgba(255,255,255,0.35)')
+    g.addColorStop(1, 'rgba(255,255,255,0)')
+    ctx.fillStyle = g
+    ctx.beginPath()
+    ctx.arc(w * px, h * py, h * pr * 2, 0, Math.PI * 2)
+    ctx.fill()
+  }
+  const tex = new THREE.CanvasTexture(canvas)
+  tex.colorSpace = THREE.SRGBColorSpace
+  return tex
+}
+
+/** One vertical neon sign: colored panel, vertical kanji column, thin border — Tokyo backstreet style. */
+export function makeNeonSignTexture(text: string, bg: string, fg: string): THREE.CanvasTexture {
+  const W = 96
+  const H = 512
+  const canvas = document.createElement('canvas')
+  canvas.width = W
+  canvas.height = H
+  const ctx = canvas.getContext('2d')!
+  ctx.fillStyle = bg
+  ctx.fillRect(0, 0, W, H)
+  ctx.strokeStyle = fg
+  ctx.lineWidth = 5
+  ctx.strokeRect(6, 6, W - 12, H - 12)
+  ctx.fillStyle = fg
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  const chars = [...text]
+  const fontPx = Math.min(64, Math.floor((H - 60) / chars.length) - 8)
+  ctx.font = `700 ${fontPx}px "Hiragino Sans", "Noto Sans JP", sans-serif`
+  const totalH = chars.length * (fontPx + 8)
+  let y = H / 2 - totalH / 2 + (fontPx + 8) / 2
+  for (const ch of chars) {
+    if (ch === 'ー') {
+      // In vertical writing (tategaki) the long-vowel mark rotates 90° —
+      // stacked unrotated it reads as the kanji 一.
+      ctx.save()
+      ctx.translate(W / 2, y)
+      ctx.rotate(Math.PI / 2)
+      ctx.fillText(ch, 0, 0)
+      ctx.restore()
+    } else {
+      ctx.fillText(ch, W / 2, y)
+    }
+    y += fontPx + 8
+  }
+  const tex = new THREE.CanvasTexture(canvas)
+  tex.colorSpace = THREE.SRGBColorSpace
+  return tex
+}
+
+/** Big, faint city-block pattern for the ground plane so the world floor isn't one flat color. */
+export function makeGroundTexture(): THREE.CanvasTexture {
+  const size = 1024
+  const canvas = document.createElement('canvas')
+  canvas.width = size
+  canvas.height = size
+  const ctx = canvas.getContext('2d')!
+  ctx.fillStyle = '#2a3029'
+  ctx.fillRect(0, 0, size, size)
+  // Irregular city blocks in slightly varied tones.
+  const cell = 128
+  for (let y = 0; y < size; y += cell) {
+    for (let x = 0; x < size; x += cell) {
+      const tones = ['#2c332b', '#293027', '#2e332e', '#2b2f2c', '#30362c']
+      ctx.fillStyle = tones[Math.floor(Math.random() * tones.length)]
+      ctx.fillRect(x + 3, y + 3, cell - 6, cell - 6)
+      // Occasional park-green or paved-gray block.
+      if (Math.random() < 0.12) {
+        ctx.fillStyle = Math.random() < 0.5 ? '#33402d' : '#33363a'
+        ctx.fillRect(x + 10, y + 10, cell - 20, cell - 20)
+      }
+    }
+  }
+  // Street grid between blocks.
+  ctx.strokeStyle = 'rgba(70,75,80,0.55)'
+  ctx.lineWidth = 6
+  for (let i = 0; i <= size; i += cell) {
+    ctx.beginPath(); ctx.moveTo(i, 0); ctx.lineTo(i, size); ctx.stroke()
+    ctx.beginPath(); ctx.moveTo(0, i); ctx.lineTo(size, i); ctx.stroke()
+  }
+  const tex = new THREE.CanvasTexture(canvas)
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping
+  tex.colorSpace = THREE.SRGBColorSpace
+  return tex
 }

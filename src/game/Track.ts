@@ -83,8 +83,9 @@ export class CatenaryCurve extends THREE.Curve<THREE.Vector3> {
 
 // Scales the whole loop up so consecutive stations sit farther apart, giving
 // room to actually accelerate and cruise before the next braking zone instead
-// of departing straight into it.
-const LOOP_SCALE = 2
+// of departing straight into it — and enough running time for the full
+// trilingual PA sequence to finish comfortably between stops.
+const LOOP_SCALE = 3
 
 function buildLoopCurve(): THREE.CatmullRomCurve3 {
   const points: THREE.Vector3[] = []

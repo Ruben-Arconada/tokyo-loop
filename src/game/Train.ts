@@ -25,10 +25,10 @@ const MAX_SPEED_KMH = 95
 
 const STATION_ZONE_HALF_WIDTH = 26 // world units either side of the platform marker
 const STOP_SPEED_THRESHOLD_KMH = 3
-const ARRIVING_ANNOUNCE_DISTANCE = 170
-const DWELL_SECONDS = 7
+const ARRIVING_ANNOUNCE_DISTANCE = 260 // early enough for the trilingual arrival announcement to finish before the platform
+const DWELL_SECONDS = 13
 const DOOR_ANIM_SECONDS = 1.4
-const CLOSING_WARN_LEAD_SECONDS = 4.5 // long enough for chime + short JA/EN warning to finish before doors actually close
+const CLOSING_WARN_LEAD_SECONDS = 8.5 // long enough for chime + trilingual JA/EN/ES warning to finish before doors actually close
 
 export type TrainRunState = 'running' | 'doors_open' | 'doors_closing'
 

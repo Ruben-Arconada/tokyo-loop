@@ -10,8 +10,10 @@ Un simulador de conducción de trenes en 3D para navegador, ambientado en la lí
 - **Palanca única (wan-handle)** como en los trenes japoneses de verdad: arriba acelera (P1–P5), abajo frena (B1–B7 / freno de emergencia), tanto arrastrando en pantalla táctil como con teclado (↑/W, ↓/S, espacio).
 - **Precisión de parada**: frena para detener el tren justo en el andén — la app puntúa la parada (perfecta / buena / correcta / fallada).
 - **Ciclo día/noche completo**: amanecer, mañana, mediodía, atardecer, crepúsculo y noche cerrada, con sol y luna, estrellas, y ventanas/letreros de la ciudad que se iluminan al anochecer.
-- **Estaciones emblemáticas** con ambientación propia: Tokyo (fachada de ladrillo), Ueno (parque), Ikebukuro y Shinjuku (rascacielos), Harajuku (torii y tiendas), Shibuya (pantalla gigante) y Shinagawa (bahía).
-- **Sonido generado en directo** con Web Audio API: melodías de estación originales por parada, motor y frenos sintetizados, y anuncios de megafonía por voz (japonés + inglés) vía Web Speech API.
+- **Estaciones emblemáticas** con ambientación propia: Tokyo (fachada de ladrillo), Ueno (parque), Ikebukuro y Shinjuku (rascacielos), Harajuku (gran torii entre pinos), Shibuya (pantalla gigante) y Shinagawa (bahía).
+- **Tokio por capas**: Monte Fuji en el horizonte, Tokyo Tower (naranja de noche), Skytree (que alterna sus iluminaciones Iki y Miyabi), Rainbow Bridge, skyline lejano, casas shitamachi con ventanas cálidas, postes eléctricos con cables combados, neones verticales de kanji y sakura con pétalos a la deriva en los distritos verdes.
+- **El fumikiri**: como en la Yamanote real, un único paso a nivel (en el tramo Tabata → Komagome) con luces alternantes y campana kan-kan cuando el tren se acerca.
+- **Sonido generado en directo** con Web Audio API: melodías de estación originales por parada, motor y frenos sintetizados, y megafonía trilingüe (japonés, inglés y español) vía Web Speech API que siempre anuncia el lado de apertura de puertas — con una cola de anuncios que nunca se pisan entre sí.
 - **Responsive de verdad**: HUD y controles se adaptan a móvil/tablet/escritorio, con áreas seguras para el notch y controles táctiles grandes.
 
 ## Sobre las melodías de estación

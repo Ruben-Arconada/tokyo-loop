@@ -8,6 +8,26 @@ export interface AnnounceSegment {
   text: string
 }
 
+export interface AnnounceOptions {
+  fanfare?: boolean
+  /**
+   * Announcements of the same kind replace each other while waiting in the
+   * queue (e.g. a newer "depart" makes a stale queued "depart" pointless),
+   * but a playing announcement is never cut off mid-sentence.
+   */
+  kind?: string
+}
+
+interface QueuedAnnouncement {
+  segments: AnnounceSegment[]
+  fanfare: boolean
+  kind: string
+}
+
+/** Pause between languages within one announcement, and between two queued announcements — breathing room so the PA never feels rushed. */
+const SEGMENT_GAP_MS = 750
+const ANNOUNCEMENT_GAP_MS = 1400
+
 const JA_VOICE_PREFERENCE = ['Google 日本語', 'O-Ren', 'Kyoko', 'Sayaka', 'Ayumi', 'Haruka']
 // A natural, clear masculine voice for English — the retro chiptune fanfare
 // and chime already carry the "80s videogame" flavor, so the voice itself
@@ -63,8 +83,9 @@ export class AudioEngine {
 
   private duckUntil = 0
   private melodyLoopHandle: number | null = null
-  private announceToken = 0
   private autoResumeInstalled = false
+  private announcing = false
+  private announceQueue: QueuedAnnouncement[] = []
 
   get ready() {
     return this.ctx !== null
@@ -415,43 +436,96 @@ export class AudioEngine {
   }
 
   /**
-   * Plays a PA announcement: an optional retro chiptune fanfare, an
-   * attention chime, then each segment spoken in order with a fixed pause
-   * between them. A newer announce() call supersedes an older one still in
-   * flight (rather than letting them queue up and pile behind each other,
-   * e.g. after the player skips several stations in a row), and each segment
-   * has a fallback timer in case the browser never fires `onend`. Entirely
+   * Queues a PA announcement: an optional retro chiptune fanfare, an
+   * attention chime, then each segment spoken in order with a breathing
+   * pause between languages. Announcements NEVER cut each other off —
+   * if one is already playing, the new one waits its turn (with a longer
+   * pause between announcements), and while waiting, a newer announcement
+   * of the same `kind` replaces the stale queued one. Each segment has a
+   * fallback timer in case the browser never fires `onend`. Entirely
    * asynchronous — never blocks the game loop or player input.
    */
-  announce(segments: AnnounceSegment[], opts: { fanfare?: boolean } = {}) {
+  announce(segments: AnnounceSegment[], opts: AnnounceOptions = {}) {
     if (!this.ctx || !('speechSynthesis' in window) || !segments.length) return
-    const myToken = ++this.announceToken
-    const totalChars = segments.reduce((n, s) => n + s.text.length, 0)
-    const fanfareDuration = opts.fanfare ? this.playMelody(RETRO_FANFARE, 'retro', 0.4) || 0.8 : 0
-    this.duckFor(3.5 + totalChars * 0.05 + fanfareDuration)
+    const item: QueuedAnnouncement = { segments, fanfare: !!opts.fanfare, kind: opts.kind ?? 'general' }
+    if (this.announcing) {
+      const queuedIdx = this.announceQueue.findIndex((q) => q.kind === item.kind)
+      if (queuedIdx >= 0) this.announceQueue[queuedIdx] = item
+      else if (this.announceQueue.length < 3) this.announceQueue.push(item)
+      else this.announceQueue[this.announceQueue.length - 1] = item
+      return
+    }
+    this.playAnnouncement(item)
+  }
+
+  get isAnnouncing(): boolean {
+    return this.announcing
+  }
+
+  private playAnnouncement(item: QueuedAnnouncement) {
+    this.announcing = true
+    const totalChars = item.segments.reduce((n, s) => n + s.text.length, 0)
+    const fanfareDuration = item.fanfare ? this.playMelody(RETRO_FANFARE, 'retro', 0.4) || 0.8 : 0
+    this.duckFor(3.5 + totalChars * 0.06 + fanfareDuration)
     const chimeDuration = this.playMelody(ATTENTION_CHIME, 'attention', 0.32) || 0.3
 
     window.setTimeout(() => {
-      if (myToken !== this.announceToken) return
+      // Clear only leftovers (e.g. the unlock primer) — by construction
+      // nothing of ours is speaking when a new sequence starts.
       speechSynthesis.cancel()
-      const utterances = segments.map((seg) => this.buildUtterance(seg.lang, seg.text))
+      const utterances = item.segments.map((seg) => this.buildUtterance(seg.lang, seg.text))
 
       const speakAt = (i: number) => {
-        if (myToken !== this.announceToken || i >= utterances.length) return
+        if (i >= utterances.length) {
+          this.finishAnnouncement()
+          return
+        }
         const utter = utterances[i]
         let advanced = false
         const advance = () => {
           if (advanced) return
           advanced = true
-          window.setTimeout(() => speakAt(i + 1), 550)
+          window.setTimeout(() => speakAt(i + 1), SEGMENT_GAP_MS)
         }
         utter.onend = advance
         // Fallback in case `onend` never fires (a known flakiness in some browsers' queued-utterance handling).
-        window.setTimeout(advance, segments[i].text.length * 130 + 1800)
+        window.setTimeout(advance, item.segments[i].text.length * 140 + 2200)
         speechSynthesis.speak(utter)
       }
       speakAt(0)
-    }, (fanfareDuration + chimeDuration) * 1000 + 100)
+    }, (fanfareDuration + chimeDuration) * 1000 + 150)
+  }
+
+  /** Breathing gap after an announcement, then the next queued one (if any) takes the mic. */
+  private finishAnnouncement() {
+    window.setTimeout(() => {
+      this.announcing = false
+      const next = this.announceQueue.shift()
+      if (next) this.playAnnouncement(next)
+    }, ANNOUNCEMENT_GAP_MS)
+  }
+
+  /**
+   * One "kan" of a level-crossing bell — a short, bright damped strike.
+   * Called by the game on each blink flip while the train nears the crossing,
+   * so light and bell stay in lockstep.
+   */
+  crossingTick(volume: number) {
+    if (!this.ctx || volume <= 0.01) return
+    const ctx = this.ctx
+    const t = ctx.currentTime
+    const osc = ctx.createOscillator()
+    osc.type = 'square'
+    osc.frequency.value = 640
+    const g = ctx.createGain()
+    g.gain.setValueAtTime(0, t)
+    g.gain.linearRampToValueAtTime(volume * 0.24, t + 0.004)
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.16)
+    osc.connect(g)
+    g.connect(this.dryGain!)
+    g.connect(this.wetSend!)
+    osc.start(t)
+    osc.stop(t + 0.2)
   }
 }
 
