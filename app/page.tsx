@@ -330,7 +330,14 @@ export default function Home() {
     english.pitch = 0.96;
     english.volume = 0.88;
     english.voice = voices.find((voice) => voice.lang.toLowerCase().startsWith("en")) ?? null;
+    const spanish = new SpeechSynthesisUtterance(`Próxima parada, ${station.en}.`);
+    spanish.lang = "es-ES";
+    spanish.rate = 0.9;
+    spanish.pitch = 0.98;
+    spanish.volume = 0.9;
+    spanish.voice = voices.find((voice) => voice.lang.toLowerCase().startsWith("es")) ?? null;
     japanese.onend = () => synthesis.speak(english);
+    english.onend = () => synthesis.speak(spanish);
     synthesis.cancel();
     synthesis.resume();
     synthesis.speak(japanese);
@@ -364,7 +371,7 @@ export default function Home() {
     sim.brake = 0;
     setStarted(true);
     const voiceStarted = speakDeparture(next);
-    window.setTimeout(() => playChime(current.motif, true), voiceStarted ? 3400 : 80);
+    window.setTimeout(() => playChime(current.motif, true), voiceStarted ? 5000 : 80);
   }, [current.motif, initAudio, next, playChime, speakDeparture]);
 
   const toggleMute = useCallback(() => {
