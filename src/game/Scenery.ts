@@ -772,6 +772,10 @@ export class Scenery {
     }
     clouds.instanceMatrix.needsUpdate = true
     clouds.frustumCulled = false
+    // Drawn after the stars (which sit at the camera's own position and so
+    // sort "nearest"): otherwise star points paint straight over cloud
+    // bodies at dawn/dusk, reading as speckly noise on the clouds.
+    clouds.renderOrder = 2
     this.scene.add(clouds)
   }
 

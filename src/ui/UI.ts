@@ -33,6 +33,8 @@ export class UI {
   private notchEl!: HTMLSpanElement
   private stationNowEl!: HTMLSpanElement
   private stationNextEl!: HTMLSpanElement
+  private stationNowCodeEl!: HTMLSpanElement
+  private stationNextCodeEl!: HTMLSpanElement
   private lineDiagram!: HTMLDivElement
   private stationDots: HTMLDivElement[] = []
   private doorIndicator!: HTMLDivElement
@@ -79,11 +81,11 @@ export class UI {
         <div class="hud-stations">
           <div class="hud-station-now">
             <small>PARADA ACTUAL</small>
-            <span class="hud-station-now-name">Tokyo</span>
+            <span class="hud-station-row"><span class="jy-badge hud-station-now-code">JY01</span><span class="hud-station-now-name">Tokyo</span></span>
           </div>
           <div class="hud-station-next">
             <small>PRÓXIMA</small>
-            <span class="hud-station-next-name">Kanda</span>
+            <span class="hud-station-row"><span class="jy-badge hud-station-next-code">JY02</span><span class="hud-station-next-name">Kanda</span></span>
           </div>
         </div>
       </div>
@@ -103,6 +105,8 @@ export class UI {
     this.notchEl = this.hud.querySelector('.notch-readout')!
     this.stationNowEl = this.hud.querySelector('.hud-station-now-name')!
     this.stationNextEl = this.hud.querySelector('.hud-station-next-name')!
+    this.stationNowCodeEl = this.hud.querySelector('.hud-station-now-code')!
+    this.stationNextCodeEl = this.hud.querySelector('.hud-station-next-code')!
     this.doorIndicator = this.hud.querySelector('.door-indicator')!
     this.lineDiagram = this.hud.querySelector('.line-diagram')!
 
@@ -240,6 +244,8 @@ export class UI {
     this.notchEl.className = 'notch-readout' + (opts.notchLabel.startsWith('B') || opts.notchLabel === 'EB' ? ' braking' : opts.notchLabel.startsWith('P') ? ' powering' : '')
     this.stationNowEl.textContent = STATIONS[opts.currentStationIdx].nameEn
     this.stationNextEl.textContent = STATIONS[opts.targetStationIdx].nameEn
+    this.stationNowCodeEl.textContent = `JY${String(opts.currentStationIdx + 1).padStart(2, '0')}`
+    this.stationNextCodeEl.textContent = `JY${String(opts.targetStationIdx + 1).padStart(2, '0')}`
     this.doorIndicator.classList.toggle('open', opts.doorsOpenAmount > 0.05)
     this.doorIndicator.textContent = opts.doorsOpenAmount > 0.05 ? 'DOORS OPEN' : 'DOORS'
 

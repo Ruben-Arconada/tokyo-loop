@@ -7,6 +7,8 @@ const REAL_SECONDS_PER_DAY = 8 * 60
 interface Keyframe {
   hour: number
   skyTop: THREE.Color
+  /** Mid-altitude band — gives the gradient a third stop so dawn/dusk get their color banding. */
+  skyMid: THREE.Color
   skyBottom: THREE.Color
   sunColor: THREE.Color
   sunIntensity: number
@@ -20,19 +22,19 @@ interface Keyframe {
 const C = (hex: number) => new THREE.Color(hex)
 
 const KEYFRAMES: Keyframe[] = [
-  { hour: 0, skyTop: C(0x03040d), skyBottom: C(0x0c1226), sunColor: C(0x33447a), sunIntensity: 0.05, ambientIntensity: 0.16, fogColor: C(0x05060f), fogNear: 70, fogFar: 1500, label: 'Madrugada' },
-  { hour: 3.5, skyTop: C(0x050714), skyBottom: C(0x121a35), sunColor: C(0x33447a), sunIntensity: 0.05, ambientIntensity: 0.17, fogColor: C(0x070a18), fogNear: 70, fogFar: 1500, label: 'Madrugada' },
-  { hour: 5, skyTop: C(0x142042), skyBottom: C(0x3a3560), sunColor: C(0x8a7bb8), sunIntensity: 0.25, ambientIntensity: 0.28, fogColor: C(0x241f3d), fogNear: 90, fogFar: 1450, label: 'Alba' },
-  { hour: 6, skyTop: C(0x2c3a6b), skyBottom: C(0xe08a5c), sunColor: C(0xffab6b), sunIntensity: 0.9, ambientIntensity: 0.42, fogColor: C(0xe08a5c), fogNear: 110, fogFar: 1400, label: 'Amanecer' },
-  { hour: 7.5, skyTop: C(0x5f8ad0), skyBottom: C(0xffd9a0), sunColor: C(0xffdcb0), sunIntensity: 1.4, ambientIntensity: 0.55, fogColor: C(0xe8d0b8), fogNear: 150, fogFar: 1300, label: 'Mañana' },
-  { hour: 10, skyTop: C(0x3f7fe0), skyBottom: C(0xbfe3ff), sunColor: C(0xfff3da), sunIntensity: 1.7, ambientIntensity: 0.65, fogColor: C(0xcfe8ff), fogNear: 200, fogFar: 1500, label: 'Media mañana' },
-  { hour: 13, skyTop: C(0x2f74e6), skyBottom: C(0xcdeaff), sunColor: C(0xffffff), sunIntensity: 1.85, ambientIntensity: 0.7, fogColor: C(0xd8edff), fogNear: 220, fogFar: 1600, label: 'Mediodía' },
-  { hour: 16, skyTop: C(0x3d78d8), skyBottom: C(0xdcecf7), sunColor: C(0xfff0d8), sunIntensity: 1.6, ambientIntensity: 0.6, fogColor: C(0xdde8f2), fogNear: 180, fogFar: 1400, label: 'Tarde' },
-  { hour: 17.5, skyTop: C(0x3a5aa8), skyBottom: C(0xf0955c), sunColor: C(0xffa860), sunIntensity: 1.2, ambientIntensity: 0.5, fogColor: C(0xf0955c), fogNear: 130, fogFar: 1200, label: 'Atardecer' },
-  { hour: 18.5, skyTop: C(0x2a2f5c), skyBottom: C(0xe0603f), sunColor: C(0xff7a4a), sunIntensity: 0.7, ambientIntensity: 0.38, fogColor: C(0x8a3f45), fogNear: 90, fogFar: 1000, label: 'Crepúsculo' },
-  { hour: 19.5, skyTop: C(0x141235), skyBottom: C(0x5a3a5e), sunColor: C(0x9a5aa0), sunIntensity: 0.3, ambientIntensity: 0.28, fogColor: C(0x281f3d), fogNear: 80, fogFar: 1450, label: 'Noche' },
-  { hour: 21, skyTop: C(0x05071a), skyBottom: C(0x161c3a), sunColor: C(0x33447a), sunIntensity: 0.08, ambientIntensity: 0.2, fogColor: C(0x0a0d1e), fogNear: 70, fogFar: 1500, label: 'Noche cerrada' },
-  { hour: 24, skyTop: C(0x03040d), skyBottom: C(0x0c1226), sunColor: C(0x33447a), sunIntensity: 0.05, ambientIntensity: 0.16, fogColor: C(0x05060f), fogNear: 70, fogFar: 1500, label: 'Madrugada' },
+  { hour: 0, skyTop: C(0x03040d), skyMid: C(0x070a18), skyBottom: C(0x0c1226), sunColor: C(0x33447a), sunIntensity: 0.05, ambientIntensity: 0.16, fogColor: C(0x05060f), fogNear: 70, fogFar: 1500, label: 'Madrugada' },
+  { hour: 3.5, skyTop: C(0x050714), skyMid: C(0x0b1024), skyBottom: C(0x121a35), sunColor: C(0x33447a), sunIntensity: 0.05, ambientIntensity: 0.17, fogColor: C(0x070a18), fogNear: 70, fogFar: 1500, label: 'Madrugada' },
+  { hour: 5, skyTop: C(0x142042), skyMid: C(0x2b2a58), skyBottom: C(0x3a3560), sunColor: C(0x8a7bb8), sunIntensity: 0.25, ambientIntensity: 0.28, fogColor: C(0x241f3d), fogNear: 90, fogFar: 1450, label: 'Alba' },
+  { hour: 6, skyTop: C(0x2c3a6b), skyMid: C(0x8a5e78), skyBottom: C(0xe08a5c), sunColor: C(0xffab6b), sunIntensity: 0.9, ambientIntensity: 0.42, fogColor: C(0xe08a5c), fogNear: 110, fogFar: 1400, label: 'Amanecer' },
+  { hour: 7.5, skyTop: C(0x5f8ad0), skyMid: C(0xa9b6da), skyBottom: C(0xffd9a0), sunColor: C(0xffdcb0), sunIntensity: 1.4, ambientIntensity: 0.55, fogColor: C(0xe8d0b8), fogNear: 150, fogFar: 1300, label: 'Mañana' },
+  { hour: 10, skyTop: C(0x3f7fe0), skyMid: C(0x7fb2ef), skyBottom: C(0xbfe3ff), sunColor: C(0xfff3da), sunIntensity: 1.7, ambientIntensity: 0.65, fogColor: C(0xcfe8ff), fogNear: 200, fogFar: 1500, label: 'Media mañana' },
+  { hour: 13, skyTop: C(0x2f74e6), skyMid: C(0x78b0f4), skyBottom: C(0xcdeaff), sunColor: C(0xffffff), sunIntensity: 1.85, ambientIntensity: 0.7, fogColor: C(0xd8edff), fogNear: 220, fogFar: 1600, label: 'Mediodía' },
+  { hour: 16, skyTop: C(0x3d78d8), skyMid: C(0x90b5e8), skyBottom: C(0xdcecf7), sunColor: C(0xfff0d8), sunIntensity: 1.6, ambientIntensity: 0.6, fogColor: C(0xdde8f2), fogNear: 180, fogFar: 1400, label: 'Tarde' },
+  { hour: 17.5, skyTop: C(0x3a5aa8), skyMid: C(0xa07890), skyBottom: C(0xf0955c), sunColor: C(0xffa860), sunIntensity: 1.2, ambientIntensity: 0.5, fogColor: C(0xf0955c), fogNear: 130, fogFar: 1200, label: 'Atardecer' },
+  { hour: 18.5, skyTop: C(0x2a2f5c), skyMid: C(0x8f4260), skyBottom: C(0xe0603f), sunColor: C(0xff7a4a), sunIntensity: 0.7, ambientIntensity: 0.38, fogColor: C(0x8a3f45), fogNear: 90, fogFar: 1000, label: 'Crepúsculo' },
+  { hour: 19.5, skyTop: C(0x141235), skyMid: C(0x35264e), skyBottom: C(0x5a3a5e), sunColor: C(0x9a5aa0), sunIntensity: 0.3, ambientIntensity: 0.28, fogColor: C(0x281f3d), fogNear: 80, fogFar: 1450, label: 'Noche' },
+  { hour: 21, skyTop: C(0x05071a), skyMid: C(0x0d112a), skyBottom: C(0x161c3a), sunColor: C(0x33447a), sunIntensity: 0.08, ambientIntensity: 0.2, fogColor: C(0x0a0d1e), fogNear: 70, fogFar: 1500, label: 'Noche cerrada' },
+  { hour: 24, skyTop: C(0x03040d), skyMid: C(0x070a18), skyBottom: C(0x0c1226), sunColor: C(0x33447a), sunIntensity: 0.05, ambientIntensity: 0.16, fogColor: C(0x05060f), fogNear: 70, fogFar: 1500, label: 'Madrugada' },
 ]
 
 function lerpKeyframes(hour: number): Keyframe {
@@ -50,6 +52,7 @@ function lerpKeyframes(hour: number): Keyframe {
   return {
     hour,
     skyTop: a.skyTop.clone().lerp(b.skyTop, f),
+    skyMid: a.skyMid.clone().lerp(b.skyMid, f),
     skyBottom: a.skyBottom.clone().lerp(b.skyBottom, f),
     sunColor: a.sunColor.clone().lerp(b.sunColor, f),
     sunIntensity: THREE.MathUtils.lerp(a.sunIntensity, b.sunIntensity, f),
@@ -71,13 +74,25 @@ void main() {
 `
 const SKY_FRAGMENT = /* glsl */ `
 uniform vec3 topColor;
+uniform vec3 midColor;
 uniform vec3 bottomColor;
-uniform float offset;
-uniform float exponent;
+uniform vec3 sunDir;
+uniform vec3 glowColor;
+uniform float glowStrength;
 varying vec3 vWorldPosition;
 void main() {
-  float h = normalize(vWorldPosition + vec3(0.0, offset, 0.0)).y;
-  gl_FragColor = vec4(mix(bottomColor, topColor, max(pow(max(h, 0.0), exponent), 0.0)), 1.0);
+  // Sky dome follows the camera, so the view direction is just the vector
+  // from the camera to this fragment.
+  vec3 dir = normalize(vWorldPosition - cameraPosition);
+  float h = dir.y;
+  // Three-stop gradient: horizon band -> mid band -> zenith.
+  vec3 col = mix(bottomColor, midColor, smoothstep(0.0, 0.22, h));
+  col = mix(col, topColor, smoothstep(0.18, 0.62, h));
+  // Warm halo around the sun, hugging the horizon — the "HDR sky" feel.
+  float sunAmt = pow(max(dot(dir, sunDir), 0.0), 9.0);
+  float horizonBoost = 1.0 - smoothstep(0.0, 0.38, abs(h));
+  col += glowColor * sunAmt * glowStrength * (0.3 + 0.7 * horizonBoost);
+  gl_FragColor = vec4(col, 1.0);
 }
 `
 
@@ -119,13 +134,15 @@ export class DayNightCycle {
     this.ambient = new THREE.HemisphereLight(0x88aaff, 0x201510, 0.5)
     scene.add(this.ambient)
 
-    const skyGeo = new THREE.SphereGeometry(4000, 24, 16)
+    const skyGeo = new THREE.SphereGeometry(4000, 32, 24)
     const skyMat = new THREE.ShaderMaterial({
       uniforms: {
         topColor: { value: new THREE.Color(0x3f7fe0) },
+        midColor: { value: new THREE.Color(0x7fb2ef) },
         bottomColor: { value: new THREE.Color(0xbfe3ff) },
-        offset: { value: 20 },
-        exponent: { value: 0.6 },
+        sunDir: { value: new THREE.Vector3(0, 1, 0) },
+        glowColor: { value: new THREE.Color(0xfff3da) },
+        glowStrength: { value: 0 },
       },
       vertexShader: SKY_VERTEX,
       fragmentShader: SKY_FRAGMENT,
@@ -233,7 +250,14 @@ export class DayNightCycle {
 
     const mat = this.skyMesh.material as THREE.ShaderMaterial
     mat.uniforms.topColor.value.copy(kf.skyTop)
+    mat.uniforms.midColor.value.copy(kf.skyMid)
     mat.uniforms.bottomColor.value.copy(kf.skyBottom)
+    mat.uniforms.sunDir.value.copy(sunDir)
+    mat.uniforms.glowColor.value.copy(kf.sunColor)
+    // Halo strongest when the sun rides low with real intensity behind it —
+    // sunrise/sunset blaze, gentle by day, none at night.
+    const lowSun = 1 - THREE.MathUtils.clamp(Math.abs(elevationDeg) / 28, 0, 1)
+    mat.uniforms.glowStrength.value = THREE.MathUtils.clamp(kf.sunIntensity, 0, 1.6) * (0.22 + lowSun * 0.55)
 
     if (this.scene.fog instanceof THREE.Fog) {
       this.scene.fog.color.copy(kf.fogColor)

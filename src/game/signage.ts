@@ -346,25 +346,34 @@ export function makeMoonTexture(): THREE.CanvasTexture {
   return tex
 }
 
-/** Soft cumulus blob — several overlapping radial gradients on a transparent canvas. */
+/**
+ * Soft cumulus blob — overlapping radial gradients on a transparent canvas.
+ * Every gradient is sized to fade fully out INSIDE the canvas: puffs that
+ * reached the edges used to get chopped into hard horizontal cuts on the
+ * biggest clouds.
+ */
 export function makeCloudTexture(): THREE.CanvasTexture {
-  const w = 256
-  const h = 128
+  const w = 512
+  const h = 256
   const canvas = document.createElement('canvas')
   canvas.width = w
   canvas.height = h
   const ctx = canvas.getContext('2d')!
-  const puffs = [
-    [0.32, 0.62, 0.30], [0.5, 0.5, 0.34], [0.68, 0.6, 0.28], [0.42, 0.44, 0.24], [0.58, 0.4, 0.2], [0.22, 0.7, 0.18], [0.78, 0.7, 0.16],
+  // px, py, radius as fraction of height — chosen so px*w ± r and py*h ± r
+  // always stay within the canvas.
+  const puffs: [number, number, number][] = [
+    [0.34, 0.56, 0.34], [0.5, 0.5, 0.4], [0.66, 0.56, 0.32], [0.42, 0.44, 0.28], [0.58, 0.42, 0.24], [0.26, 0.62, 0.2], [0.74, 0.62, 0.18],
   ]
   for (const [px, py, pr] of puffs) {
-    const g = ctx.createRadialGradient(w * px, h * py, 0, w * px, h * py, h * pr * 2)
+    const r = Math.min(h * pr, w * px - 2, w * (1 - px) - 2, h * py - 2, h * (1 - py) - 2)
+    const g = ctx.createRadialGradient(w * px, h * py, 0, w * px, h * py, r)
     g.addColorStop(0, 'rgba(255,255,255,0.85)')
-    g.addColorStop(0.6, 'rgba(255,255,255,0.35)')
+    g.addColorStop(0.55, 'rgba(255,255,255,0.38)')
+    g.addColorStop(0.85, 'rgba(255,255,255,0.08)')
     g.addColorStop(1, 'rgba(255,255,255,0)')
     ctx.fillStyle = g
     ctx.beginPath()
-    ctx.arc(w * px, h * py, h * pr * 2, 0, Math.PI * 2)
+    ctx.arc(w * px, h * py, r, 0, Math.PI * 2)
     ctx.fill()
   }
   const tex = new THREE.CanvasTexture(canvas)
