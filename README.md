@@ -2,7 +2,7 @@
 
 Un simulador de conducción de trenes en 3D para navegador, ambientado en una versión estilizada de la línea circular de Tokio. Enfocado en móvil, pensado para jugarse con el pulgar, con un ciclo completo de iluminación día/noche y melodías de estación originales.
 
-**Juega en staging:** https://ruben-arconada.github.io/Yamanote-Fun/
+**Juega en staging:** https://ruben-arconada.github.io/tokyo-loop/
 
 > **Aviso**: Tokyo Loop es un juego de fans sin afiliación con JR East ni con ninguna compañía ferroviaria. Los nombres de estación se usan como topónimos de los barrios de Tokio; la numeración de línea ("TL"), la señalética, el material rodante y todas las melodías son creaciones originales del juego.
 
