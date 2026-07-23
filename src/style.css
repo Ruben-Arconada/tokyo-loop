@@ -4,6 +4,59 @@
   --safe-left: env(safe-area-inset-left, 0px);
   --safe-right: env(safe-area-inset-right, 0px);
   color-scheme: dark;
+
+  /* ================= Design tokens =================
+     One scale each for spacing/radius/type/chip-look, so every element's
+     size and alignment traces back to a rule instead of a one-off guess.
+     Change the HUD's whole feel by editing values here, not per component. */
+  --space-1: 4px;
+  --space-2: 8px;
+  --space-3: 12px;
+  --space-4: 16px;
+  --space-5: 24px;
+  --space-6: 32px;
+
+  /* Radius carries MEANING, not just a look: sm = small tag/badge,
+     md = standard HUD chip, lg = big surface (lever track, cards),
+     pill = perfectly round — reserved for the one control that must read
+     as physically different from everything else (the E-brake). */
+  --radius-sm: 8px;
+  --radius-md: 12px;
+  --radius-lg: 18px;
+  --radius-pill: 999px;
+
+  /* Type scale keyed to READING FREQUENCY while driving, not to taste:
+     hero = the one number you must read in under a glance (speed);
+     value = numbers you check often but don't stare at (notch/score/clock);
+     body = names/sentences; label = tags for other data; micro = satellite
+     captions that never carry a decision on their own. */
+  --text-micro: 10px;
+  --text-label: 12px;
+  --text-body: 14px;
+  --text-value: 20px;
+  --text-hero: 40px;
+
+  /* The one "glass chip" look shared by every HUD chip — previously each
+     one invented its own background alpha (0.55/0.6/0.65/0.78/0.85/0.9)
+     and radius (8/9/10/12/14/16/18px). Physical controls (lever handle,
+     E-brake) deliberately do NOT use this — they read as metal, not glass. */
+  --chip-bg: linear-gradient(180deg, rgba(20, 23, 33, 0.82) 0%, rgba(8, 9, 15, 0.86) 100%);
+  --chip-border: 1px solid rgba(255, 255, 255, 0.14);
+  --chip-blur: blur(10px);
+  --chip-shadow: 0 4px 14px rgba(0, 0, 0, 0.4), inset 0 1px 0 rgba(255, 255, 255, 0.08);
+
+  /* Color roles — kept close to the hues already established elsewhere in
+     the game (line green, brake/power states, toast grades) rather than
+     inventing a new palette for the sake of it. */
+  --color-accent: #8fc31f;
+  --color-power: #7bffb0;
+  --color-brake: #ff8b7b;
+  --color-warn: #ffce4a;
+  --color-info: #6bd4ff;
+  --color-eb: #b3261e;
+  --text-primary: rgba(255, 255, 255, 0.96);
+  --text-secondary: rgba(255, 255, 255, 0.72);
+  --text-muted: rgba(255, 255, 255, 0.48);
 }
 
 * {
@@ -39,7 +92,7 @@ button:active {
   opacity: 0.85;
 }
 button:focus-visible {
-  outline: 2px solid #ffce4a;
+  outline: 2px solid var(--color-warn);
   outline-offset: 2px;
 }
 @media (hover: hover) {
@@ -61,30 +114,31 @@ canvas.game-canvas {
   position: absolute;
   inset: 0;
   pointer-events: none;
-  color: #fff;
+  color: var(--text-primary);
   font-variant-numeric: tabular-nums;
 }
 
 .hud-top {
   position: absolute;
-  top: calc(var(--safe-top) + 8px);
-  left: calc(var(--safe-left) + 8px);
-  right: calc(var(--safe-right) + 8px);
+  top: calc(var(--safe-top) + var(--space-2));
+  left: calc(var(--safe-left) + var(--space-2));
+  right: calc(var(--safe-right) + var(--space-2));
   display: flex;
   align-items: flex-start;
-  gap: 10px;
+  gap: var(--space-3);
   pointer-events: none;
 }
 
 .hud-menu-btn {
   pointer-events: auto;
-  background: rgba(10, 12, 20, 0.65);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  color: #fff;
+  background: var(--chip-bg);
+  border: var(--chip-border);
+  box-shadow: var(--chip-shadow);
+  backdrop-filter: var(--chip-blur);
+  color: var(--text-primary);
   width: 40px;
   height: 40px;
-  border-radius: 10px;
-  backdrop-filter: blur(6px);
+  border-radius: var(--radius-md);
   display: flex;
   align-items: center;
   justify-content: center;
@@ -93,15 +147,16 @@ canvas.game-canvas {
 .hud-menu-btn svg { width: 20px; height: 20px; }
 
 .hud-clock {
-  background: rgba(10, 12, 20, 0.65);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 10px;
-  padding: 4px 12px;
+  background: var(--chip-bg);
+  border: var(--chip-border);
+  box-shadow: var(--chip-shadow);
+  backdrop-filter: var(--chip-blur);
+  border-radius: var(--radius-md);
+  padding: var(--space-1) var(--space-3);
   display: flex;
   flex-direction: column;
   align-items: center;
   min-width: 84px;
-  backdrop-filter: blur(6px);
   color: inherit;
   font: inherit;
   cursor: pointer;
@@ -115,12 +170,13 @@ canvas.game-canvas {
   left: calc(var(--safe-left) + 60px);
   display: flex;
   flex-direction: column;
-  gap: 4px;
-  background: rgba(10, 12, 20, 0.85);
-  border: 1px solid rgba(255, 255, 255, 0.18);
-  border-radius: 12px;
-  padding: 8px;
-  backdrop-filter: blur(8px);
+  gap: var(--space-1);
+  background: rgba(10, 12, 20, 0.9);
+  border: var(--chip-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-2);
+  backdrop-filter: blur(14px);
+  box-shadow: var(--chip-shadow);
   z-index: 25;
   pointer-events: auto;
 }
@@ -128,29 +184,29 @@ canvas.game-canvas {
 .time-picker button {
   background: rgba(255, 255, 255, 0.08);
   border: none;
-  border-radius: 8px;
-  color: #f2f2f6;
-  font-size: 13px;
-  padding: 7px 14px;
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font-size: var(--text-body);
+  padding: var(--space-2) var(--space-4);
   text-align: left;
   cursor: pointer;
 }
 .time-picker button:active { background: rgba(255, 255, 255, 0.2); }
-.hud-clock-time { font-family: ui-monospace, 'SF Mono', 'Roboto Mono', monospace; font-size: 18px; font-weight: 700; letter-spacing: 0.03em; opacity: 0.85; }
-.hud-clock-phase { font-size: 10px; opacity: 0.65; }
+.hud-clock-time { font-family: ui-monospace, 'SF Mono', 'Roboto Mono', monospace; font-size: var(--text-value); font-weight: 700; letter-spacing: 0.01em; color: var(--text-primary); }
+.hud-clock-phase { font-size: var(--text-micro); letter-spacing: 0.04em; color: var(--text-muted); }
 
 .hud-stations {
   flex: 1;
   display: flex;
   flex-direction: column;
   align-items: flex-end;
-  gap: 4px;
+  gap: var(--space-1);
   min-width: 0;
 }
 .hud-stations-row {
   display: flex;
   justify-content: flex-end;
-  gap: 8px;
+  gap: var(--space-2);
 }
 
 /* Reference bar: how far along the current inter-station hop we are. */
@@ -158,15 +214,15 @@ canvas.game-canvas {
   position: relative;
   width: min(100%, 200px);
   height: 5px;
-  border-radius: 3px;
+  border-radius: var(--radius-sm);
   background: rgba(255, 255, 255, 0.18);
   overflow: visible;
 }
 .segment-progress-fill {
   height: 100%;
   width: 0%;
-  border-radius: 3px;
-  background: #8fc31f;
+  border-radius: var(--radius-sm);
+  background: var(--color-accent);
   transition: width 0.3s linear;
 }
 .segment-progress-train {
@@ -180,17 +236,19 @@ canvas.game-canvas {
   filter: drop-shadow(0 1px 1px rgba(0, 0, 0, 0.6));
 }
 .hud-station-now, .hud-station-next {
-  background: rgba(10, 12, 20, 0.65);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 10px;
-  padding: 4px 10px;
+  background: var(--chip-bg);
+  border: var(--chip-border);
+  box-shadow: var(--chip-shadow);
+  backdrop-filter: var(--chip-blur);
+  border-radius: var(--radius-md);
+  padding: var(--space-1) var(--space-3);
   display: flex;
   flex-direction: column;
   min-width: 92px;
-  backdrop-filter: blur(6px);
 }
-.hud-station-now small, .hud-station-next small { font-size: 8px; opacity: 0.55; letter-spacing: 0.08em; }
-.hud-station-now-name, .hud-station-next-name { font-size: 14px; font-weight: 600; opacity: 0.9; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: opacity 0.2s ease; }
+/* Persistent low-priority caption — reads once, retained, never re-read mid-drive. */
+.hud-station-now small, .hud-station-next small { font-size: var(--text-micro); letter-spacing: 0.06em; color: var(--text-muted); }
+.hud-station-now-name, .hud-station-next-name { font-size: var(--text-body); font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: opacity 0.2s ease; }
 .hud-station-now { border-color: rgba(120, 200, 255, 0.4); }
 
 /* Route map: Tokyo Loop's green band with round station markers riding on
@@ -198,16 +256,17 @@ canvas.game-canvas {
 .line-diagram {
   position: absolute;
   top: calc(var(--safe-top) + 58px);
-  left: calc(var(--safe-left) + 8px);
-  right: calc(var(--safe-right) + 8px);
+  left: calc(var(--safe-left) + var(--space-2));
+  right: calc(var(--safe-right) + var(--space-2));
   height: 18px;
-  background: rgba(10, 12, 20, 0.6);
-  border-radius: 9px;
+  background: var(--chip-bg);
+  border: var(--chip-border);
+  border-radius: var(--radius-md);
   display: flex;
   align-items: center;
   justify-content: space-between;
-  padding: 0 10px;
-  backdrop-filter: blur(4px);
+  padding: 0 var(--space-3);
+  backdrop-filter: var(--chip-blur);
 }
 .line-diagram::before {
   content: '';
@@ -217,8 +276,8 @@ canvas.game-canvas {
   top: 50%;
   height: 5px;
   transform: translateY(-50%);
-  background: #8fc31f;
-  border-radius: 3px;
+  background: var(--color-accent);
+  border-radius: var(--radius-sm);
 }
 .line-dot {
   position: relative;
@@ -232,18 +291,18 @@ canvas.game-canvas {
 }
 /* Stop-result trail: how well each station went, painted for the rest of the loop. */
 .line-dot.grade-perfect { background: #52ff9a; box-shadow: 0 0 7px #52ff9a; }
-.line-dot.grade-good { background: #3dcc74; }
+.line-dot.grade-good { background: var(--color-power); }
 .line-dot.grade-ok { background: #ffa53d; }
 .line-dot.grade-miss { background: #ff5252; }
 /* Current/next keep priority over result colors. */
-.line-dot.current { background: #ffce4a; box-shadow: 0 0 8px #ffce4a; transform: scale(1.45); border-color: #fff; }
-.line-dot.next { background: #6bd4ff; transform: scale(1.25); border-color: #fff; }
+.line-dot.current { background: var(--color-warn); box-shadow: 0 0 8px var(--color-warn); transform: scale(1.45); border-color: #fff; }
+.line-dot.next { background: var(--color-info); transform: scale(1.25); border-color: #fff; }
 
 .disclaimer {
-  margin-top: 14px;
-  font-size: 10px;
+  margin-top: var(--space-4);
+  font-size: var(--text-micro);
   line-height: 1.5;
-  opacity: 0.55;
+  color: var(--text-muted);
 }
 
 /* "TL" station-number badge — Tokyo Loop's own numbering, not any operator's. */
@@ -251,101 +310,117 @@ canvas.game-canvas {
   display: inline-flex;
   align-items: center;
   justify-content: center;
-  background: #8fc31f;
+  background: var(--color-accent);
   color: #fff;
-  font-size: 10px;
+  font-size: var(--text-label);
   font-weight: 800;
   letter-spacing: 0.02em;
-  border-radius: 5px;
+  border-radius: var(--radius-sm);
   border: 1.5px solid #fff;
-  padding: 1px 4px;
+  padding: 1px var(--space-1);
   line-height: 1.2;
 }
 .hud-station-row {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: var(--space-1);
   min-width: 0;
 }
 
 /* Score chip — bottom-left, over the cab desk, out of the lever's way. */
 .score-chip {
   position: absolute;
-  left: calc(var(--safe-left) + 12px);
+  left: calc(var(--safe-left) + var(--space-3));
   bottom: calc(var(--safe-bottom) + 74px);
-  background: rgba(10, 12, 20, 0.65);
+  background: var(--chip-bg);
   border: 1px solid rgba(143, 195, 31, 0.5);
-  border-radius: 10px;
-  padding: 4px 12px;
+  box-shadow: var(--chip-shadow);
+  backdrop-filter: var(--chip-blur);
+  border-radius: var(--radius-md);
+  padding: var(--space-1) var(--space-3);
   display: flex;
   flex-direction: column;
   align-items: center;
-  backdrop-filter: blur(6px);
   pointer-events: none;
 }
 .score-value {
   font-family: ui-monospace, 'SF Mono', 'Roboto Mono', monospace;
-  font-size: 17px;
-  font-weight: 700;
+  font-size: var(--text-value);
+  font-weight: 800;
   color: #cde98a;
   transition: transform 0.15s ease;
 }
 .score-value.bump { transform: scale(1.25); }
-.score-best { font-size: 9px; opacity: 0.6; letter-spacing: 0.06em; }
+.score-best { font-size: var(--text-micro); color: var(--text-muted); letter-spacing: 0.05em; }
 
+/* Bottom-left control row: E-brake, doors, speed, gear — one continuous
+   reading line at thumb height. E-brake sits first (leftmost, biggest
+   target) so its size alone signals "this one is different" before you
+   ever read its color. */
 .hud-bottom {
   position: absolute;
-  bottom: calc(var(--safe-bottom) + 10px);
-  left: calc(var(--safe-left) + 8px);
+  bottom: calc(var(--safe-bottom) + var(--space-2));
+  /* 64px = E-brake's 48px width + space-2 on each side — the room the
+     relocated E-brake button (owned by Controls.ts, positioned independently
+     in its own layer) needs to its left. Keep in sync with .controller-eb. */
+  left: calc(var(--safe-left) + 64px);
   display: flex;
   align-items: flex-end;
-  gap: 10px;
+  gap: var(--space-2);
 }
 
 .door-indicator {
-  background: rgba(10, 12, 20, 0.65);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 8px;
-  padding: 6px 10px;
-  font-size: 10px;
-  letter-spacing: 0.1em;
-  opacity: 0.55;
+  background: var(--chip-bg);
+  border: var(--chip-border);
+  box-shadow: var(--chip-shadow);
+  backdrop-filter: var(--chip-blur);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
+  font-size: var(--text-label);
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--text-secondary);
   transition: opacity 0.2s ease, background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
 }
 .door-indicator.open {
-  opacity: 1;
-  background: rgba(255, 206, 74, 0.25);
-  border-color: #ffce4a;
-  color: #ffce4a;
+  background: rgba(255, 206, 74, 0.22);
+  border-color: var(--color-warn);
+  color: var(--color-warn);
 }
 
 .speed-gauge {
-  background: rgba(10, 12, 20, 0.78);
+  background: var(--chip-bg);
   border: 1px solid rgba(255, 255, 255, 0.22);
-  border-radius: 14px;
-  padding: 8px 20px;
+  border-radius: var(--radius-lg);
+  padding: var(--space-2) var(--space-5);
   display: flex;
   align-items: baseline;
-  gap: 4px;
-  backdrop-filter: blur(6px);
-  box-shadow: 0 6px 18px rgba(0, 0, 0, 0.4);
+  gap: var(--space-1);
+  backdrop-filter: var(--chip-blur);
+  box-shadow: var(--chip-shadow), 0 6px 18px rgba(0, 0, 0, 0.35);
 }
-.speed-value { font-family: ui-monospace, 'SF Mono', 'Roboto Mono', monospace; font-size: 34px; font-weight: 800; display: inline-block; transition: transform 0.1s ease; }
+.speed-value { font-family: ui-monospace, 'SF Mono', 'Roboto Mono', monospace; font-size: var(--text-hero); font-weight: 800; letter-spacing: -0.02em; color: var(--text-primary); display: inline-block; transition: transform 0.1s ease; }
 .speed-value.bump { transform: scale(1.1); }
-.speed-unit { font-size: 11px; opacity: 0.6; }
+.speed-unit { font-size: var(--text-micro); color: var(--text-muted); }
 
+/* Same tier as score/clock (--text-value): checked often, never stared at.
+   Distinguished from them by position (against the lever) and by color
+   (tints power/brake), not by size. */
 .notch-readout {
-  background: rgba(10, 12, 20, 0.65);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 8px;
-  padding: 8px 12px;
+  background: var(--chip-bg);
+  border: var(--chip-border);
+  box-shadow: var(--chip-shadow);
+  backdrop-filter: var(--chip-blur);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-3);
   font-family: ui-monospace, 'SF Mono', 'Roboto Mono', monospace;
   font-weight: 700;
-  font-size: 15px;
+  font-size: var(--text-value);
+  color: var(--text-primary);
   transition: color 0.2s ease, border-color 0.2s ease, background-color 0.2s ease;
 }
-.notch-readout.powering { color: #7bffb0; border-color: #7bffb0; }
-.notch-readout.braking { color: #ff8b7b; border-color: #ff8b7b; }
+.notch-readout.powering { color: var(--color-power); border-color: var(--color-power); }
+.notch-readout.braking { color: var(--color-brake); border-color: var(--color-brake); }
 
 /* ---------- Toast ---------- */
 .toast {
@@ -353,47 +428,63 @@ canvas.game-canvas {
   top: 90px;
   left: 50%;
   transform: translateX(-50%) translateY(-10px);
-  background: rgba(10, 12, 20, 0.85);
-  border: 1px solid rgba(255, 255, 255, 0.2);
-  border-radius: 10px;
-  padding: 8px 18px;
-  font-size: 14px;
+  background: rgba(10, 12, 20, 0.9);
+  border: var(--chip-border);
+  box-shadow: var(--chip-shadow);
+  backdrop-filter: blur(14px);
+  border-radius: var(--radius-md);
+  padding: var(--space-2) var(--space-4);
+  font-size: var(--text-body);
   opacity: 0;
   transition: opacity 0.25s, transform 0.25s;
   pointer-events: none;
   white-space: nowrap;
 }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
-.toast.grade-perfect { border-color: #ffce4a; color: #ffce4a; }
-.toast.grade-good { border-color: #7bffb0; color: #7bffb0; }
-.toast.grade-overshot, .toast.grade-undershot { border-color: #ff8b7b; color: #ff8b7b; }
+.toast.grade-perfect { border-color: var(--color-warn); color: var(--color-warn); }
+.toast.grade-good { border-color: var(--color-power); color: var(--color-power); }
+.toast.grade-overshot, .toast.grade-undershot { border-color: var(--color-brake); color: var(--color-brake); }
 
-/* ---------- Controller ---------- */
+/* ---------- Controller (the lever, and its own positioning layer) ---------- */
+/* Neutral full-viewport layer — same pattern as .hud — so .controller and
+   .controller-eb can each be positioned independently against the screen
+   edges instead of needing to share one flex group. */
+.controls-layer {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+}
+
+/* The lever now claims the far right edge outright — previously the
+   E-brake sat outermost and the lever sat one slot inboard of it; with the
+   E-brake relocated to the bottom-left row, the lever moves out to exactly
+   that outer distance from the edge. */
 .controller {
   position: absolute;
-  right: calc(var(--safe-right) + 10px);
-  bottom: calc(var(--safe-bottom) + 10px);
+  right: calc(var(--safe-right) + var(--space-2));
+  bottom: calc(var(--safe-bottom) + var(--space-2));
   display: flex;
   align-items: stretch;
-  gap: 6px;
+  gap: var(--space-2);
   pointer-events: none;
 }
 .controller-notches {
   display: flex;
   flex-direction: column-reverse;
   justify-content: space-between;
-  font-size: 9px;
-  color: rgba(255, 255, 255, 0.5);
-  padding: 6px 0;
+  font-size: var(--text-micro);
+  color: var(--text-muted);
+  padding: var(--space-2) 0;
   text-align: right;
 }
 .controller-track {
   position: relative;
   width: 56px;
   height: min(46vh, 320px);
-  background: rgba(10, 12, 20, 0.55);
-  border: 1px solid rgba(255, 255, 255, 0.15);
-  border-radius: 16px;
+  background: var(--chip-bg);
+  border: var(--chip-border);
+  box-shadow: var(--chip-shadow);
+  border-radius: var(--radius-lg);
   pointer-events: auto;
   touch-action: none;
 }
@@ -401,12 +492,14 @@ canvas.game-canvas {
   content: '';
   position: absolute;
   left: 50%;
-  top: 8px;
-  bottom: 8px;
+  top: var(--space-2);
+  bottom: var(--space-2);
   width: 2px;
   background: rgba(255, 255, 255, 0.15);
   transform: translateX(-50%);
 }
+/* Deliberately NOT the glass chip system: this is the piece a hand grabs,
+   so it reads as brushed steel — a physical control, not a data readout. */
 .controller-handle {
   position: absolute;
   left: 50%;
@@ -416,36 +509,44 @@ canvas.game-canvas {
   height: 34px;
   background: linear-gradient(#4a5568, #2d3340);
   border: 2px solid #cbd5e1;
-  border-radius: 8px;
+  border-radius: var(--radius-sm);
   display: flex;
   align-items: center;
   justify-content: center;
   font-weight: 700;
-  font-size: 13px;
+  font-size: 15px;
   color: #fff;
+  text-shadow: 0 1px 1px rgba(0, 0, 0, 0.5);
   touch-action: none;
   cursor: grab;
   transition: bottom 0.12s cubic-bezier(0.2, 0.8, 0.2, 1), background 0.15s ease, border-color 0.15s ease;
 }
 .controller-handle.dragging { transition: none; cursor: grabbing; }
-.controller-handle-power { background: linear-gradient(#2d6a4f, #1b4332); border-color: #7bffb0; }
-.controller-handle-brake { background: linear-gradient(#7a2d2d, #4a1b1b); border-color: #ff8b7b; }
-.controller-handle-eb { background: linear-gradient(#b3261e, #7a1a15); border-color: #ffce4a; }
+.controller-handle-power { background: linear-gradient(#2d6a4f, #1b4332); border-color: var(--color-power); }
+.controller-handle-brake { background: linear-gradient(#7a2d2d, #4a1b1b); border-color: var(--color-brake); }
+.controller-handle-eb { background: linear-gradient(#b3261e, #7a1a15); border-color: var(--color-warn); }
 
+/* The E-brake: bottom-left, in line with doors/speed/gear (see .hud-bottom's
+   left offset). Circular and a full 8px bigger than its neighbors on
+   purpose — an oversized touch target reads as "this one matters more"
+   before the color even registers, same as a real emergency stop. */
 .controller-eb {
+  position: absolute;
+  left: calc(var(--safe-left) + var(--space-2));
+  bottom: calc(var(--safe-bottom) + var(--space-2));
   pointer-events: auto;
-  align-self: flex-start;
-  width: 40px;
-  height: 40px;
-  border-radius: 50%;
-  background: #b3261e;
-  border: 2px solid #ffce4a;
+  width: 48px;
+  height: 48px;
+  border-radius: var(--radius-pill);
+  background: var(--color-eb);
+  border: 2px solid var(--color-warn);
+  box-shadow: 0 4px 14px rgba(179, 38, 30, 0.4);
   color: #fff;
   display: flex;
   align-items: center;
   justify-content: center;
 }
-.controller-eb svg { width: 20px; height: 20px; }
+.controller-eb svg { width: 22px; height: 22px; }
 
 /* ---------- Overlays ---------- */
 .overlay {
@@ -457,7 +558,7 @@ canvas.game-canvas {
   justify-content: center;
   pointer-events: auto;
   z-index: 20;
-  padding: 20px;
+  padding: var(--space-5);
   overflow-y: auto;
   opacity: 1;
   visibility: visible;
@@ -473,67 +574,68 @@ canvas.game-canvas {
 .overlay-card {
   max-width: 440px;
   width: 100%;
-  background: rgba(20, 22, 32, 0.9);
-  border: 1px solid rgba(255, 255, 255, 0.12);
-  border-radius: 18px;
-  padding: 28px 24px;
-  color: #fff;
+  background: rgba(20, 22, 32, 0.92);
+  border: var(--chip-border);
+  border-radius: var(--radius-lg);
+  padding: var(--space-6) var(--space-5);
+  color: var(--text-primary);
   text-align: center;
   max-height: 90vh;
   overflow-y: auto;
 }
-.overlay-card h1 { font-size: 26px; margin: 0 0 4px; }
-.overlay-card h1 span { display: block; font-size: 15px; font-weight: 400; opacity: 0.7; letter-spacing: 0.08em; }
+.overlay-card h1 { font-size: 26px; margin: 0 0 var(--space-1); }
+.overlay-card h1 span { display: block; font-size: var(--text-body); font-weight: 400; color: var(--text-secondary); letter-spacing: 0.08em; }
 .overlay-card h2 { margin-top: 0; }
-.tagline { opacity: 0.85; font-size: 14px; margin: 10px 0 18px; }
-.howto { text-align: left; font-size: 13px; line-height: 1.6; opacity: 0.9; padding-left: 18px; margin-bottom: 20px; }
+.tagline { color: var(--text-secondary); font-size: var(--text-body); margin: var(--space-3) 0 var(--space-5); }
+.howto { text-align: left; font-size: var(--text-body); line-height: 1.6; color: var(--text-secondary); padding-left: var(--space-4); margin-bottom: var(--space-5); }
 
 .btn-start, .btn-resume, .btn-close, .btn-credits {
   display: block;
   width: 100%;
-  padding: 14px;
-  margin-top: 10px;
-  border-radius: 12px;
+  padding: var(--space-4);
+  margin-top: var(--space-2);
+  border-radius: var(--radius-md);
   border: none;
-  font-size: 15px;
+  font-size: var(--text-body);
   font-weight: 700;
-  background: #ffce4a;
+  background: var(--color-warn);
   color: #201a00;
 }
-.btn-credits, .btn-close { background: transparent; border: 1px solid rgba(255, 255, 255, 0.25); color: #fff; font-weight: 500; }
+.btn-credits, .btn-close { background: transparent; border: 1px solid rgba(255, 255, 255, 0.25); color: var(--text-primary); font-weight: 500; }
 
-.time-scale-row { margin-top: 18px; font-size: 13px; opacity: 0.9; }
-.time-scale-buttons { display: flex; gap: 6px; margin-top: 8px; }
+.time-scale-row { margin-top: var(--space-4); font-size: var(--text-body); color: var(--text-secondary); }
+.time-scale-buttons { display: flex; gap: var(--space-2); margin-top: var(--space-2); }
 .time-scale-buttons button {
   flex: 1;
-  padding: 8px;
-  border-radius: 8px;
+  padding: var(--space-2);
+  border-radius: var(--radius-sm);
   border: 1px solid rgba(255, 255, 255, 0.2);
   background: transparent;
-  color: #fff;
-  font-size: 12px;
+  color: var(--text-primary);
+  font-size: var(--text-label);
 }
-.time-scale-buttons button.active { background: #ffce4a; color: #201a00; border-color: #ffce4a; }
+.time-scale-buttons button.active { background: var(--color-warn); color: #201a00; border-color: var(--color-warn); }
 
 .credits-card { text-align: left; }
-.credits-intro { font-size: 13px; opacity: 0.9; line-height: 1.6; }
-.team-list { list-style: none; padding: 0; margin: 0 0 16px; }
-.team-list li { padding: 10px 0; border-bottom: 1px solid rgba(255, 255, 255, 0.1); font-size: 13px; }
-.team-list li span { opacity: 0.7; }
+.credits-intro { font-size: var(--text-body); color: var(--text-secondary); line-height: 1.6; }
+.team-list { list-style: none; padding: 0; margin: 0 0 var(--space-4); }
+.team-list li { padding: var(--space-3) 0; border-bottom: 1px solid rgba(255, 255, 255, 0.1); font-size: var(--text-body); }
+.team-list li span { color: var(--text-secondary); }
 
 /* ---------- Responsive tweaks ---------- */
 @media (max-width: 480px) {
-  .hud-station-now, .hud-station-next { min-width: 76px; padding: 3px 8px; }
-  .hud-station-now-name, .hud-station-next-name { font-size: 13px; }
-  .speed-value { font-size: 26px; }
+  .hud-station-now, .hud-station-next { min-width: 76px; padding: var(--space-1) var(--space-2); }
+  .hud-station-now-name, .hud-station-next-name { font-size: var(--text-label); }
+  .speed-value { font-size: 30px; }
+  .speed-gauge { padding: var(--space-2) var(--space-4); }
   .controller-track { width: 48px; height: min(40vh, 260px); }
   .controller-notches { display: none; }
 }
 
 @media (orientation: portrait) and (max-width: 700px) {
-  .hud-clock { min-width: 0; padding: 4px 8px; }
-  .hud-stations { gap: 4px; }
-  .hud-station-now, .hud-station-next { min-width: 0; padding: 3px 7px; }
+  .hud-clock { min-width: 0; padding: var(--space-1) var(--space-2); }
+  .hud-stations { gap: var(--space-1); }
+  .hud-station-now, .hud-station-next { min-width: 0; padding: var(--space-1) 7px; }
   .hud-station-now small, .hud-station-next small { display: none; }
   .hud-station-now-name, .hud-station-next-name { font-size: 11px; max-width: 22vw; }
 }

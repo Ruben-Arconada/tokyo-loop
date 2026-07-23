@@ -23,12 +23,17 @@ export class Controls {
 
   constructor(mount: HTMLElement, cb: ControlsCallbacks) {
     this.cb = cb
+    // A neutral full-viewport layer (same pattern as UI's .hud) so the lever
+    // group and the E-brake button can each be positioned independently
+    // against opposite screen edges instead of sharing one flex group.
     this.root = document.createElement('div')
-    this.root.className = 'controller'
+    this.root.className = 'controls-layer'
     this.root.innerHTML = `
-      <div class="controller-notches"></div>
-      <div class="controller-track">
-        <div class="controller-handle"><span class="controller-handle-label">N</span></div>
+      <div class="controller">
+        <div class="controller-notches"></div>
+        <div class="controller-track">
+          <div class="controller-handle"><span class="controller-handle-label">N</span></div>
+        </div>
       </div>
       <button class="controller-eb" aria-label="Freno de emergencia">
         <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round">
@@ -127,7 +132,10 @@ export class Controls {
     let last: { x: number; y: number } | null = null
     const viewport = mount
     viewport.addEventListener('pointerdown', (e) => {
-      if ((e.target as HTMLElement).closest('.controller, .hud, .overlay')) return
+      // .controls-layer covers both the lever group and the E-brake button
+      // (now independent siblings, not nested) — excluding the wrapper
+      // keeps a tap on either from also starting a look-drag.
+      if ((e.target as HTMLElement).closest('.controls-layer, .hud, .overlay')) return
       last = { x: e.clientX, y: e.clientY }
     })
     viewport.addEventListener('pointermove', (e) => {
