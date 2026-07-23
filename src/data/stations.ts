@@ -3,10 +3,19 @@
 // to give the loop a stylized, non-uniform rhythm — this is an artistic
 // interpretation of the line, not a to-scale map of Tokyo.
 
+/**
+ * Structural zone tier — drives density/height/vegetation/signage contrast
+ * that reads the same at any hour (unlike lighting, which only shows at
+ * night). 'quiet' = low-rise and green, 'mid' = moderate towers and mixed
+ * use, 'urban' = dense skyline and neon-saturated.
+ */
+export type ZoneTier = 'quiet' | 'mid' | 'urban'
+
 export type StationTheme = {
   buildingColor: number
   accentColor: number
   district: 'business' | 'downtown' | 'shitamachi' | 'green' | 'youth' | 'bay'
+  tier: ZoneTier
 }
 
 export interface StationDef {
@@ -31,12 +40,12 @@ export interface StationDef {
 }
 
 const THEMES: Record<StationTheme['district'], StationTheme> = {
-  business: { buildingColor: 0x445064, accentColor: 0x8fa3c4, district: 'business' },
-  downtown: { buildingColor: 0x51465c, accentColor: 0xe0559a, district: 'downtown' },
-  shitamachi: { buildingColor: 0x5c4a3c, accentColor: 0xd98f4a, district: 'shitamachi' },
-  green: { buildingColor: 0x3f5540, accentColor: 0x8fce6a, district: 'green' },
-  youth: { buildingColor: 0x4a3f5c, accentColor: 0xff5da2, district: 'youth' },
-  bay: { buildingColor: 0x3a4a58, accentColor: 0x5ad1e0, district: 'bay' },
+  business: { buildingColor: 0x445064, accentColor: 0x8fa3c4, district: 'business', tier: 'mid' },
+  downtown: { buildingColor: 0x51465c, accentColor: 0xe0559a, district: 'downtown', tier: 'urban' },
+  shitamachi: { buildingColor: 0x5c4a3c, accentColor: 0xd98f4a, district: 'shitamachi', tier: 'quiet' },
+  green: { buildingColor: 0x3f5540, accentColor: 0x8fce6a, district: 'green', tier: 'quiet' },
+  youth: { buildingColor: 0x4a3f5c, accentColor: 0xff5da2, district: 'youth', tier: 'urban' },
+  bay: { buildingColor: 0x3a4a58, accentColor: 0x5ad1e0, district: 'bay', tier: 'mid' },
 }
 
 export const STATIONS: StationDef[] = [

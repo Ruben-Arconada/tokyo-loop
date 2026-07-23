@@ -34,8 +34,8 @@ npm run preview  # sirve el build de producción localmente
 
 ## Stack
 
-Three.js + TypeScript + Vite, sin dependencias de assets externos: toda la geometría, texturas de rótulos y sonido se generan por código.
+Three.js + TypeScript + Vite, sin dependencias de assets externos: toda la geometría, texturas de rótulos y sonido se generan por código. Ver [LICENSES.md](LICENSES.md) para el aviso de licencia de Three.js (MIT).
 
 ## El equipo
 
-Tokyo Loop lo hace un estudio indie de siete personas obsesionadas con los trenes japoneses y con Tokio. Puedes leer sobre cada una desde el menú "Sobre el equipo" dentro del propio juego.
+Tokyo Loop lo presenta como el trabajo de un estudio indie de siete personas obsesionadas con los trenes japoneses y con Tokio. **Es un guiño de ambientación**: los siete perfiles del menú "Sobre el equipo" son personajes ficticios creados para dar sabor a los créditos, no un estudio real.

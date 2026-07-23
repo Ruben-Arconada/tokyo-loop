@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import type { Track } from './Track'
 import type { DayNightCycle } from './DayNightCycle'
-import { STATIONS } from '../data/stations'
+import { STATIONS, type ZoneTier } from '../data/stations'
 import { makeCloudTexture, makeNeonSignTexture, makeWindowGridTexture, makeRoofTileTexture, applyProgressiveWindows } from './signage'
 
 const N = STATIONS.length
@@ -242,6 +242,30 @@ export class Scenery {
     return new THREE.Vector3(p.x + out.x * distance, y, p.z + out.z * distance)
   }
 
+  /** Which station's segment a loop fraction falls in — station markers are sorted ascending, so the last one at or before `t` owns it. */
+  private tierAtT(t: number): ZoneTier {
+    const tt = ((t % 1) + 1) % 1
+    for (let s = N - 1; s >= 0; s--) {
+      if (tt >= this.track.markerFor(s).tFraction) return STATIONS[s].theme.tier
+    }
+    return STATIONS[N - 1].theme.tier
+  }
+
+  /**
+   * Loop-fraction sampler biased toward quiet-tier stretches — vegetation
+   * placement's half of the rural/mid/urban contrast (the other half is
+   * density tables in buildHouseRows/buildNeonSigns). A few rejection
+   * attempts at init time are free; this never runs per-frame.
+   */
+  private sampleTierWeightedT(): number {
+    const TIER_VEG_WEIGHT: Record<ZoneTier, number> = { quiet: 1, mid: 0.35, urban: 0.05 }
+    for (let attempt = 0; attempt < 8; attempt++) {
+      const t = Math.random()
+      if (Math.random() < TIER_VEG_WEIGHT[this.tierAtT(t)]) return t
+    }
+    return Math.random()
+  }
+
   private buildHorizonLandmarks() {
     // ——— Mount Fuji, far to the southwest, drawn fog-free like a distant
     // backdrop; its color is retinted every frame to sit against the sky.
@@ -384,8 +408,9 @@ export class Scenery {
     if (sakuraCanopies.instanceColor) sakuraCanopies.instanceColor.needsUpdate = true
     this.scene.add(sakuraTrunks, sakuraCanopies)
 
-    // ——— Pines: dark conifers dotted along the whole loop, denser near
-    // shitamachi and green stretches — the classic rail-side tree line.
+    // ——— Pines: dark conifers dotted along the loop, weighted HEAVILY toward
+    // quiet-tier stretches (real rail-side tree lines) and nearly absent in
+    // urban cores — part of the same structural zone contrast as the houses.
     const pineCount = 160
     const pineTrunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.2, 0.32, 2.6, 5), trunkMat, pineCount)
     const pineMat = new THREE.MeshStandardMaterial({ color: 0x2e4a2e, roughness: 0.95 })
@@ -393,7 +418,7 @@ export class Scenery {
     pineFoliage.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(pineCount * 3), 3)
     pineTrunks.castShadow = pineFoliage.castShadow = true
     for (let k = 0; k < pineCount; k++) {
-      const t = Math.random()
+      const t = this.sampleTierWeightedT()
       const p = this.track.pointAt(t)
       const tangent = this.track.tangentAt(t)
       const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize()
@@ -421,14 +446,14 @@ export class Scenery {
     this.scene.add(pineTrunks, pineFoliage)
 
     // ——— Low scrub: flattened bushes scattered in the band beyond the worn
-    // corridor, denser near the track and thinning out — filler texture that
-    // keeps the mid-ground from reading as bare billiard felt.
+    // corridor — filler texture that keeps the mid-ground from reading as
+    // bare billiard felt, weighted toward quiet zones like the pines.
     const scrubCount = 520
     const scrubMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 1 })
     const scrub = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 6, 5), scrubMat, scrubCount)
     scrub.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(scrubCount * 3), 3)
     for (let k = 0; k < scrubCount; k++) {
-      const t = Math.random()
+      const t = this.sampleTierWeightedT()
       const p = this.track.pointAt(t)
       const tangent = this.track.tangentAt(t)
       const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize()
@@ -457,7 +482,10 @@ export class Scenery {
   private buildHouseRows() {
     const dummy = new THREE.Object3D()
     const tint = new THREE.Color()
-    const houseCount = 320
+    // Budget covers the worst case (every quiet/mid station getting its full
+    // per-tier quota, see HOUSES_PER_TIER below) with headroom so no station
+    // gets shortchanged just because it comes later in loop order.
+    const houseCount = 380
 
     // Pitched roof as a triangular prism (unit size, scaled per instance),
     // CLOSED underneath — the open soffit let you see straight through the
@@ -555,15 +583,20 @@ export class Scenery {
     const wallTones = [0xcfc4b0, 0xbfb6a6, 0xd8d2c4, 0xa89c8a, 0xc4b8b0, 0xb0a898]
     const roofTones = [0x3a4453, 0x46424a, 0x54423a, 0x3d4a42, 0x424b58]
 
+    // The zone-contrast lever: quiet stretches are thick with low houses,
+    // mid stretches get a handful mixed with their towers, urban cores get
+    // NONE at all — no traditional houses wedged between skyscrapers.
+    const HOUSES_PER_TIER: Record<ZoneTier, number> = { quiet: 26, mid: 6, urban: 0 }
+
     let idx = 0
     for (let s = 0; s < N && idx < houseCount; s++) {
       const station = STATIONS[s]
-      // Houses belong to the low-rise districts; business/bay stretches keep their towers.
-      if (station.theme.district === 'business' || station.theme.district === 'bay') continue
+      const quota = HOUSES_PER_TIER[station.theme.tier]
+      if (quota <= 0) continue
       const markerA = this.track.markerFor(s).tFraction
       const markerB = this.track.markerFor((s + 1) % N).tFraction
       const span = ((markerB - markerA + 1) % 1) || 0.02
-      const here = Math.min(houseCount - idx, 18)
+      const here = Math.min(houseCount - idx, quota)
       for (let k = 0; k < here; k++) {
         // Keep clear of the platform zone at the segment's start.
         const t = markerA + span * (0.18 + 0.72 * ((k + 0.5) / here))
@@ -743,12 +776,15 @@ export class Scenery {
       counters.push(0)
     }
 
-    const neonDistricts = new Set(['downtown', 'youth', 'business'])
+    // Neon density is the loudest zone-contrast signal: none in quiet
+    // stretches, a shopfront or two in mid ones, a wall of them downtown.
+    const NEON_PER_TIER: Record<ZoneTier, number> = { quiet: 0, mid: 2, urban: 10 }
     for (let s = 0; s < N; s++) {
       const station = STATIONS[s]
-      if (!neonDistricts.has(station.theme.district)) continue
+      const base = NEON_PER_TIER[station.theme.tier]
+      if (base <= 0) continue
       const marker = this.track.markerFor(s)
-      const signsHere = station.landmark ? 8 : 4
+      const signsHere = station.landmark ? Math.round(base * 1.4) : base
       for (let k = 0; k < signsHere; k++) {
         const design = Math.floor(Math.random() * NEON_SIGNS.length)
         if (counters[design] + 2 > perDesign) continue

@@ -225,6 +225,7 @@ export class UI {
         <ul class="team-list">
           ${TEAM.map((m) => `<li><strong>${m.name}</strong> — ${m.role}<br><span>${m.note}</span></li>`).join('')}
         </ul>
+        <p class="disclaimer">Personajes ficticios creados para ambientar los créditos — no un estudio real.</p>
         <button class="btn-close">Volver</button>
       </div>
     `

@@ -15,6 +15,16 @@ import { makeBallastTexture, makeScuffedPanelTexture, makeDestinationTexture, ma
 const LOOK_YAW_LIMIT = 1.7 // ~97°, enough to look out the side windows
 const LOOK_PITCH_LIMIT = 0.55
 
+// Fixed-timestep physics: train integration/scoring must be identical
+// regardless of device frame rate. FIXED_DT matches the original ~60Hz
+// tuning (notch accel/brake tables, stop-zone width) so play feel doesn't
+// shift; MAX_FRAME_DT/MAX_CATCHUP_STEPS bound how much simulated time a
+// single stall (GC pause, tab hitch) can demand, so a long stall spreads
+// its catch-up over a couple of frames instead of freezing the render loop.
+const FIXED_DT = 1 / 60
+const MAX_FRAME_DT = 0.25
+const MAX_CATCHUP_STEPS = 15
+
 /** Door-side wording per language, so every announcement really states the side. */
 function doorSidePhrases(side: 'left' | 'right'): { ja: string; en: string; es: string } {
   return side === 'left'
@@ -42,8 +52,11 @@ export class Game {
   private controls: Controls
   private ui: UI
   private clock = new THREE.Clock()
-  private paused = false
   private started = false
+  /** Whether the WebGL animation loop is actually spinning (false = single static frame, no rAF). */
+  private running = false
+  /** Leftover real time not yet consumed by a fixed physics step. */
+  private physicsAccumulator = 0
   private timeScale = 1
   private lookYaw = 0
   private lookPitch = 0
@@ -111,7 +124,7 @@ export class Game {
     })
     this.ui = new UI(mount, {
       onStart: () => this.start(),
-      onPauseToggle: (p) => (this.paused = p),
+      onPauseToggle: (p) => this.setPaused(p),
       onTimeScaleChange: (s) => (this.timeScale = s),
       onTimeSet: (hour) => (this.dayNight.timeOfDay = hour),
     })
@@ -127,7 +140,10 @@ export class Game {
     })
     this.onResize()
     this.updateCameraFromTrain()
-    this.renderer.setAnimationLoop(() => this.tick())
+    // No animation loop yet: the start screen is a single static render, not
+    // a spinning render loop burning battery behind the overlay. tick()
+    // proper only starts once the player actually taps "start".
+    this.renderOnce()
   }
 
   /** Hidden dev overlay (press "P") — FPS + draw calls/triangles, so the mobile perf budget can be spot-checked without shipping a permanent HUD element. */
@@ -154,9 +170,37 @@ export class Game {
     audio.unlock()
     this.started = true
     this.clock.start()
+    this.setRunning(true)
     // Fire-and-forget — never blocks the game loop or player input, which
     // can already move the train while this plays out.
     window.setTimeout(() => this.handleWelcomeAnnounce(), 500)
+  }
+
+  /** Menu open/close: a real pause, not just a frozen simulation — the render loop itself stops. */
+  private setPaused(p: boolean) {
+    if (this.started) this.setRunning(!p)
+  }
+
+  /**
+   * Starts or stops the actual WebGL animation loop. Stopping it (rather
+   * than just skipping `step()` inside a loop that keeps spinning) is what
+   * saves battery/heat on the start screen and while paused — `tick()` was
+   * previously called every frame regardless of game state.
+   */
+  private setRunning(running: boolean) {
+    this.running = running
+    if (running) {
+      this.clock.getDelta() // discard the stale interval built up while stopped
+      this.renderer.setAnimationLoop(() => this.tick())
+    } else {
+      this.renderer.setAnimationLoop(null)
+      this.renderOnce()
+    }
+  }
+
+  /** Renders exactly one frame without advancing simulation — the start screen backdrop and the frame shown right when pausing/resizing. */
+  private renderOnce() {
+    this.renderer.render(this.scene, this.camera)
   }
 
   private handleLook(dx: number, dy: number) {
@@ -608,23 +652,41 @@ export class Game {
     this.camera.aspect = w / h
     this.camera.updateProjectionMatrix()
     this.renderer.setSize(w, h)
+    // The animation loop won't pick up the new size on its own if it isn't
+    // running (start screen / paused) — repaint once so a rotate mid-pause
+    // doesn't leave a stale frame at the old dimensions.
+    if (!this.running) this.renderOnce()
   }
 
   private tick() {
-    const dt = Math.min(this.clock.getDelta(), 0.05)
-    if (this.started && !this.paused) {
-      this.step(dt)
+    const frameDt = Math.min(this.clock.getDelta(), MAX_FRAME_DT)
+    // Train physics (position/speed integration, stop detection, scoring)
+    // runs in FIXED steps via an accumulator — decoupled from the render
+    // frame rate, so the exact same lever input produces the exact same
+    // stop position and score on a stuttering phone as on a smooth one.
+    // Below ~20fps, a variable dt clamped at the frame level would silently
+    // run the simulation in slow motion instead; this catches up instead.
+    this.physicsAccumulator = Math.min(this.physicsAccumulator + frameDt, FIXED_DT * MAX_CATCHUP_STEPS)
+    while (this.physicsAccumulator >= FIXED_DT) {
+      this.train.update(FIXED_DT)
+      this.physicsAccumulator -= FIXED_DT
     }
+    this.step(frameDt)
     this.renderer.render(this.scene, this.camera)
-    this.updatePerfOverlay(dt)
+    this.updatePerfOverlay(frameDt)
   }
 
+  /**
+   * Presentation layer: runs once per rendered frame with the real frame
+   * delta (not the fixed physics step) — camera, ambient visuals, audio and
+   * UI only ever READ the train's state here, so nothing here needs to be
+   * re-run per physics step.
+   */
   private step(dt: number) {
     this.dayNight.update(dt * this.timeScale, this.camera.position)
     // Every window-lit material shares this: windows pop on one by one
     // through dusk as it rises from 0 to 1.
     WINDOW_DUSK_UNIFORM.value = this.dayNight.nightFactor
-    this.train.update(dt)
     this.city.update(dt, this.dayNight.nightFactor, this.train.targetStationIndex, this.dayNight.timeOfDay)
     this.scenery.update(dt, this.dayNight, this.train.progressFraction)
     // Kan-kan: one bell strike per blink flip while the crossing is active.

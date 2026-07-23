@@ -711,6 +711,11 @@ export class AudioEngine {
   }
 
   private loadVoices() {
+    // Guard: an embedding WebView without Web Speech support (rare, but seen
+    // in some older/stripped Android WebViews) must not throw here — the PA
+    // announcements degrade to silent rather than crashing the whole unlock
+    // path a tap on "start" runs through.
+    if (!('speechSynthesis' in window)) return
     const pick = () => {
       const voices = speechSynthesis.getVoices()
       if (!voices.length) return

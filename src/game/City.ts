@@ -1,9 +1,21 @@
 import * as THREE from 'three'
 import type { Track } from './Track'
-import { STATIONS, prevStationIndex, nextStationIndex } from '../data/stations'
+import { STATIONS, prevStationIndex, nextStationIndex, type ZoneTier } from '../data/stations'
 import { makeStationSignTexture, makePlatformTileTexture, makeTactilePavingTexture, makeWindowGridTexture, applyProgressiveWindows, LOOP_LINE_COLOR } from './signage'
 
 const THEME_GROUPS = ['business', 'downtown', 'shitamachi', 'green', 'youth', 'bay'] as const
+
+/**
+ * Structural skyline contrast by zone tier — density and height, not
+ * lighting, so a quiet stretch reads as quiet at noon just as much as at
+ * midnight. Shared with Scenery.ts (houses/vegetation/neon) for one
+ * consistent rural → mid → urban gradient around the loop.
+ */
+export const TIER_PARAMS: Record<ZoneTier, { density: number; minH: number; maxH: number }> = {
+  quiet: { density: 0.45, minH: 8, maxH: 22 },
+  mid: { density: 1.0, minH: 14, maxH: 55 },
+  urban: { density: 2.2, minH: 24, maxH: 130 },
+}
 const N = STATIONS.length
 
 const PLATFORM_TOP = 1.2
@@ -20,6 +32,8 @@ const FRAME_H = SIGN_H + 0.28
 const ROD_Y = (SIGN_Y + FRAME_H / 2 + (COLUMN_TOP + 0.05)) / 2
 const ROD_LEN = COLUMN_TOP + 0.05 - (SIGN_Y + FRAME_H / 2)
 const PASSENGERS_PER_STATION = 6
+/** Passenger sway/visibility refresh cadence — see City.update(). */
+const PASSENGER_UPDATE_INTERVAL = 1 / 12
 
 // The platform runs ALONGSIDE the track (long in Z, the direction of
 // travel) and sits entirely to one side of it (offset in X) — like a real
@@ -86,6 +100,7 @@ export class City {
   private passengerHeadMesh!: THREE.InstancedMesh
   private passengerSlots: PassengerSlot[] = []
   private time = 0
+  private passengerUpdateAccum = 0
 
   constructor(scene: THREE.Scene, track: Track) {
     this.scene = scene
@@ -147,10 +162,11 @@ export class City {
       // so daylight shows actual color instead of silhouettes.
       group.material.color.setHex(station.theme.buildingColor).multiplyScalar(1.75)
 
+      const zone = TIER_PARAMS[station.theme.tier]
       const markerA = this.track.markerFor(s).tFraction
       const markerB = this.track.markerFor((s + 1) % N).tFraction
       const span = ((markerB - markerA + 1) % 1) || 0.02
-      const buildingsHere = Math.max(2, Math.round((span * trackLen) / 55))
+      const buildingsHere = Math.max(2, Math.round((span * trackLen) / 55 * zone.density))
 
       for (let b = 0; b < buildingsHere; b++) {
         const t = markerA + span * ((b + 0.5) / buildingsHere)
@@ -159,7 +175,11 @@ export class City {
         const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize()
         const side = b % 2 === 0 ? 1 : -1
         const offset = 34 + Math.random() * 70
-        const height = 14 + Math.random() * (station.landmark ? 70 : 34)
+        // Height comes from the ZONE first (this is the structural contrast
+        // that reads at any hour), with landmark stations getting an extra
+        // flourish within their own tier's range rather than overriding it.
+        const heightSpan = zone.maxH - zone.minH
+        const height = zone.minH + Math.random() * heightSpan * (station.landmark ? 1.25 : 1)
         const width = 10 + Math.random() * 12
         const depth = 10 + Math.random() * 12
 
@@ -254,7 +274,7 @@ export class City {
     // ——— Per-style character props ———
     // Rustic: a gabled ridge riding the flat canopy (so roofs stop being
     // slabs) + paper-lantern posts with a warm night glow.
-    const rusticCount = STATIONS.filter((s) => s.theme.district === 'shitamachi' || s.theme.district === 'green').length
+    const rusticCount = STATIONS.filter((s) => s.theme.tier === 'quiet').length
     const ridgeGeo = (() => {
       const g = new THREE.BufferGeometry()
       const hw = ROOF_WIDTH / 2 + 0.3
@@ -345,7 +365,7 @@ export class City {
       const point = this.track.pointAt(marker.tFraction)
       const tangent = this.track.tangentAt(marker.tFraction)
 
-      const style = station.theme.district === 'shitamachi' || station.theme.district === 'green' ? STYLE.rustic : STYLE.modern
+      const style = station.theme.tier === 'quiet' ? STYLE.rustic : STYLE.modern
       platformSlab.setColorAt(s, tint.setHex(style.slab))
       roof.setColorAt(s, tint.setHex(style.roof))
       fascia.setColorAt(s, tint.setHex(style.fascia))
@@ -401,7 +421,7 @@ export class City {
         put(signRods, idx, group, new THREE.Vector3(sx(PLATFORM_INNER + 1.2), ROD_Y, 10 + rodSide * (FRAME_W / 2 - 0.15)))
       })
 
-      const isRustic = station.theme.district === 'shitamachi' || station.theme.district === 'green'
+      const isRustic = station.theme.tier === 'quiet'
       if (isRustic) {
         put(ridges, rusticIdx, group, new THREE.Vector3(sx(ROOF_MID), ROOF_Y + ROOF_THICK / 2, 0))
         for (let li = 0; li < 2; li++) {
@@ -700,6 +720,15 @@ export class City {
 
   update(dt: number, nightFactor: number, targetStationIndex: number, timeOfDay: number) {
     this.time += dt
+    // Passengers' sway is a slow ~10s-period bob — throttling the (relatively
+    // expensive, 360-instance) matrix rebuild + GPU upload to ~12Hz instead
+    // of every rendered frame is visually indistinguishable but a fraction
+    // of the cost, especially on high-refresh-rate displays.
+    this.passengerUpdateAccum += dt
+    if (this.passengerUpdateAccum >= PASSENGER_UPDATE_INTERVAL) {
+      this.passengerUpdateAccum = 0
+      this.updatePassengers(crowdDensityForHour(timeOfDay))
+    }
     // Building windows switch on per-window via the progressive shader
     // (WINDOW_DUSK_UNIFORM, driven by Game) — no per-material fade here.
     for (const mat of this.videoScreenMaterials) {
@@ -721,6 +750,5 @@ export class City {
     for (const entry of this.signEntries) {
       entry.material.emissiveIntensity = entry.index === targetStationIndex ? baseSignGlow + pulse : baseSignGlow
     }
-    this.updatePassengers(crowdDensityForHour(timeOfDay))
   }
 }
