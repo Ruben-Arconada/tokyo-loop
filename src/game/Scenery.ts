@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import type { Track } from './Track'
+import { groundHeightAt } from './Track'
 import type { DayNightCycle } from './DayNightCycle'
 import { STATIONS, type ZoneTier } from '../data/stations'
 import { makeCloudTexture, makeNeonSignTexture, makeWindowGridTexture, makeRoofTileTexture, applyProgressiveWindows } from './signage'
@@ -377,7 +378,9 @@ export class Scenery {
         sumX += pos.x
         sumZ += pos.z
 
-        dummy.position.set(pos.x, 1.6 * scale - 0.58, pos.z)
+        const groundY = groundHeightAt(p.y, side * off)
+
+        dummy.position.set(pos.x, groundY + 1.6 * scale - 0.1, pos.z)
         dummy.scale.setScalar(scale)
         dummy.rotation.set(0, Math.random() * Math.PI, 0)
         dummy.updateMatrix()
@@ -387,7 +390,7 @@ export class Scenery {
           const br = (2.0 + Math.random() * 1.2) * scale
           dummy.position.set(
             pos.x + (Math.random() - 0.5) * 2.4 * scale,
-            (3.6 + Math.random() * 1.4) * scale - 0.5,
+            groundY + (3.6 + Math.random() * 1.4) * scale,
             pos.z + (Math.random() - 0.5) * 2.4 * scale,
           )
           dummy.scale.set(br, br * 0.8, br)
@@ -427,13 +430,15 @@ export class Scenery {
       const pos = p.clone().addScaledVector(normal, side * off)
       const scale = 0.7 + Math.random() * 0.9
 
-      dummy.position.set(pos.x, 1.3 * scale - 0.58, pos.z)
+      const groundY = groundHeightAt(p.y, side * off)
+
+      dummy.position.set(pos.x, groundY + 1.3 * scale - 0.1, pos.z)
       dummy.scale.setScalar(scale)
       dummy.rotation.set(0, 0, 0)
       dummy.updateMatrix()
       pineTrunks.setMatrixAt(k, dummy.matrix)
 
-      dummy.position.set(pos.x, (2.6 + 2.2) * scale - 0.5, pos.z)
+      dummy.position.set(pos.x, groundY + (2.6 + 2.2) * scale, pos.z)
       dummy.scale.setScalar(scale)
       dummy.updateMatrix()
       pineFoliage.setMatrixAt(k, dummy.matrix)
@@ -461,7 +466,7 @@ export class Scenery {
       // Bias density toward the track: sqrt pushes samples inward.
       const off = 12 + Math.sqrt(Math.random()) * 55
       const pos = p.clone().addScaledVector(normal, side * off)
-      dummy.position.set(pos.x, -0.4, pos.z)
+      dummy.position.set(pos.x, groundHeightAt(p.y, side * off) + 0.1, pos.z)
       dummy.scale.set(0.5 + Math.random() * 0.9, 0.2 + Math.random() * 0.3, 0.5 + Math.random() * 0.9)
       dummy.rotation.set(0, Math.random() * Math.PI, 0)
       dummy.updateMatrix()
@@ -611,9 +616,11 @@ export class Scenery {
         const d = 5 + Math.random() * 4
         const yaw = Math.atan2(tangent.x, tangent.z) + (Math.random() - 0.5) * 0.3
 
-        // Feet BURIED slightly under the ground plane (y = -0.5): flush bases
-        // still show hairline shadow gaps at grazing angles, sunk ones never do.
-        const GROUND_Y = -0.56
+        // Feet BURIED slightly under the local ground: flush bases still show
+        // hairline shadow gaps at grazing angles, sunk ones never do. Reads the
+        // embankment profile so houses on the hill's flank sit ON the slope
+        // instead of hanging at the old flat-world height.
+        const GROUND_Y = groundHeightAt(p.y, side * off) - 0.06
         dummy.position.set(pos.x, GROUND_Y + h / 2, pos.z)
         dummy.scale.set(w, h, d)
         dummy.rotation.set(0, yaw, 0)

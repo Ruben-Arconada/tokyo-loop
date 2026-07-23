@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
-import { Track, TrackOffsetCurve, CatenaryCurve } from './Track'
+import { Track, TrackOffsetCurve, CatenaryCurve, HILL_PEAK, EMBANKMENT, embankmentSurface } from './Track'
 import { Train, notchLabel, MIN_NOTCH, MAX_NOTCH } from './Train'
 import { City } from './City'
 import { Scenery } from './Scenery'
@@ -361,7 +361,10 @@ export class Game {
         p.y - 0.02,
         p.z + (Math.random() - 0.5) * 0.05,
       )
-      sleeperDummy.lookAt(p.x + tangent.x, p.y - 0.02, p.z + tangent.z)
+      // Pitch each board along the grade: the lookAt target must carry the
+      // tangent's vertical component, or on a slope the sleepers stay level and
+      // read as a staircase instead of a ramp.
+      sleeperDummy.lookAt(p.x + tangent.x, p.y - 0.02 + tangent.y, p.z + tangent.z)
       sleeperDummy.rotateY((Math.random() - 0.5) * 0.018)
       sleeperDummy.scale.set(0.97 + Math.random() * 0.06, 1, 0.95 + Math.random() * 0.1)
       sleeperDummy.updateMatrix()
@@ -404,6 +407,55 @@ export class Game {
     ground.receiveShadow = true
     this.scene.add(ground)
 
+    // Trackside embankment: a ribbon that follows the rails and carries the
+    // ground up and over the hill in the quiet green zone. On flat stretches its
+    // crown sits a hair above the city ground (a realistic raised rail bed);
+    // where the curve climbs, it becomes a grassy hillside whose skirts tuck
+    // back under the ground plane, so the hill grows out of the plain with no
+    // seam. Vertex colour greens the slopes only where the land actually rises.
+    const EMB_CROWN = EMBANKMENT.crown
+    const EMB_SKIRT = EMBANKMENT.skirt
+    const embLateral = [-(EMB_CROWN + EMB_SKIRT), -EMB_CROWN, EMB_CROWN, EMB_CROWN + EMB_SKIRT]
+    const embPositions: number[] = []
+    const embColors: number[] = []
+    const groundCol = new THREE.Color(0x8f897c)
+    const grassCol = new THREE.Color(0x6f8a4c)
+    const embCol = new THREE.Color()
+    for (let i = 0; i <= segments; i++) {
+      const t = i / segments
+      const p = this.track.pointAt(t)
+      const tangent = this.track.tangentAt(t)
+      const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize()
+      const climb = THREE.MathUtils.clamp(p.y / HILL_PEAK, 0, 1)
+      for (let k = 0; k < 4; k++) {
+        const crown = k === 1 || k === 2
+        const y = embankmentSurface(p.y, embLateral[k])
+        const pos = p.clone().addScaledVector(normal, embLateral[k])
+        embPositions.push(pos.x, y, pos.z)
+        embCol.copy(groundCol).lerp(grassCol, crown ? climb : climb * 0.6)
+        embColors.push(embCol.r, embCol.g, embCol.b)
+      }
+    }
+    const embIndices: number[] = []
+    for (let i = 0; i < segments; i++) {
+      const base = i * 4
+      const next = (i + 1) * 4
+      for (let k = 0; k < 3; k++) {
+        const a = base + k, b = base + k + 1, c = next + k, d = next + k + 1
+        embIndices.push(a, c, b, b, c, d)
+      }
+    }
+    const embGeo = new THREE.BufferGeometry()
+    embGeo.setAttribute('position', new THREE.Float32BufferAttribute(embPositions, 3))
+    embGeo.setAttribute('color', new THREE.Float32BufferAttribute(embColors, 3))
+    embGeo.setIndex(embIndices)
+    embGeo.computeVertexNormals()
+    const embMat = new THREE.MeshStandardMaterial({ vertexColors: true, roughness: 1 })
+    const embankment = new THREE.Mesh(embGeo, embMat)
+    embankment.receiveShadow = true
+    embankment.castShadow = true
+    this.scene.add(embankment)
+
     // Worn corridor beside the rails: a wider, alpha-edged band of beaten
     // earth riding just above the ground plane, so the trackside looks used
     // and the pristine ground only starts a little way out.
@@ -417,7 +469,7 @@ export class Game {
       const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize()
       const pl = p.clone().addScaledVector(normal, wearHalf)
       const pr = p.clone().addScaledVector(normal, -wearHalf)
-      wearPositions.push(pl.x, -0.42, pl.z, pr.x, -0.42, pr.z)
+      wearPositions.push(pl.x, p.y - 0.42, pl.z, pr.x, p.y - 0.42, pr.z)
       wearUvs.push(0, t * 260, 1, t * 260)
     }
     const wearGeo = new THREE.BufferGeometry()

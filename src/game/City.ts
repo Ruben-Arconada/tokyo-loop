@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import type { Track } from './Track'
+import { groundHeightAt } from './Track'
 import { STATIONS, prevStationIndex, nextStationIndex, type ZoneTier } from '../data/stations'
 import { makeStationSignTexture, makePlatformTileTexture, makeTactilePavingTexture, makeWindowGridTexture, applyProgressiveWindows, LOOP_LINE_COLOR } from './signage'
 
@@ -184,7 +185,9 @@ export class City {
         const depth = 10 + Math.random() * 12
 
         const pos = point.clone().add(normal.clone().multiplyScalar(side * offset))
-        dummy.position.set(pos.x, height / 2, pos.z)
+        // Stand on the local ground: pinning the base to y=0 left buildings
+        // half-swallowed by the hill (and floating a hair over the plain).
+        dummy.position.set(pos.x, groundHeightAt(point.y, side * offset) + height / 2, pos.z)
         dummy.scale.set(width, height, depth)
         dummy.rotation.y = Math.random() * Math.PI
         dummy.updateMatrix()
