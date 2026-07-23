@@ -483,6 +483,10 @@ export function makeCloudTexture(): THREE.CanvasTexture {
   const puffs: [number, number, number][] = [
     [0.34, 0.56, 0.34], [0.5, 0.5, 0.4], [0.66, 0.56, 0.32], [0.42, 0.44, 0.28], [0.58, 0.42, 0.24], [0.26, 0.62, 0.2], [0.74, 0.62, 0.18],
   ]
+  // Soft-blur the puffs while drawing: gentler alpha ramps leave mobile GPUs
+  // far fewer 8-bit steps to dither into visible grain. (Old Safari ignores
+  // ctx.filter and simply keeps the previous look.)
+  ctx.filter = 'blur(3px)'
   for (const [px, py, pr] of puffs) {
     const r = Math.min(h * pr, w * px - 2, w * (1 - px) - 2, h * py - 2, h * (1 - py) - 2)
     const g = ctx.createRadialGradient(w * px, h * py, 0, w * px, h * py, r)
@@ -495,8 +499,13 @@ export function makeCloudTexture(): THREE.CanvasTexture {
     ctx.arc(w * px, h * py, r, 0, Math.PI * 2)
     ctx.fill()
   }
+  ctx.filter = 'none'
   const tex = new THREE.CanvasTexture(canvas)
   tex.colorSpace = THREE.SRGBColorSpace
+  // Clouds are always mid-size on screen; pinning mip level 0 avoids the
+  // trilinear shimmer Apple GPUs make of low-alpha 8-bit mip chains.
+  tex.generateMipmaps = false
+  tex.minFilter = THREE.LinearFilter
   return tex
 }
 

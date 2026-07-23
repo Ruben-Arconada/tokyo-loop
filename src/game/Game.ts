@@ -72,6 +72,10 @@ export class Game {
   constructor(mount: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' })
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
+    // Mobile GPUs dither blended gradients by default (GL_DITHER is on unless
+    // someone turns it off), which speckled the soft cloud sprites into visible
+    // static on phones. A no-op on desktop GPUs.
+    this.renderer.getContext().disable(this.renderer.getContext().DITHER)
     this.renderer.shadowMap.enabled = true
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
