@@ -369,23 +369,56 @@ canvas.game-canvas {
   gap: var(--space-2);
 }
 
-.door-indicator {
+/* Door button — the conductor half of the game. A glass chip like its row
+   mates while idle, waking into a real pulsing control whenever a door
+   action is available. Fixed min-width so the label swaps don't make the
+   whole bottom row jitter. */
+.door-btn {
+  position: relative;
+  overflow: hidden;
   background: var(--chip-bg);
   border: var(--chip-border);
   box-shadow: var(--chip-shadow);
   backdrop-filter: var(--chip-blur);
   border-radius: var(--radius-md);
   padding: var(--space-2) var(--space-3);
+  min-width: 96px;
   font-size: var(--text-label);
-  font-weight: 600;
+  font-weight: 700;
   letter-spacing: 0.06em;
-  color: var(--text-secondary);
-  transition: opacity 0.2s ease, background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
+  color: var(--text-muted);
+  pointer-events: auto;
+  transition: background-color 0.2s ease, border-color 0.2s ease, color 0.2s ease;
 }
-.door-indicator.open {
-  background: rgba(255, 206, 74, 0.22);
+.door-btn:disabled { cursor: default; }
+.door-btn:disabled:active { transform: none; opacity: 1; }
+.door-btn-label { position: relative; }
+/* Boarding fill: passengers streaming in, drawn under the label. */
+.door-btn-progress {
+  position: absolute;
+  inset: 0 auto 0 0;
+  width: 0%;
+  background: rgba(255, 206, 74, 0.3);
+  transition: width 0.25s linear;
+}
+.door-btn.door-can-open {
+  border-color: var(--color-power);
+  color: var(--color-power);
+  animation: door-pulse 0.9s ease-in-out infinite;
+}
+.door-btn.door-boarding {
   border-color: var(--color-warn);
   color: var(--color-warn);
+}
+.door-btn.door-can-close {
+  border-color: var(--color-info);
+  color: var(--color-info);
+  animation: door-pulse 0.9s ease-in-out infinite;
+}
+.door-btn.door-closing { color: var(--text-secondary); }
+@keyframes door-pulse {
+  0%, 100% { filter: brightness(1); }
+  50% { filter: brightness(1.55); }
 }
 
 .speed-gauge {

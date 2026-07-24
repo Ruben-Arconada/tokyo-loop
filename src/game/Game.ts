@@ -1,15 +1,16 @@
 import * as THREE from 'three'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { Track, TrackOffsetCurve, CatenaryCurve, HILL_PEAK, EMBANKMENT, embankmentSurface } from './Track'
-import { Train, notchLabel, MIN_NOTCH, MAX_NOTCH } from './Train'
-import { City } from './City'
+import { Train, notchLabel, MIN_NOTCH, MAX_NOTCH, OPEN_INSTANT_SECONDS, OPEN_QUICK_SECONDS, CLOSE_WINDOW_SECONDS, CLOSE_HURRY_SECONDS, type DoorActionInfo } from './Train'
+import { City, crowdDensityForHour } from './City'
+import { Passengers } from './Passengers'
 import { Scenery } from './Scenery'
 import { DayNightCycle } from './DayNightCycle'
 import { audio } from '../audio/AudioEngine'
 import { Controls } from '../ui/Controls'
 import { UI } from '../ui/UI'
 import { STATIONS } from '../data/stations'
-import { getStationMelody, DOOR_CHIME_OPEN, DOOR_CHIME_CLOSE } from '../data/melodies'
+import { getStationMelody, DOOR_CHIME_OPEN, DOOR_CHIME_CLOSE, BOARDING_DONE_CUE } from '../data/melodies'
 import { makeBallastTexture, makeScuffedPanelTexture, makeDestinationTexture, makeGroundTexture, makeTracksideWearTexture, WINDOW_DUSK_UNIFORM } from './signage'
 
 const LOOK_YAW_LIMIT = 1.7 // ~97°, enough to look out the side windows
@@ -37,6 +38,13 @@ const BEST_SCORE_KEY = 'yamanote-best-score'
 const GRADE_POINTS: Record<string, number> = { perfect: 100, good: 60, ok: 30 }
 const STREAK_BONUS = 25
 const STREAK_BONUS_CAP = 200
+/** Door-work bonuses — the conductor half of the job. */
+const DOOR_OPEN_INSTANT_POINTS = 30
+const DOOR_OPEN_QUICK_POINTS = 15
+const DOOR_CLOSE_SHARP_POINTS = 30
+/** Boarding takes longer in the rush hours: base + crowd-scaled extra. */
+const BOARDING_BASE_SECONDS = 5.5
+const BOARDING_CROWD_SECONDS = 5.5
 
 export class Game {
   private renderer: THREE.WebGLRenderer
@@ -45,6 +53,7 @@ export class Game {
   private track: Track
   private train: Train
   private city: City
+  private passengers: Passengers
   private scenery: Scenery
   private dayNight: DayNightCycle
   private headlight!: THREE.SpotLight
@@ -102,6 +111,9 @@ export class Game {
       onDepartAnnounce: (_cur, next) => this.handleDepartAnnounce(next),
       onArrivingAnnounce: (idx) => this.handleArrivingAnnounce(idx),
       onStopped: (idx, result) => {
+        // Rush hour = fuller platform = longer boarding; decided at stop
+        // time so the door phase and the sprites agree on the same crowd.
+        this.train.boardingSeconds = BOARDING_BASE_SECONDS + crowdDensityForHour(this.dayNight.timeOfDay) * BOARDING_CROWD_SECONDS
         const gained = this.applyScore(result.grade)
         this.ui.showStopToast(idx, result, gained)
         this.ui.setStationResult(idx, result.grade)
@@ -111,11 +123,13 @@ export class Game {
         this.ui.showMissedToast(idx)
         this.ui.setStationResult(idx, 'missed')
       },
-      onDoorsOpen: (idx) => this.handleDoorsOpen(idx),
-      onDoorsClose: () => this.handleDoorsClose(),
-      onDoorsClosingWarning: () => this.handleDoorsClosingWarning(),
+      onDoorsOpen: (idx, info) => this.handleDoorsOpen(idx, info),
+      onBoardingComplete: () => audio.playMelody(BOARDING_DONE_CUE, 'attention', 0.4),
+      onCloseHurryUp: () => this.handleDoorsClosingWarning(),
+      onDoorsClose: (_idx, info) => this.handleDoorsClose(info),
     })
     this.city = new City(this.scene, this.track)
+    this.passengers = new Passengers(this.scene, this.track, this.camera)
     this.scenery = new Scenery(this.scene, this.track)
     this.dayNight = new DayNightCycle(this.scene)
     this.buildTrackVisual()
@@ -131,11 +145,13 @@ export class Game {
       onPauseToggle: (p) => this.setPaused(p),
       onTimeScaleChange: (s) => (this.timeScale = s),
       onTimeSet: (hour) => (this.dayNight.timeOfDay = hour),
+      onDoorAction: () => this.handleDoorButton(),
     })
 
     window.addEventListener('resize', () => this.onResize())
     window.addEventListener('keydown', (e) => {
       if (e.code === 'KeyP') this.togglePerfOverlay(mount)
+      if (e.code === 'KeyD') this.handleDoorButton()
     })
     // The render loop freezes on its own when the tab hides, but audio does
     // not — silence everything in the background and pick back up on return.
@@ -207,6 +223,12 @@ export class Game {
     this.renderer.render(this.scene, this.camera)
   }
 
+  /** One control for both door moves — the train decides which (if any) applies right now. */
+  private handleDoorButton() {
+    if (!this.started) return
+    if (this.train.requestDoorAction()) navigator.vibrate?.(12)
+  }
+
   private handleLook(dx: number, dy: number) {
     const sens = 0.0032
     this.lookYaw = THREE.MathUtils.clamp(this.lookYaw - dx * sens, -LOOK_YAW_LIMIT, LOOK_YAW_LIMIT)
@@ -256,13 +278,20 @@ export class Game {
     )
   }
 
-  private handleDoorsOpen(idx: number) {
+  private handleDoorsOpen(idx: number, info: DoorActionInfo) {
     this.controls.syncNotch(0)
     audio.playDoorCycle(true)
     const chimeDuration = audio.playMelody(DOOR_CHIME_OPEN, 'attention', 0.45) || 0.5
     window.setTimeout(() => {
       audio.startMelodyLoop(getStationMelody(STATIONS[idx].id), 'bell', 0.4)
     }, chimeDuration * 1000 + 120)
+    // The platform reacts to the doors actually opening: waiting sprites
+    // stream aboard, a few riders step off first.
+    this.passengers.beginBoarding(idx, this.train.boardingSeconds)
+    if (!info.auto) {
+      if (info.delaySeconds <= OPEN_INSTANT_SECONDS) this.applyDoorBonus(DOOR_OPEN_INSTANT_POINTS, '¡Puertas al instante!')
+      else if (info.delaySeconds <= OPEN_QUICK_SECONDS) this.applyDoorBonus(DOOR_OPEN_QUICK_POINTS, 'Puertas rápidas')
+    }
   }
 
   private handleDoorsClosingWarning() {
@@ -279,10 +308,28 @@ export class Game {
     )
   }
 
-  private handleDoorsClose() {
+  private handleDoorsClose(info: DoorActionInfo) {
     audio.stopMelodyLoop()
     audio.playDoorCycle(false)
     audio.playMelody(DOOR_CHIME_CLOSE, 'attention', 0.4)
+    this.passengers.endBoarding()
+    if (!info.auto) {
+      // Manual closes announce as they act (like a real conductor) — unless
+      // the hurry-up warning already said it seconds ago.
+      if (info.delaySeconds < CLOSE_HURRY_SECONDS) this.handleDoorsClosingWarning()
+      if (info.delaySeconds <= CLOSE_WINDOW_SECONDS) this.applyDoorBonus(DOOR_CLOSE_SHARP_POINTS, '¡Salida puntual!')
+    }
+  }
+
+  /** Door bonuses ride the same score pool but never touch the perfect-stop streak. */
+  private applyDoorBonus(points: number, label: string) {
+    this.score += points
+    if (this.score > this.bestScore) {
+      this.bestScore = this.score
+      localStorage.setItem(BEST_SCORE_KEY, String(this.bestScore))
+    }
+    this.ui.setScore(this.score, this.bestScore, this.perfectStreak)
+    this.ui.showDoorToast(label, points)
   }
 
   private buildTrackVisual() {
@@ -812,7 +859,8 @@ export class Game {
     // Every window-lit material shares this: windows pop on one by one
     // through dusk as it rises from 0 to 1.
     WINDOW_DUSK_UNIFORM.value = this.dayNight.nightFactor
-    this.city.update(dt, this.dayNight.nightFactor, this.train.targetStationIndex, this.dayNight.timeOfDay)
+    this.city.update(dt, this.dayNight.nightFactor, this.train.targetStationIndex)
+    this.passengers.update(dt, this.dayNight.timeOfDay, this.dayNight.nightFactor, this.train.targetStationIndex)
     this.scenery.update(dt, this.dayNight, this.train.progressFraction)
     // Kan-kan: one bell strike per blink flip while the crossing is active.
     if (this.scenery.crossingBlinkPhase !== this.lastCrossingPhase) {
@@ -849,12 +897,20 @@ export class Game {
     const targetT = this.track.markerFor(this.train.targetStationIndex).tFraction
     const segLen = ((((targetT - currentT) % 1) + 1) % 1) * this.track.getLength() || 1
     const segmentProgress = THREE.MathUtils.clamp(1 - this.train.distanceToTarget / segLen, 0, 1)
+    // Door-button phase for the HUD: what a tap would do right now.
+    const doorPhase =
+      this.train.state === 'stopped' ? 'can-open'
+      : this.train.state === 'doors_open' ? (this.train.boardingComplete ? 'can-close' : 'boarding')
+      : this.train.state === 'doors_closing' ? 'closing'
+      : 'idle'
     this.ui.updateTrain({
       speedKmh: this.train.speedKmh,
       notchLabel: notchLabel(this.train.notch),
       currentStationIdx: this.train.currentStationIndex,
       targetStationIdx: this.train.targetStationIndex,
       doorsOpenAmount: this.train.doorsOpenAmount,
+      doorPhase,
+      boardingProgress: this.train.boardingSeconds > 0 ? 1 - this.train.boardingRemaining / this.train.boardingSeconds : 1,
       segmentProgress,
     })
   }

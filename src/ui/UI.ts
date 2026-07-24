@@ -8,6 +8,19 @@ export interface UICallbacks {
   onTimeScaleChange: (scale: number) => void
   /** The player tapped a preset in the clock's time picker. */
   onTimeSet: (hour: number) => void
+  /** The player tapped the door button (open or close — the game decides). */
+  onDoorAction: () => void
+}
+
+/** What the door button offers right now — mirrors the train's door state. */
+export type DoorPhase = 'idle' | 'can-open' | 'boarding' | 'can-close' | 'closing'
+
+const DOOR_LABELS: Record<DoorPhase, string> = {
+  idle: 'PUERTAS',
+  'can-open': '▶ ABRIR',
+  boarding: 'EMBARQUE',
+  'can-close': '◀ CERRAR',
+  closing: 'CERRANDO…',
 }
 
 /** Presets offered when tapping the HUD clock. */
@@ -39,7 +52,11 @@ export class UI {
   private segmentTrainEl!: HTMLDivElement
   private lineDiagram!: HTMLDivElement
   private stationDots: HTMLDivElement[] = []
-  private doorIndicator!: HTMLDivElement
+  private doorBtn!: HTMLButtonElement
+  private doorBtnLabel!: HTMLSpanElement
+  private doorBtnProgress!: HTMLSpanElement
+  /** Null until the first update applies a phase, so the initial paint isn't skipped. */
+  private lastDoorPhase: DoorPhase | null = null
   private scoreValueEl!: HTMLSpanElement
   private scoreBestEl!: HTMLElement
   private lastNotchLabel = 'N'
@@ -101,7 +118,10 @@ export class UI {
       </div>
       <div class="line-diagram"></div>
       <div class="hud-bottom">
-        <div class="door-indicator">DOORS</div>
+        <button class="door-btn" aria-label="Puertas">
+          <span class="door-btn-progress"></span>
+          <span class="door-btn-label">PUERTAS</span>
+        </button>
         <div class="speed-gauge">
           <span class="speed-value">0</span>
           <span class="speed-unit">km/h</span>
@@ -123,7 +143,10 @@ export class UI {
     this.stationNextCodeEl = this.hud.querySelector('.hud-station-next-code')!
     this.segmentFillEl = this.hud.querySelector('.segment-progress-fill')!
     this.segmentTrainEl = this.hud.querySelector('.segment-progress-train')!
-    this.doorIndicator = this.hud.querySelector('.door-indicator')!
+    this.doorBtn = this.hud.querySelector('.door-btn')!
+    this.doorBtnLabel = this.hud.querySelector('.door-btn-label')!
+    this.doorBtnProgress = this.hud.querySelector('.door-btn-progress')!
+    this.doorBtn.addEventListener('click', () => this.cb.onDoorAction())
     this.scoreValueEl = this.hud.querySelector('.score-value')!
     this.scoreBestEl = this.hud.querySelector('.score-best')!
     this.lineDiagram = this.hud.querySelector('.line-diagram')!
@@ -167,8 +190,9 @@ export class UI {
         <p class="tagline">Sé el maquinista. Un giro completo a la línea circular de Tokio, de madrugada a madrugada.</p>
         <ul class="howto">
           <li><strong>Palanca:</strong> arrástrala arriba para acelerar (P1–P5), abajo para frenar (B1–B7/EB).</li>
-          <li><strong>Teclado:</strong> ↑/W acelera, ↓/S frena, espacio = freno de emergencia.</li>
+          <li><strong>Teclado:</strong> ↑/W acelera, ↓/S frena, espacio = freno de emergencia, D = puertas.</li>
           <li><strong>Objetivo:</strong> detén el tren justo en el andén de cada estación.</li>
+          <li><strong>Puertas:</strong> ábrelas al parar y ciérralas cuando acabe el embarque — hay bonus por reflejos.</li>
         </ul>
         <button class="btn-start">Subir a la cabina 🚃</button>
         <button class="btn-credits">Sobre el equipo</button>
@@ -253,6 +277,9 @@ export class UI {
     currentStationIdx: number
     targetStationIdx: number
     doorsOpenAmount: number
+    doorPhase: DoorPhase
+    /** 0..1 — how much of the boarding time has elapsed (only meaningful while boarding). */
+    boardingProgress: number
     /** 0..1 — how far along the current inter-station segment the train is. */
     segmentProgress: number
   }) {
@@ -273,8 +300,15 @@ export class UI {
     const pct = Math.round(opts.segmentProgress * 100)
     this.segmentFillEl.style.width = `${pct}%`
     this.segmentTrainEl.style.left = `${pct}%`
-    this.doorIndicator.classList.toggle('open', opts.doorsOpenAmount > 0.05)
-    this.doorIndicator.textContent = opts.doorsOpenAmount > 0.05 ? 'DOORS OPEN' : 'DOORS'
+    // Door button: class/label churn only on phase change; the boarding
+    // fill is the one thing that animates every frame.
+    if (opts.doorPhase !== this.lastDoorPhase) {
+      this.lastDoorPhase = opts.doorPhase
+      this.doorBtn.className = `door-btn door-${opts.doorPhase}`
+      this.doorBtnLabel.textContent = DOOR_LABELS[opts.doorPhase]
+      this.doorBtn.disabled = opts.doorPhase !== 'can-open' && opts.doorPhase !== 'can-close'
+    }
+    this.doorBtnProgress.style.width = opts.doorPhase === 'boarding' ? `${Math.round(opts.boardingProgress * 100)}%` : '0%'
 
     this.stationDots.forEach((dot, i) => {
       dot.classList.toggle('current', i === opts.currentStationIdx)
@@ -301,6 +335,11 @@ export class UI {
     }
     const points = gained > 0 ? `  +${gained}` : ''
     this.flashToast(`${station.nameEn} — ${messages[result.grade]}${points}`, result.grade)
+  }
+
+  /** Door-work bonus feedback — same toast rail as stop grades, always positive. */
+  showDoorToast(label: string, points: number) {
+    this.flashToast(`${label}  +${points}`, 'good')
   }
 
   showMissedToast(stationIdx: number) {

@@ -32,10 +32,6 @@ const FRAME_W = SIGN_W + 0.4
 const FRAME_H = SIGN_H + 0.28
 const ROD_Y = (SIGN_Y + FRAME_H / 2 + (COLUMN_TOP + 0.05)) / 2
 const ROD_LEN = COLUMN_TOP + 0.05 - (SIGN_Y + FRAME_H / 2)
-const PASSENGERS_PER_STATION = 6
-/** Passenger sway/visibility refresh cadence — see City.update(). */
-const PASSENGER_UPDATE_INTERVAL = 1 / 12
-
 // The platform runs ALONGSIDE the track (long in Z, the direction of
 // travel) and sits entirely to one side of it (offset in X) — like a real
 // boarding platform — rather than straddling the rails. Which side depends
@@ -54,8 +50,16 @@ const ROOF_WIDTH = ROOF_OUTER - ROOF_INNER
 const COLUMN_ZS = [-28, -14, 0, 14, 28]
 const LAMP_ZS = [-28, -14, 0, 14, 28]
 
+/** Platform footprint shared with the sprite passengers (Passengers.ts), so people always stand on the actual slab. */
+export const PLATFORM_GEOM = {
+  top: PLATFORM_TOP,
+  inner: PLATFORM_INNER,
+  outer: PLATFORM_OUTER,
+  len: PLATFORM_LEN,
+}
+
 /** Rough crowd density by hour — busiest around the morning/evening rush, quiet overnight. */
-function crowdDensityForHour(hour: number): number {
+export function crowdDensityForHour(hour: number): number {
   const proximity = (center: number, width: number) => Math.max(0, 1 - Math.abs(((hour - center + 12 + 24) % 24) - 12) / width)
   const rush = Math.max(proximity(8, 2.5), proximity(18, 2.5))
   return THREE.MathUtils.clamp(0.16 + rush * 0.84, 0, 1)
@@ -64,13 +68,6 @@ function crowdDensityForHour(hour: number): number {
 interface ThemeGroup {
   instanced: THREE.InstancedMesh
   material: THREE.MeshStandardMaterial
-}
-
-interface PassengerSlot {
-  basePosition: THREE.Vector3
-  baseQuaternion: THREE.Quaternion
-  phase: number
-  visibilityRoll: number
 }
 
 interface SignEntry {
@@ -97,18 +94,13 @@ export class City {
   private lanternMat!: THREE.MeshStandardMaterial
   private ledStripMat!: THREE.MeshStandardMaterial
   private signEntries: SignEntry[] = []
-  private passengerMesh!: THREE.InstancedMesh
-  private passengerHeadMesh!: THREE.InstancedMesh
-  private passengerSlots: PassengerSlot[] = []
   private time = 0
-  private passengerUpdateAccum = 0
 
   constructor(scene: THREE.Scene, track: Track) {
     this.scene = scene
     this.track = track
     this.buildBuildings()
     this.buildPlatforms()
-    this.buildPassengers()
   }
 
   private buildBuildings() {
@@ -667,90 +659,8 @@ export class City {
     }
   }
 
-  private buildPassengers() {
-    const bodyMat = new THREE.MeshStandardMaterial({ color: 0x333333, roughness: 0.9 })
-    const geo = new THREE.CapsuleGeometry(0.22, 1.0, 4, 8)
-    const total = N * PASSENGERS_PER_STATION
-    this.passengerMesh = new THREE.InstancedMesh(geo, bodyMat, total)
-    this.passengerMesh.castShadow = true
-    this.passengerMesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(total * 3), 3)
-
-    // Matching head per passenger — same slot transforms, so both meshes
-    // stay in sync through the density-based show/hide scaling.
-    const headMat = new THREE.MeshStandardMaterial({ color: 0xffffff, roughness: 0.85 })
-    this.passengerHeadMesh = new THREE.InstancedMesh(new THREE.SphereGeometry(0.16, 8, 6), headMat, total)
-    this.passengerHeadMesh.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(total * 3), 3)
-
-    const tempObj = new THREE.Object3D()
-    const tint = new THREE.Color()
-    const bodyTints = [0x2b2b2b, 0x3a3f4a, 0x555049, 0x2d4a4a, 0x4a2d2d, 0x40382e]
-    const skinTints = [0xf0c8a8, 0xe8bc9a, 0xd8a888, 0xc89878]
-
-    for (let s = 0; s < N; s++) {
-      const station = STATIONS[s]
-      // Same convention as the platforms: local +X = driver's left.
-      const side = station.doorSide === 'left' ? 1 : -1
-      const marker = this.track.markerFor(s)
-      const point = this.track.pointAt(marker.tFraction)
-      const tangent = this.track.tangentAt(marker.tFraction)
-      tempObj.position.copy(point)
-      tempObj.lookAt(point.clone().add(tangent))
-      tempObj.updateMatrixWorld(true)
-
-      for (let p = 0; p < PASSENGERS_PER_STATION; p++) {
-        const idx = s * PASSENGERS_PER_STATION + p
-        const local = new THREE.Vector3(
-          side * (PLATFORM_INNER + 1 + Math.random() * (PLATFORM_DEPTH - 2)),
-          PLATFORM_TOP + 0.72,
-          -30 + Math.random() * 60,
-        )
-        const worldPos = local.applyMatrix4(tempObj.matrixWorld)
-        const yaw = Math.random() * Math.PI * 2
-        const q = tempObj.quaternion.clone().multiply(new THREE.Quaternion().setFromAxisAngle(new THREE.Vector3(0, 1, 0), yaw))
-
-        this.passengerSlots.push({ basePosition: worldPos, baseQuaternion: q, phase: Math.random() * Math.PI * 2, visibilityRoll: Math.random() })
-        tint.setHex(bodyTints[Math.floor(Math.random() * bodyTints.length)])
-        this.passengerMesh.setColorAt(idx, tint)
-        tint.setHex(skinTints[Math.floor(Math.random() * skinTints.length)])
-        this.passengerHeadMesh.setColorAt(idx, tint)
-      }
-    }
-    if (this.passengerMesh.instanceColor) this.passengerMesh.instanceColor.needsUpdate = true
-    if (this.passengerHeadMesh.instanceColor) this.passengerHeadMesh.instanceColor.needsUpdate = true
-    this.scene.add(this.passengerMesh, this.passengerHeadMesh)
-    this.updatePassengers(0.5)
-  }
-
-  private updatePassengers(density: number) {
-    const dummy = new THREE.Object3D()
-    for (let i = 0; i < this.passengerSlots.length; i++) {
-      const slot = this.passengerSlots[i]
-      const visible = slot.visibilityRoll < density
-      dummy.position.copy(slot.basePosition)
-      dummy.quaternion.copy(slot.baseQuaternion)
-      dummy.rotateY(Math.sin(this.time * 0.6 + slot.phase) * 0.12)
-      dummy.scale.setScalar(visible ? 1 : 0)
-      dummy.updateMatrix()
-      this.passengerMesh.setMatrixAt(i, dummy.matrix)
-      dummy.position.y += 0.78
-      dummy.updateMatrix()
-      this.passengerHeadMesh.setMatrixAt(i, dummy.matrix)
-    }
-    this.passengerMesh.instanceMatrix.needsUpdate = true
-    this.passengerHeadMesh.instanceMatrix.needsUpdate = true
-  }
-
-  update(dt: number, nightFactor: number, targetStationIndex: number, timeOfDay: number) {
+  update(dt: number, nightFactor: number, targetStationIndex: number) {
     this.time += dt
-    // Passengers' sway is a slow ~10s-period bob — throttling the (relatively
-    // expensive, 360-instance) matrix rebuild + GPU upload to ~12Hz instead
-    // of every rendered frame is visually indistinguishable but a fraction
-    // of the cost, especially on high-refresh-rate displays.
-    this.passengerUpdateAccum += dt
-    if (this.passengerUpdateAccum >= PASSENGER_UPDATE_INTERVAL) {
-      this.passengerUpdateAccum = 0
-      this.updatePassengers(crowdDensityForHour(timeOfDay))
-    }
     // Building windows switch on per-window via the progressive shader
     // (WINDOW_DUSK_UNIFORM, driven by Game) — no per-material fade here.
     for (const mat of this.videoScreenMaterials) {

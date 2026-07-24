@@ -88,6 +88,15 @@ export const DOOR_CHIME_CLOSE: PlayableNote[] = [
   { freq: A4 * Math.pow(2, 7 / 12), duration: 0.32 },
 ]
 
+// Boarding finished — the conductor's "all aboard, you may close" cue: a
+// bright ascending triplet, distinct from both door chimes (two notes) and
+// the attention chime (descending).
+export const BOARDING_DONE_CUE: PlayableNote[] = [
+  { freq: A4 * Math.pow(2, 5 / 12), duration: 0.11 },
+  { freq: A4 * Math.pow(2, 9 / 12), duration: 0.11 },
+  { freq: A4 * Math.pow(2, 14 / 12), duration: 0.3 },
+]
+
 // A short, distinct two-note "attention" chime that precedes spoken PA
 // announcements — deliberately different from the door chimes so the two
 // cues stay easy to tell apart by ear.

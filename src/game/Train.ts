@@ -26,11 +26,28 @@ const MAX_SPEED_KMH = 95
 const STATION_ZONE_HALF_WIDTH = 26 // world units either side of the platform marker
 const STOP_SPEED_THRESHOLD_KMH = 3
 const ARRIVING_ANNOUNCE_DISTANCE = 260 // early enough for the trilingual arrival announcement to finish before the platform
-const DWELL_SECONDS = 13
 const DOOR_ANIM_SECONDS = 1.4
-const CLOSING_WARN_LEAD_SECONDS = 8.5 // long enough for chime + trilingual JA/EN/ES warning to finish before doors actually close
 
-export type TrainRunState = 'running' | 'doors_open' | 'doors_closing'
+// ——— Manual door timing (the player is the conductor) ———
+// Doors never open or close on their own while the player is on the ball;
+// the auto fallbacks only exist so a distracted player is never soft-locked
+// in a station. Bonus windows are generous enough to hit on a phone.
+export const OPEN_INSTANT_SECONDS = 2.0 // open within this after stopping → top bonus
+export const OPEN_QUICK_SECONDS = 4.5 // → smaller bonus
+const OPEN_AUTO_SECONDS = 9 // conductor takes over, no bonus
+export const CLOSE_WINDOW_SECONDS = 3.5 // close within this after boarding ends → departure bonus
+export const CLOSE_HURRY_SECONDS = 5.5 // hurry-up warning if doors still open past this
+const CLOSE_AUTO_SECONDS = 9.5 // doors close on their own, no bonus
+
+export type TrainRunState = 'running' | 'stopped' | 'doors_open' | 'doors_closing'
+
+/** How a door transition happened and how sharp the player was. */
+export interface DoorActionInfo {
+  /** Seconds since the moment the action first became available. */
+  delaySeconds: number
+  /** True when the fallback timer acted, not the player. */
+  auto: boolean
+}
 
 export interface StopResult {
   grade: 'perfect' | 'good' | 'ok' | 'overshot' | 'undershot'
@@ -42,9 +59,12 @@ export interface TrainEvents {
   onArrivingAnnounce?: (stationIndex: number) => void
   onStopped?: (stationIndex: number, result: StopResult) => void
   onMissed?: (stationIndex: number, result: StopResult) => void
-  onDoorsOpen?: (stationIndex: number) => void
-  onDoorsClose?: (stationIndex: number) => void
-  onDoorsClosingWarning?: (stationIndex: number) => void
+  onDoorsOpen?: (stationIndex: number, info: DoorActionInfo) => void
+  /** Passengers are all aboard — the close window (and its bonus timer) starts now. */
+  onBoardingComplete?: (stationIndex: number) => void
+  /** Player is dawdling with the doors open; fire the "doors are closing" warning. */
+  onCloseHurryUp?: (stationIndex: number) => void
+  onDoorsClose?: (stationIndex: number, info: DoorActionInfo) => void
 }
 
 function wrappedSignedDelta(a: number, b: number): number {
@@ -59,12 +79,17 @@ export class Train {
   targetStationIndex = 1
   state: TrainRunState = 'running'
   doorsOpenAmount = 0
-  dwellRemaining = 0
   lastStopResult: StopResult | null = null
+  /** Seconds passengers need to board once the doors open — set per stop (rush hour takes longer). */
+  boardingSeconds = 8
+  boardingRemaining = 0
+  boardingComplete = false
   private track: Track
   private events: TrainEvents
   private announcedArriving = false
-  private announcedClosing = false
+  private stoppedElapsed = 0
+  private closeElapsed = 0
+  private hurryUpFired = false
 
   constructor(track: Track, events: TrainEvents = {}) {
     this.track = track
@@ -94,17 +119,62 @@ export class Train {
     return frac * this.track.getLength()
   }
 
+  /**
+   * Player door control. In 'stopped' it opens the doors; with the doors open
+   * and boarding finished it closes them. Any other moment is a no-op (early
+   * closes are swallowed — passengers are still boarding). Returns true if the
+   * press did something, so the UI can give tactile feedback only on real acts.
+   */
+  requestDoorAction(): boolean {
+    if (this.state === 'stopped') {
+      this.openDoors(false)
+      return true
+    }
+    if (this.state === 'doors_open' && this.boardingComplete) {
+      this.closeDoors(false)
+      return true
+    }
+    return false
+  }
+
+  private openDoors(auto: boolean) {
+    this.state = 'doors_open'
+    this.doorsOpenAmount = 0
+    this.boardingRemaining = this.boardingSeconds
+    this.boardingComplete = false
+    this.closeElapsed = 0
+    this.hurryUpFired = false
+    this.events.onDoorsOpen?.(this.targetStationIndex, { delaySeconds: this.stoppedElapsed, auto })
+  }
+
+  private closeDoors(auto: boolean) {
+    this.state = 'doors_closing'
+    this.events.onDoorsClose?.(this.targetStationIndex, { delaySeconds: this.closeElapsed, auto })
+  }
+
   update(dt: number) {
+    if (this.state === 'stopped') {
+      // Doors shut, waiting on the player's OPEN. The conductor covers for a
+      // distracted driver after a while — without any bonus.
+      this.stoppedElapsed += dt
+      if (this.stoppedElapsed >= OPEN_AUTO_SECONDS) this.openDoors(true)
+      return
+    }
     if (this.state === 'doors_open') {
       this.doorsOpenAmount = Math.min(1, this.doorsOpenAmount + dt / DOOR_ANIM_SECONDS)
-      this.dwellRemaining -= dt
-      if (!this.announcedClosing && this.dwellRemaining <= CLOSING_WARN_LEAD_SECONDS) {
-        this.announcedClosing = true
-        this.events.onDoorsClosingWarning?.(this.targetStationIndex)
-      }
-      if (this.dwellRemaining <= 0) {
-        this.state = 'doors_closing'
-        this.events.onDoorsClose?.(this.targetStationIndex)
+      if (!this.boardingComplete) {
+        this.boardingRemaining -= dt
+        if (this.boardingRemaining <= 0) {
+          this.boardingComplete = true
+          this.events.onBoardingComplete?.(this.targetStationIndex)
+        }
+      } else {
+        this.closeElapsed += dt
+        if (!this.hurryUpFired && this.closeElapsed >= CLOSE_HURRY_SECONDS) {
+          this.hurryUpFired = true
+          this.events.onCloseHurryUp?.(this.targetStationIndex)
+        }
+        if (this.closeElapsed >= CLOSE_AUTO_SECONDS) this.closeDoors(true)
       }
       return
     }
@@ -167,12 +237,12 @@ export class Train {
     this.lastStopResult = result
     this.speedKmh = 0
     this.notch = 0
-    this.state = 'doors_open'
+    // Doors stay SHUT: opening them is the player's job now (with a bonus
+    // for a sharp reaction). See requestDoorAction().
+    this.state = 'stopped'
     this.doorsOpenAmount = 0
-    this.dwellRemaining = DWELL_SECONDS
-    this.announcedClosing = false
+    this.stoppedElapsed = 0
     this.events.onStopped?.(this.targetStationIndex, result)
-    this.events.onDoorsOpen?.(this.targetStationIndex)
   }
 
   get currentStation() {
