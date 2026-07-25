@@ -2,10 +2,13 @@ import * as THREE from 'three'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { Track, TrackOffsetCurve, CatenaryCurve, HILL_PEAK, EMBANKMENT, embankmentSurface } from './Track'
 import { Train, notchLabel, MIN_NOTCH, MAX_NOTCH, OPEN_INSTANT_SECONDS, OPEN_QUICK_SECONDS, CLOSE_WINDOW_SECONDS, CLOSE_HURRY_SECONDS, type DoorActionInfo } from './Train'
-import { City, crowdDensityForHour } from './City'
+import { City } from './City'
 import { Passengers } from './Passengers'
 import { Precipitation } from './Precipitation'
+import { TrainConsist, CAB_OFFSET, CONSIST_LEN } from './TrainConsist'
+import type { CameraMode } from './cameraModes'
 import { PerfLog, setActivePerfLog, perfMark } from './PerfLog'
+import { PassengerFlow, TRAIN_CAPACITY } from './PassengerFlow'
 import { registerPool, applySeasonToPool, overcastTarget, precipProfile, type Season, type Weather, type SeasonalPool } from './Seasons'
 import { Scenery } from './Scenery'
 import { DayNightCycle } from './DayNightCycle'
@@ -29,12 +32,31 @@ const FIXED_DT = 1 / 60
 const MAX_FRAME_DT = 0.25
 const MAX_CATCHUP_STEPS = 15
 
+// ————————————————————————————————————————————————————————————————
+// PA language. Japanese is never dropped — it IS the sound of the line — but
+// three languages per stop take ~15 s, and at line speed you pass a station
+// every ~14 s, so the announcements piled up and drifted a station or two
+// behind the train (Rubén, on the first real lap). Two languages fit inside
+// the gap. The second one follows the player's browser; the pause menu can
+// override it.
+// ————————————————————————————————————————————————————————————————
+export type PaSecondLang = 'en' | 'es'
+const PA_LANG_KEY = 'yamanote-pa-lang'
+
+function detectSecondLang(): PaSecondLang {
+  const stored = localStorage.getItem(PA_LANG_KEY)
+  if (stored === 'en' || stored === 'es') return stored
+  return (navigator.language || 'en').toLowerCase().startsWith('es') ? 'es' : 'en'
+}
+
 /** Door-side wording per language, so every announcement really states the side. */
 function doorSidePhrases(side: 'left' | 'right'): { ja: string; en: string; es: string } {
   return side === 'left'
     ? { ja: '左側', en: 'left', es: 'izquierdo' }
     : { ja: '右側', en: 'right', es: 'derecho' }
 }
+
+const CAMERA_KEY = 'yamanote-camera'
 
 const BEST_SCORE_KEY = 'yamanote-best-score'
 const SEASON_KEY = 'yamanote-season'
@@ -48,8 +70,14 @@ const DOOR_OPEN_INSTANT_POINTS = 30
 const DOOR_OPEN_QUICK_POINTS = 15
 const DOOR_CLOSE_SHARP_POINTS = 30
 /** Boarding takes longer in the rush hours: base + crowd-scaled extra. */
+/** Eye height on the platform slab (City's PLATFORM_TOP + a person). */
+const PLATFORM_EYE_Y = 1.2 + 1.62
+/** Platform edge offset from the track centreline (City's TRACK_CLEARANCE). */
+const PLATFORM_INNER = 3
 const BOARDING_BASE_SECONDS = 5.5
 const BOARDING_CROWD_SECONDS = 5.5
+/** A skipped station can sting, but it must never wipe a good run. */
+const SKIP_PENALTY_CAP = 120
 
 export class Game {
   private renderer: THREE.WebGLRenderer
@@ -62,6 +90,14 @@ export class Game {
   private scenery: Scenery
   private dayNight: DayNightCycle
   private precipitation: Precipitation
+  private consist!: TrainConsist
+  private cabRig!: THREE.Group
+  /**
+   * Which eye the player is looking through. The train is only BUILT into the
+   * world in the outside views, so the default cab view costs exactly what it
+   * always did.
+   */
+  private cameraMode: CameraMode = (localStorage.getItem(CAMERA_KEY) as CameraMode) || 'cab'
   private season: Season = (localStorage.getItem(SEASON_KEY) as Season) || 'spring'
   private weather: Weather = (localStorage.getItem(WEATHER_KEY) as Weather) || 'clear'
   /** Last rain/wind levels actually pushed to the audio engine — the per-frame profile only reaches it when they have moved. */
@@ -69,6 +105,12 @@ export class Game {
   private lastWindAudioLevel = -1
   /** Which station the perf log has already been told about — one mark per change, not per frame. */
   private lastMarkedStation = -1
+  /** DayNightCycle's own starting hour, so the line starts already populated for it. */
+  private readonly dayNightStartHour = 7.5
+  private paLang: PaSecondLang = detectSecondLang()
+  private flow!: PassengerFlow
+  /** Throttles the sprite refresh — the counts move slowly, the queue redraw is a DOM-free but non-trivial pass. */
+  private waitingRefresh = 0
   /** Ground + embankment vertex-color pools, retinted per season alongside the vegetation. */
   private terrainPools: SeasonalPool[] = []
   private ballastMat!: THREE.MeshStandardMaterial
@@ -92,6 +134,7 @@ export class Game {
   private lastCrossingPhase = false
   private perf = new PerfLog()
   private score = 0
+  private lastStop: import('./PassengerFlow').StopOutcome | null = null
   private perfectStreak = 0
   private bestScore = Number(localStorage.getItem(BEST_SCORE_KEY) ?? 0)
 
@@ -131,17 +174,36 @@ export class Game {
         this.handleArrivingAnnounce(idx)
       },
       onStopped: (idx, result) => {
-        // Rush hour = fuller platform = longer boarding; decided at stop
-        // time so the door phase and the sprites agree on the same crowd.
-        this.train.boardingSeconds = BOARDING_BASE_SECONDS + crowdDensityForHour(this.dayNight.timeOfDay) * BOARDING_CROWD_SECONDS
+        // The stop is resolved in PEOPLE first: who gets off, who fits on,
+        // who is left standing there. Boarding time then follows from the
+        // actual number of bodies moving, not from a clock.
+        this.lastStop = this.flow.stopAt(idx)
+        const moving = this.lastStop.alighted + this.lastStop.boarded
+        this.train.boardingSeconds = THREE.MathUtils.clamp(
+          BOARDING_BASE_SECONDS + (moving / 40) * BOARDING_CROWD_SECONDS,
+          BOARDING_BASE_SECONDS,
+          BOARDING_BASE_SECONDS + BOARDING_CROWD_SECONDS * 2.2,
+        )
         const gained = this.applyScore(result.grade)
         this.ui.showStopToast(idx, result, gained)
         this.ui.setStationResult(idx, result.grade)
+        // Only shout "full" when it actually cost someone their train — at
+        // rush hour the train is at capacity almost every stop, and a toast
+        // every time would be noise instead of news.
+        this.ui.setOccupancy(this.flow.onboard, TRAIN_CAPACITY, this.lastStop.leftBehind > 15)
       },
       onMissed: (idx) => {
         perfMark('missed')
         this.perfectStreak = 0
-        this.ui.showMissedToast(idx)
+        // Skipping is not free any more: the platform's crowd stays (and
+        // grows), and the riders who wanted this station are still aboard.
+        const skipped = this.flow.skip(idx)
+        const penalty = Math.min(SKIP_PENALTY_CAP, Math.round(skipped.stranded * 0.5 + skipped.carried * 1.5))
+        if (penalty > 0) {
+          this.score = Math.max(0, this.score - penalty)
+          this.ui.setScore(this.score, this.bestScore, 0)
+        }
+        this.ui.showSkipToast(idx, skipped.stranded, skipped.carried, penalty)
         this.ui.setStationResult(idx, 'missed')
       },
       onDoorsOpen: (idx, info) => this.handleDoorsOpen(idx, info),
@@ -150,9 +212,11 @@ export class Game {
       onDoorsClose: (_idx, info) => this.handleDoorsClose(info),
     })
     this.city = new City(this.scene, this.track)
+    this.flow = new PassengerFlow(this.dayNightStartHour)
     this.passengers = new Passengers(this.scene, this.track, this.camera)
     this.scenery = new Scenery(this.scene, this.track)
     this.dayNight = new DayNightCycle(this.scene)
+    this.consist = new TrainConsist(this.scene, this.track)
     this.buildTrackVisual()
     this.buildCabRig()
     this.buildHeadlight()
@@ -172,6 +236,11 @@ export class Game {
         localStorage.setItem(SEASON_KEY, s)
         this.applyAtmosphere()
         if (!this.running) this.renderOnce()
+      },
+      onCameraSet: (m) => this.setCameraMode(m),
+      onPaLangSet: (lang) => {
+        this.paLang = lang
+        localStorage.setItem(PA_LANG_KEY, lang)
       },
       onPerfToggle: () => this.togglePerfRecording(),
       onPerfExport: () => (this.perf.frames > 0 ? this.perf.export() : PerfLog.stored()),
@@ -204,12 +273,22 @@ export class Game {
       audio.setBackgrounded(document.hidden)
     })
     this.pushPerfState()
+    this.ui.setPaLang(this.paLang)
+    this.setCameraMode(this.cameraMode)
     this.onResize()
     this.updateCameraFromTrain()
     // No animation loop yet: the start screen is a single static render, not
     // a spinning render loop burning battery behind the overlay. tick()
     // proper only starts once the player actually taps "start".
     this.renderOnce()
+  }
+
+  /** Japanese plus the player's language — see the PA note at the top of the file. */
+  private paSegments(ja: string, en: string, es: string) {
+    return [
+      { lang: 'ja' as const, text: ja },
+      this.paLang === 'es' ? { lang: 'es' as const, text: es } : { lang: 'en' as const, text: en },
+    ]
   }
 
   /**
@@ -354,31 +433,31 @@ export class Game {
     this.lookPitch = THREE.MathUtils.clamp(this.lookPitch - dy * sens, -LOOK_PITCH_LIMIT, LOOK_PITCH_LIMIT)
   }
 
-  /** The session's one-time welcome cue: next stop announced in JA/EN/ES with a retro chiptune fanfare. */
+  /** The session's one-time welcome cue: next stop, with a retro chiptune fanfare. */
   private handleWelcomeAnnounce() {
     const next = STATIONS[this.train.targetStationIndex]
     const sides = doorSidePhrases(next.doorSide)
     audio.announce(
-      [
-        { lang: 'ja', text: `次は、${next.nameJa}、${next.nameJa}です。お出口は${sides.ja}です。` },
-        { lang: 'en', text: `The next station is ${next.nameEn}. Doors will open on the ${sides.en} side.` },
-        { lang: 'es', text: `Próxima estación: ${next.nameEn}. Las puertas se abrirán por el lado ${sides.es}.` },
-      ],
+      this.paSegments(
+        `次は、${next.nameJa}、${next.nameJa}です。お出口は${sides.ja}です。`,
+        `The next station is ${next.nameEn}. Doors will open on the ${sides.en} side.`,
+        `Próxima estación: ${next.nameEn}. Las puertas se abrirán por el lado ${sides.es}.`,
+      ),
       { fanfare: true, kind: 'depart' },
     )
   }
 
-  /** Every announcement runs in the three languages, always naming the door side — JA first (host country), then EN, then ES. */
+  /** Always names the door side. Japanese first — it's the host country's line — then the player's language. */
   private handleDepartAnnounce(nextIdx: number) {
     const next = STATIONS[nextIdx]
     const sides = doorSidePhrases(next.doorSide)
     audio.announce(
-      [
-        { lang: 'ja', text: `次は、${next.nameJa}、${next.nameJa}です。お出口は${sides.ja}です。` },
-        { lang: 'en', text: `The next station is ${next.nameEn}. Doors will open on the ${sides.en} side.` },
-        { lang: 'es', text: `Próxima estación: ${next.nameEn}. Las puertas se abrirán por el lado ${sides.es}.` },
-      ],
-      { kind: 'depart' },
+      this.paSegments(
+        `次は、${next.nameJa}、${next.nameJa}です。お出口は${sides.ja}です。`,
+        `The next station is ${next.nameEn}. Doors will open on the ${sides.en} side.`,
+        `Próxima estación: ${next.nameEn}. Las puertas se abrirán por el lado ${sides.es}.`,
+      ),
+      { kind: 'depart', valid: () => this.train.targetStationIndex === nextIdx },
     )
   }
 
@@ -388,12 +467,13 @@ export class Game {
     const transferJa = station.transferLines?.length ? ` ${station.transferLines.join('、')}はお乗り換えです。` : ''
     const transferEn = station.transferLines?.length ? ` Please change here for ${station.transferLines.join(', ')}.` : ''
     audio.announce(
-      [
-        { lang: 'ja', text: `まもなく、${station.nameJa}、${station.nameJa}です。${transferJa} お出口は${sides.ja}です。` },
-        { lang: 'en', text: `We will soon arrive at ${station.nameEn}.${transferEn} The doors on the ${sides.en} side will open.` },
-        { lang: 'es', text: `Llegamos a ${station.nameEn}. Las puertas se abrirán por el lado ${sides.es}.` },
-      ],
-      { kind: 'arriving' },
+      this.paSegments(
+        `まもなく、${station.nameJa}、${station.nameJa}です。${transferJa} お出口は${sides.ja}です。`,
+        `We will soon arrive at ${station.nameEn}.${transferEn} The doors on the ${sides.en} side will open.`,
+        `Llegamos a ${station.nameEn}. Las puertas se abrirán por el lado ${sides.es}.`,
+      ),
+      // Still relevant only while that station is the one we're heading for.
+      { kind: 'arriving', valid: () => this.train.targetStationIndex === idx },
     )
   }
 
@@ -406,7 +486,7 @@ export class Game {
     }, chimeDuration * 1000 + 120)
     // The platform reacts to the doors actually opening: waiting sprites
     // stream aboard, a few riders step off first.
-    this.passengers.beginBoarding(idx, this.train.boardingSeconds)
+    this.passengers.beginBoarding(idx, this.train.boardingSeconds, Math.round((this.lastStop?.alighted ?? 4) / 6))
     if (!info.auto) {
       if (info.delaySeconds <= OPEN_INSTANT_SECONDS) this.applyDoorBonus(DOOR_OPEN_INSTANT_POINTS, '¡Puertas al instante!')
       else if (info.delaySeconds <= OPEN_QUICK_SECONDS) this.applyDoorBonus(DOOR_OPEN_QUICK_POINTS, 'Puertas rápidas')
@@ -418,11 +498,7 @@ export class Game {
     // clearly instead of competing with the next loop iteration.
     audio.stopMelodyLoop()
     audio.announce(
-      [
-        { lang: 'ja', text: 'ドアが閉まります。ご注意ください。' },
-        { lang: 'en', text: 'The doors are closing.' },
-        { lang: 'es', text: 'Las puertas se cierran.' },
-      ],
+      this.paSegments('ドアが閉まります。ご注意ください。', 'The doors are closing.', 'Las puertas se cierran.'),
       { kind: 'closing' },
     )
   }
@@ -792,6 +868,7 @@ export class Game {
 
   private buildCabRig() {
     const cab = new THREE.Group()
+    this.cabRig = cab
     this.camera.add(cab)
 
     // Cab dome light: a soft warm pool over the console so the controls and
@@ -925,20 +1002,89 @@ export class Game {
     }
   }
 
+  /** Cycles cab → exterior → platform. The consist only exists in the outside views. */
+  setCameraMode(mode: CameraMode) {
+    this.cameraMode = mode
+    localStorage.setItem(CAMERA_KEY, mode)
+    this.cabRig.visible = mode === 'cab'
+    this.consist.setVisible(mode !== 'cab')
+    this.ui.setCameraMode(mode)
+    // Looking around is a cab affordance; the outside views frame themselves.
+    if (mode !== 'cab') {
+      this.lookYaw = 0
+      this.lookPitch = 0
+    }
+    this.updateCameraFromTrain()
+    if (!this.running) this.renderOnce()
+  }
+
   private updateCameraFromTrain() {
+    // The consist is centred on progressFraction, so the driver's eye sits a
+    // half-train ahead of it — which also means a perfect stop now leaves the
+    // cab at the platform's leading end, the way a real one does.
+    const len = this.track.getLength()
     const t = this.train.progressFraction
-    const point = this.track.pointAt(t)
-    const tangent = this.track.tangentAt(t).normalize()
-    const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize()
-
-    const eye = point.clone().addScaledVector(normal, 0.95).add(new THREE.Vector3(0, 3.3, 0))
     const worldUp = new THREE.Vector3(0, 1, 0)
-    const m = new THREE.Matrix4().lookAt(eye, eye.clone().add(tangent), worldUp)
-    const baseQuat = new THREE.Quaternion().setFromRotationMatrix(m)
-    const lookQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(this.lookPitch, this.lookYaw, 0, 'YXZ'))
 
+    if (this.cameraMode === 'cab') {
+      const tCab = THREE.MathUtils.euclideanModulo(t + CAB_OFFSET / len, 1)
+      const point = this.track.pointAt(tCab)
+      const tangent = this.track.tangentAt(tCab).normalize()
+      const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize()
+      const eye = point.clone().addScaledVector(normal, 0.95).add(new THREE.Vector3(0, 3.3, 0))
+      const m = new THREE.Matrix4().lookAt(eye, eye.clone().add(tangent), worldUp)
+      const baseQuat = new THREE.Quaternion().setFromRotationMatrix(m)
+      const lookQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(this.lookPitch, this.lookYaw, 0, 'YXZ'))
+      this.camera.position.copy(eye)
+      this.camera.quaternion.copy(baseQuat).multiply(lookQuat)
+      return
+    }
+
+    const side = STATIONS[this.train.targetStationIndex].doorSide === 'left' ? 1 : -1
+    if (this.cameraMode === 'exterior') {
+      // NOTE the sign. The platform frame (City, Passengers) builds its X axis
+      // as cross(up, tangent) = (tz, 0, -tx); the obvious (-tz, 0, tx) is its
+      // NEGATIVE, and using it put every outside camera on the wrong side of
+      // the track — looking at the back of the train with the platform hidden
+      // behind it.
+      // Three-quarter view from the door side and behind: the flank with the
+      // doors on it, the whole consist, and the road ahead all in one frame.
+      const tBack = THREE.MathUtils.euclideanModulo(t - (CONSIST_LEN * 0.78) / len, 1)
+      const point = this.track.pointAt(tBack)
+      const tangent = this.track.tangentAt(tBack).normalize()
+      const normal = new THREE.Vector3(tangent.z, 0, -tangent.x).normalize()
+      const eye = point.clone().addScaledVector(normal, side * 15).add(new THREE.Vector3(0, 8.6, 0))
+      // Aim a third of the way up the train, not at the centre: that keeps the
+      // nose in frame and leaves the road ahead visible above it.
+      const focus = this.track.pointAt(THREE.MathUtils.euclideanModulo(t + (CONSIST_LEN * 0.25) / len, 1)).clone().add(new THREE.Vector3(0, 2.2, 0))
+      const m = new THREE.Matrix4().lookAt(eye, focus, worldUp)
+      this.camera.position.copy(eye)
+      this.camera.quaternion.setFromRotationMatrix(m)
+      return
+    }
+
+    // Platform view: standing on the slab of the station being approached,
+    // roughly where a passenger waits, watching the train come in.
+    const marker = this.track.markerFor(this.train.targetStationIndex)
+    const pPoint = this.track.pointAt(marker.tFraction)
+    const pTangent = this.track.tangentAt(marker.tFraction).normalize()
+    const pNormal = new THREE.Vector3(pTangent.z, 0, -pTangent.x).normalize()
+    // Standing well back from the edge and looking ALONG the platform: that
+    // frames the queues, the doorway in front of you and the train's flank
+    // running away toward the cab, instead of a wall of car two metres off.
+    const eye = pPoint
+      .clone()
+      .addScaledVector(pNormal, side * (PLATFORM_INNER + 4.6))
+      .addScaledVector(pTangent, -16)
+      .add(new THREE.Vector3(0, PLATFORM_EYE_Y, 0))
+    const focus = pPoint
+      .clone()
+      .addScaledVector(pNormal, side * (PLATFORM_INNER + 1.4))
+      .addScaledVector(pTangent, 12)
+      .add(new THREE.Vector3(0, 1.75, 0))
+    const m = new THREE.Matrix4().lookAt(eye, focus, worldUp)
     this.camera.position.copy(eye)
-    this.camera.quaternion.copy(baseQuat).multiply(lookQuat)
+    this.camera.quaternion.setFromRotationMatrix(m)
   }
 
   private onResize() {
@@ -1004,13 +1150,35 @@ export class Game {
       perfMark('station')
     }
     this.city.update(dt, this.dayNight.nightFactor, this.train.targetStationIndex)
-    this.passengers.update(dt, this.dayNight.timeOfDay, this.dayNight.nightFactor, this.train.targetStationIndex)
+    // Real seconds, not clock-scaled: the train runs in real time, so if
+    // arrivals followed the accelerated day the platform would win by default.
+    this.flow.update(dt, this.dayNight.timeOfDay)
+    this.waitingRefresh += dt
+    if (this.waitingRefresh > 1.4) {
+      this.waitingRefresh = 0
+      this.passengers.setWaitingCounts(this.flow.waiting)
+    }
+    const prevMarkerT = this.track.markerFor(this.train.currentStationIndex).tFraction
+    this.passengers.update(dt, this.dayNight.nightFactor, {
+      targetStation: this.train.targetStationIndex,
+      distanceToTarget: this.train.distanceToTarget,
+      distanceBehind: ((((this.train.progressFraction - prevMarkerT) % 1) + 1) % 1) * this.track.getLength(),
+      stopped: this.train.state === 'stopped' || this.train.state === 'doors_open',
+      doorsOpen: this.train.doorsOpenAmount,
+      speed01: this.train.speed01,
+    })
     this.scenery.update(dt, this.dayNight, this.train.progressFraction)
     // Kan-kan: one bell strike per blink flip while the crossing is active.
     if (this.scenery.crossingBlinkPhase !== this.lastCrossingPhase) {
       this.lastCrossingPhase = this.scenery.crossingBlinkPhase
       if (this.scenery.crossingBellActive) audio.crossingTick(0.7)
     }
+    this.consist.update(
+      this.train.progressFraction,
+      this.train.doorsOpenAmount,
+      STATIONS[this.train.currentStationIndex].doorSide,
+      this.dayNight.nightFactor,
+    )
     this.applyPrecipitation()
     this.precipitation.update(dt, this.camera.position, this.dayNight.nightFactor)
     this.updateHeadlight()

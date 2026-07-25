@@ -640,13 +640,80 @@ canvas.game-canvas {
 .team-list li { padding: var(--space-3) 0; border-bottom: 1px solid rgba(255, 255, 255, 0.1); font-size: var(--text-body); }
 .team-list li span { color: var(--text-secondary); }
 
+/* ---------- Occupancy ---------- */
+/* Sits on top of the score chip: how full your train is belongs next to how
+   well you are driving it. */
+.occupancy-chip {
+  position: absolute;
+  left: calc(var(--safe-left) + var(--space-3));
+  bottom: calc(var(--safe-bottom) + 122px);
+  width: 118px;
+  background: var(--chip-bg);
+  border: var(--chip-border);
+  box-shadow: var(--chip-shadow);
+  backdrop-filter: var(--chip-blur);
+  border-radius: var(--radius-md);
+  padding: var(--space-1) var(--space-2);
+  pointer-events: none;
+}
+.occupancy-bar {
+  height: 5px;
+  border-radius: var(--radius-sm);
+  background: rgba(255, 255, 255, 0.16);
+  overflow: hidden;
+}
+.occupancy-fill {
+  height: 100%;
+  width: 0%;
+  border-radius: var(--radius-sm);
+  background: var(--color-accent);
+  transition: width 0.4s ease, background 0.4s ease;
+}
+.occupancy-fill.busy { background: var(--color-warn); }
+.occupancy-fill.packed { background: var(--color-brake); }
+.occupancy-label {
+  display: block;
+  margin-top: 2px;
+  font-size: var(--text-micro);
+  letter-spacing: 0.06em;
+  color: var(--text-muted);
+  font-variant-numeric: tabular-nums;
+}
+
+/* ---------- Camera view chip ---------- */
+/* Bottom-left column, above the score: thumb-reachable and clear of the
+   lever, the door button and the E-brake. */
+.cam-chip {
+  position: absolute;
+  left: calc(var(--safe-left) + var(--space-3));
+  bottom: calc(var(--safe-bottom) + 160px);
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--chip-bg);
+  border: var(--chip-border);
+  box-shadow: var(--chip-shadow);
+  backdrop-filter: var(--chip-blur);
+  border-radius: var(--radius-md);
+  padding: var(--space-1) var(--space-2);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-label);
+  font-weight: 600;
+  pointer-events: auto;
+  cursor: pointer;
+  transition: transform 0.1s ease;
+}
+.cam-chip:active { transform: scale(0.96); }
+.cam-icon { font-size: 15px; line-height: 1; }
+
 /* ---------- Performance counter ---------- */
 /* Sits just above the score chip while a recording runs. Monospaced and
    tabular so the number doesn't jitter its own width 60 times a second. */
 .perf-chip {
   position: absolute;
   left: calc(var(--safe-left) + var(--space-3));
-  bottom: calc(var(--safe-bottom) + 122px);
+  bottom: calc(var(--safe-bottom) + 196px);
   display: flex;
   align-items: baseline;
   gap: 5px;
@@ -676,6 +743,19 @@ canvas.game-canvas {
 @keyframes perf-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
 
 .perf-block { margin-top: var(--space-4); text-align: left; }
+.pa-lang-row { display: flex; gap: var(--space-2); }
+.pa-lang-row button {
+  flex: 1;
+  padding: var(--space-2);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid transparent;
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-label);
+  cursor: pointer;
+}
+.pa-lang-row button.active { background: rgba(255, 206, 74, 0.22); border-color: rgba(255, 206, 74, 0.65); font-weight: 600; }
 .perf-title {
   display: block;
   font-size: var(--text-micro);

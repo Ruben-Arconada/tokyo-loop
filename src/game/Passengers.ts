@@ -1,7 +1,8 @@
 import * as THREE from 'three'
 import type { Track } from './Track'
 import { STATIONS, prevStationIndex } from '../data/stations'
-import { PLATFORM_GEOM, crowdDensityForHour } from './City'
+import { PLATFORM_GEOM } from './City'
+import { DOOR_ZS } from './TrainConsist'
 
 // ————————————————————————————————————————————————————————————————
 // Sprite passengers: little hand-drawn commuters generated entirely in
@@ -12,29 +13,57 @@ import { PLATFORM_GEOM, crowdDensityForHour } from './City'
 // "walkable world" dream (see memory: characters need real ground rules).
 // ————————————————————————————————————————————————————————————————
 
-const SPRITE_COLS = 6 // frames per row: 2 idle + 4 walk
-const SPRITE_ROWS = 8 // character archetypes
+const SPRITE_COLS = 6 // frames per row: 2 idle + 4 walk (staff row: fixed poses)
+const SPRITE_ROWS = 9 // 8 commuter archetypes + the station attendant
 const CELL_W = 128
 const CELL_H = 192
 /** World height of a standing sprite (before per-instance stature jitter). */
 const SPRITE_H = 1.72
 const SPRITE_W = SPRITE_H * (CELL_W / CELL_H)
 
-const WAITING_PER_STATION = 8
-const ALIGHT_POOL = 8
+/**
+ * Sprites reserved per platform. They are a VIEW of PassengerFlow's numbers,
+ * not the numbers themselves: a rush-hour platform holds hundreds, and what
+ * these do is show the queue getting deeper as it fills.
+ */
+const WAITING_PER_STATION = 18
+const ALIGHT_POOL = 10
 const N = STATIONS.length
-const TOTAL = N * WAITING_PER_STATION + ALIGHT_POOL
+/** One attendant per station, standing where the cab comes to rest. */
+const STAFF_BASE = N * WAITING_PER_STATION + ALIGHT_POOL
+const TOTAL = STAFF_BASE + N
+/** Sprite-sheet row holding the attendant's poses. */
+const STAFF_ROW = 8
+/** Fixed frames within that row. */
+const POSE_STAND = 0
+const POSE_POINT = 2
+const POSE_BOW = 3
+const POSE_POINT_UP = 4
+
+// The queue: two files flanking each doorway, growing away from the edge —
+// the shape any Japanese platform takes without anyone being told.
+const QUEUE_FILES = [-1, 1]
+const QUEUE_ROWS = 3
+/** Lateral gap from the platform edge to the head of a queue. */
+const QUEUE_X0 = 1.75
+const QUEUE_X_STEP = 0.78
+/** How far each file stands to the side of its doorway's centre line. */
+const QUEUE_Z_SPREAD = 1.15
+/** Where the attendant stands: beside the stopping mark, at the leading end. */
+const STAFF_Z = 29.5
 
 /** Ambient visibility only re-rolls this often — cheap, and pops hide inside the crowd churn. */
 const DENSITY_REFRESH_SECONDS = 1.6
-/** Where the (implied) train doors sit along the platform, in local Z. */
-const DOOR_ZS = [-21, -14, -7, 0, 7, 14, 21]
 const WALK_SPEED = 1.5
+/** Alighters get this long to clear the doorway before anyone steps in. */
+const ALIGHT_CLEAR_SECONDS = 1.9
 
 // aData.y modes, mirrored in the vertex shader.
 const MODE_IDLE = 0
 const MODE_WALK = 1
 const MODE_HIDDEN = 2
+/** Holds a single fixed frame (aData.z picks it) — how the attendant poses. */
+const MODE_POSE = 3
 
 type SlotState = 'ambient' | 'boarding' | 'boarded'
 
@@ -44,6 +73,10 @@ interface WaitingSlot {
   local: THREE.Vector2
   roll: number
   state: SlotState
+  /** Which doorway this person is queuing for. */
+  doorIdx: number
+  /** Position within that queue — decides who steps aboard first. */
+  order: number
 }
 
 interface Walker {
@@ -56,6 +89,18 @@ interface Walker {
   speed: number
   /** Waiting slot being consumed — set for boarders, undefined for alighters. */
   slot?: WaitingSlot
+}
+
+/** What the platform needs to know about the train to stage its people. */
+export interface PassengerContext {
+  targetStation: number
+  /** World units to the station being approached. */
+  distanceToTarget: number
+  /** World units since leaving the previous one. */
+  distanceBehind: number
+  stopped: boolean
+  doorsOpen: number
+  speed01: number
 }
 
 interface StationFrame {
@@ -359,18 +404,110 @@ function drawSide(ctx: CanvasRenderingContext2D, v: Variant, wf: number) {
   drawHead(ctx, v, cx + 2 + hunch * 4, headCy + hunch * 3, headR, 1)
 }
 
+/**
+ * The station attendant. Not another commuter with a different shirt: the
+ * poses ARE the character — pointing at the arriving train and bowing are the
+ * two gestures you actually see on a Japanese platform, so they get their own
+ * frames instead of an idle cycle.
+ */
+function drawAttendant(ctx: CanvasRenderingContext2D, pose: number) {
+  const feet = 182
+  const H = 156
+  const headR = 15.5
+  const NAVY = '#1e2a44'
+  const NAVY_DARK = '#172034'
+  const SKIN = '#f0c8a8'
+  const GLOVE = '#f7f7f2'
+  const bow = pose === POSE_BOW
+  const lean = bow ? 0.62 : 0
+  const cx = 64
+  const hipY = feet - H * 0.4
+  const shoulderY = feet - H + headR * 2 + 4
+  const torsoW = 26
+
+  // Legs first — they stay put through every pose.
+  ctx.fillStyle = NAVY
+  rr(ctx, cx - 12, hipY, 11, feet - hipY - 4, 4)
+  rr(ctx, cx + 1, hipY, 11, feet - hipY - 4, 4)
+  ctx.fillStyle = SHOE
+  rr(ctx, cx - 13, feet - 7, 13, 7, 3)
+  rr(ctx, cx, feet - 7, 13, 7, 3)
+
+  // Torso pivots at the hip so a bow is a real bow, not a slouch.
+  ctx.save()
+  ctx.translate(cx, hipY)
+  ctx.rotate(lean)
+  ctx.fillStyle = NAVY
+  rr(ctx, -torsoW / 2, -(hipY - shoulderY), torsoW, hipY - shoulderY + 4, 6)
+  // White shirt and dark tie in the jacket's gap.
+  ctx.fillStyle = '#eef0ee'
+  rr(ctx, -5, -(hipY - shoulderY) + 4, 10, 22, 2)
+  ctx.fillStyle = '#8d2f2f'
+  rr(ctx, -2, -(hipY - shoulderY) + 8, 4, 16, 1.5)
+
+  const armLen = hipY - shoulderY - 6
+  const arm = (angle: number) => {
+    ctx.save()
+    ctx.translate(0, -(hipY - shoulderY) + 6)
+    ctx.rotate(angle)
+    ctx.fillStyle = NAVY_DARK
+    rr(ctx, -3.5, 0, 7, armLen, 3)
+    // White glove — the thing that makes the gesture read at a distance.
+    ctx.fillStyle = GLOVE
+    ctx.beginPath()
+    ctx.arc(0, armLen + 3, 4.2, 0, Math.PI * 2)
+    ctx.fill()
+    ctx.restore()
+  }
+  if (pose === POSE_POINT) {
+    arm(-Math.PI / 2 + 0.12) // straight ahead, the classic point-and-call
+    arm(0.12)
+  } else if (pose === POSE_POINT_UP) {
+    arm(-Math.PI / 2 - 0.55) // raised, signalling the all-clear
+    arm(0.1)
+  } else if (bow) {
+    arm(-0.12)
+    arm(0.12)
+  } else {
+    arm(0.06)
+    arm(-0.06)
+  }
+  ctx.restore()
+
+  // Head rides the lean, cap on top.
+  const hx = cx + Math.sin(lean) * (hipY - (feet - H + headR))
+  const hy = feet - H + headR + (1 - Math.cos(lean)) * (hipY - (feet - H + headR))
+  ctx.fillStyle = SKIN
+  ctx.beginPath()
+  ctx.arc(hx, hy, headR, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.fillStyle = NAVY
+  ctx.beginPath()
+  ctx.arc(hx, hy - 2, headR + 1.5, Math.PI * 1.02, Math.PI * 1.98)
+  ctx.closePath()
+  ctx.fill()
+  rr(ctx, hx - headR - 3, hy - headR * 0.55, (headR + 3) * 2, 4.5, 2)
+  // Cap badge.
+  ctx.fillStyle = '#d8b34a'
+  rr(ctx, hx - 2.5, hy - headR * 0.95, 5, 3.5, 1)
+}
+
 function makePassengerSheet(): THREE.CanvasTexture {
   const canvas = document.createElement('canvas')
   canvas.width = SPRITE_COLS * CELL_W
   canvas.height = SPRITE_ROWS * CELL_H
   const ctx = canvas.getContext('2d')!
   for (let row = 0; row < SPRITE_ROWS; row++) {
-    const v = VARIANTS[row]
     for (let col = 0; col < SPRITE_COLS; col++) {
       ctx.save()
       ctx.translate(col * CELL_W, row * CELL_H)
-      if (col < 2) drawFront(ctx, v, col)
-      else drawSide(ctx, v, col - 2)
+      if (row === STAFF_ROW) {
+        drawAttendant(ctx, col)
+      } else {
+        const v = VARIANTS[row]
+        if (col < 2) drawFront(ctx, v, col)
+        else drawSide(ctx, v, col - 2)
+      }
       ctx.restore()
     }
   }
@@ -395,6 +532,11 @@ export class Passengers {
   private aData!: THREE.InstancedBufferAttribute
   private aMisc!: THREE.InstancedBufferAttribute
   private slots: WaitingSlot[] = []
+  private staffPose: number[] = []
+  private staffTimer: number[] = []
+  private staffSituation: number[] = new Array(N).fill(-1)
+  /** Visible queue length per station, driven by PassengerFlow's real counts. */
+  private visibleWaiting = new Int32Array(N)
   private frames: StationFrame[] = []
   private walkers: Walker[] = []
   private boardingStation = -1
@@ -432,22 +574,42 @@ export class Passengers {
     this.aData = new THREE.InstancedBufferAttribute(data, 3)
     this.aMisc = new THREE.InstancedBufferAttribute(misc, 2)
 
+    // Queue slots, door-major: filling them in order grows every door's pair
+    // of files at the same rate, which is what a platform actually looks like.
     for (let s = 0; s < N; s++) {
       const side = this.frames[s].side
       for (let p = 0; p < WAITING_PER_STATION; p++) {
         const i = s * WAITING_PER_STATION + p
+        const doorIdx = p % DOOR_ZS.length
+        const file = QUEUE_FILES[Math.floor(p / DOOR_ZS.length) % QUEUE_FILES.length]
+        const row = Math.floor(p / (DOOR_ZS.length * QUEUE_FILES.length)) % QUEUE_ROWS
         const local = new THREE.Vector2(
-          side * (PLATFORM_GEOM.inner + 1.6 + Math.random() * (PLATFORM_GEOM.outer - PLATFORM_GEOM.inner - 3.2)),
-          -PLATFORM_GEOM.len / 2 + 3 + Math.random() * (PLATFORM_GEOM.len - 6),
+          side * (PLATFORM_GEOM.inner + QUEUE_X0 + row * QUEUE_X_STEP + (Math.random() - 0.5) * 0.16),
+          DOOR_ZS[doorIdx] + file * QUEUE_Z_SPREAD + (Math.random() - 0.5) * 0.3,
         )
-        this.slots.push({ station: s, local, roll: Math.random(), state: 'ambient' })
-        data[i * 3 + 0] = Math.floor(Math.random() * SPRITE_ROWS)
+        this.slots.push({ station: s, local, roll: p / WAITING_PER_STATION, state: 'ambient', doorIdx, order: row * 2 + (file > 0 ? 1 : 0) })
+        data[i * 3 + 0] = Math.floor(Math.random() * STAFF_ROW)
         data[i * 3 + 1] = MODE_HIDDEN
         data[i * 3 + 2] = Math.random() * 8
         misc[i * 2 + 0] = 0.92 + Math.random() * 0.14
         misc[i * 2 + 1] = 1
         this.writeLocal(i, s, local.x, local.y)
       }
+    }
+
+    // One attendant per platform, standing where the cab will come to rest —
+    // close enough that the driver sees the bow through the side window.
+    for (let s = 0; s < N; s++) {
+      const i = STAFF_BASE + s
+      const side = this.frames[s].side
+      data[i * 3 + 0] = STAFF_ROW
+      data[i * 3 + 1] = MODE_POSE
+      data[i * 3 + 2] = POSE_STAND
+      misc[i * 2 + 0] = 1.0
+      misc[i * 2 + 1] = 1
+      this.writeLocal(i, s, side * (PLATFORM_GEOM.inner + 1.7), STAFF_Z)
+      this.staffPose.push(POSE_STAND)
+      this.staffTimer.push(0)
     }
     for (let a = 0; a < ALIGHT_POOL; a++) {
       const i = N * WAITING_PER_STATION + a
@@ -481,11 +643,16 @@ export class Passengers {
         #include <fog_pars_vertex>
         void main() {
           float mode = aData.y;
-          float scale = aMisc.x * (mode > 1.5 ? 0.0 : 1.0);
+          // Mode 2 is "not here"; mode 3 (posed) is visible like the rest.
+          float scale = aMisc.x * (abs(mode - 2.0) < 0.5 ? 0.0 : 1.0);
           // Idle shuffles between 2 frames; walking runs the 4-frame cycle.
-          float frame = mode < 0.5
-            ? mod(floor(uTime * 1.7 + aData.z), 2.0)
-            : 2.0 + mod(floor(uTime * 7.5 + aData.z * 7.0), 4.0);
+          // Idle shuffles 2 frames, walking runs the 4-frame cycle, and a
+          // posed sprite (the attendant) holds whatever frame aData.z names.
+          float frame = mode > 2.5
+            ? aData.z
+            : (mode < 0.5
+              ? mod(floor(uTime * 1.7 + aData.z), 2.0)
+              : 2.0 + mod(floor(uTime * 7.5 + aData.z * 7.0), 4.0));
           float u = uv.x;
           if (mode >= 0.5 && aMisc.y < 0.0) u = 1.0 - u;
           vUv = vec2((frame + u) / ${SPRITE_COLS}.0, (${SPRITE_ROWS - 1}.0 - aData.x + uv.y) / ${SPRITE_ROWS}.0);
@@ -541,7 +708,7 @@ export class Passengers {
         varying vec2 vUv;
         varying float vFogDepth;
         void main() {
-          float scale = aMisc.x * (aData.y > 1.5 ? 0.0 : 1.0);
+          float scale = aMisc.x * (abs(aData.y - 2.0) < 0.5 ? 0.0 : 1.0);
           vUv = uv;
           vec3 world = aOffset + position * scale + vec3(0.0, 0.015, 0.0);
           vec4 mvPosition = viewMatrix * vec4(world, 1.0);
@@ -575,7 +742,7 @@ export class Passengers {
     shadows.frustumCulled = false
     scene.add(shadows)
 
-    this.refreshAmbient(crowdDensityForHour(7.5)) // match DayNightCycle's starting hour
+    this.refreshAmbient()
   }
 
   /** Writes a slot's local-platform position into the world-space offset attribute. */
@@ -590,12 +757,28 @@ export class Passengers {
     this.aData.needsUpdate = true
   }
 
-  /** Ambient crowd churn: who is standing around, per the time-of-day density. */
-  private refreshAmbient(density: number) {
+  /**
+   * How long each queue looks. `counts` are PassengerFlow's real numbers, so a
+   * hub in the rush shows every door with a full pair of files while a quiet
+   * platform at midnight shows one person — and skipping a station visibly
+   * lengthens the queue you will find next lap.
+   */
+  setWaitingCounts(counts: Float64Array) {
+    for (let s = 0; s < N; s++) {
+      // ~8 real people per sprite: the platform reads as busy long before the
+      // 420-person cap, and the queue still visibly deepens all the way up.
+      this.visibleWaiting[s] = Math.min(WAITING_PER_STATION, Math.round(counts[s] / 8))
+    }
+    this.refreshAmbient()
+  }
+
+  /** Applies the visible-queue length to the slots. */
+  private refreshAmbient() {
     for (let i = 0; i < this.slots.length; i++) {
       const slot = this.slots[i]
       if (slot.state !== 'ambient' || slot.station === this.boardingStation) continue
-      this.setMode(i, slot.roll < density ? MODE_IDLE : MODE_HIDDEN)
+      const rank = i - slot.station * WAITING_PER_STATION
+      this.setMode(i, rank < this.visibleWaiting[slot.station] ? MODE_IDLE : MODE_HIDDEN)
     }
   }
 
@@ -604,57 +787,66 @@ export class Passengers {
    * nearest (implied) train door and boards within `seconds`; a few riders
    * step off first and drift toward the back of the platform.
    */
-  beginBoarding(station: number, seconds: number) {
+  beginBoarding(station: number, seconds: number, alighting = 4) {
     this.endBoarding()
     this.boardingStation = station
     const frame = this.frames[station]
-    const doorX = frame.side * (PLATFORM_GEOM.inner + 0.7)
+    const doorX = frame.side * (PLATFORM_GEOM.inner + 0.55)
 
+    // ——— The order matters, and it is the whole point ———
+    // Riders off first, straight out down the middle of the doorway. The two
+    // waiting files stand aside precisely so this lane stays clear.
+    const shown = Math.min(ALIGHT_POOL, Math.max(0, alighting))
+    const doorPick = [...DOOR_ZS].sort(() => Math.random() - 0.5)
+    for (let a = 0; a < shown; a++) {
+      const i = N * WAITING_PER_STATION + a
+      const doorZ = doorPick[a % doorPick.length]
+      const local = new THREE.Vector2(doorX, doorZ)
+      // Straight out of the door first (the gap between the files), and only
+      // then off along the platform — never diagonally through the queue.
+      const clear = new THREE.Vector2(frame.side * (PLATFORM_GEOM.inner + QUEUE_X0 + QUEUE_X_STEP * QUEUE_ROWS + 0.6), doorZ)
+      const exit = new THREE.Vector2(
+        frame.side * (PLATFORM_GEOM.outer - 1.3 - Math.random() * 2),
+        THREE.MathUtils.clamp(doorZ + (Math.random() - 0.5) * 16, -PLATFORM_GEOM.len / 2 + 3, PLATFORM_GEOM.len / 2 - 3),
+      )
+      this.aData.setX(i, Math.floor(Math.random() * STAFF_ROW))
+      this.writeLocal(i, station, local.x, local.y)
+      this.walkers.push({
+        index: i,
+        station,
+        local,
+        waypoints: [clear, exit],
+        wp: 0,
+        delay: 0.25 + a * 0.16 + Math.random() * 0.3,
+        speed: WALK_SPEED * (0.95 + Math.random() * 0.3),
+      })
+    }
+
+    // Then the queues file in — head of the queue first, one at a time per
+    // door, and never before the alighters have had time to clear.
+    const clearAt = shown > 0 ? ALIGHT_CLEAR_SECONDS : 0.35
     for (let i = 0; i < this.slots.length; i++) {
       const slot = this.slots[i]
       if (slot.station !== station || slot.state !== 'ambient') continue
-      if (this.aData.getY(i) !== MODE_IDLE) continue // hidden by density → nobody there
+      if (this.aData.getY(i) !== MODE_IDLE) continue // not shown → nobody there
       slot.state = 'boarding'
-      const doorZ = DOOR_ZS.reduce((best, z) => (Math.abs(z - slot.local.y) < Math.abs(best - slot.local.y) ? z : best)) + (Math.random() - 0.5) * 1.6
-      const speed = WALK_SPEED * (0.9 + Math.random() * 0.25)
-      const walkTime = (Math.abs(doorZ - slot.local.y) + Math.abs(doorX - slot.local.x)) / speed
-      // Riders leave the train first; boarders wait a beat, then stagger so
-      // the last one steps in just before the boarding timer runs out.
-      const latestStart = seconds - 0.8 - walkTime
-      const delay = latestStart <= 1.2 ? 1.2 : 1.2 + Math.random() * (latestStart - 1.2)
+      const doorZ = DOOR_ZS[slot.doorIdx]
+      const speed = WALK_SPEED * (0.92 + Math.random() * 0.2)
+      // Step to the doorway's centre line, then walk in. Two waypoints, so
+      // the file visibly turns the corner instead of drifting diagonally.
+      const delay = clearAt + slot.order * 0.62 + Math.random() * 0.12
+      const late = delay + 1.4 > seconds
       this.walkers.push({
         index: i,
         station,
         local: slot.local,
         waypoints: [new THREE.Vector2(slot.local.x, doorZ), new THREE.Vector2(doorX, doorZ)],
         wp: 0,
-        delay,
-        speed: latestStart <= 1.2 ? speed * 1.3 : speed,
+        delay: Math.min(delay, Math.max(0.2, seconds - 1.2)),
+        // Anyone who would otherwise miss the doors hurries — the shuffle-run
+        // of someone who can see the train they are about to lose.
+        speed: late ? speed * 1.45 : speed,
         slot,
-      })
-    }
-
-    // Alighters spawn at random doors and head for the platform's spine.
-    const count = 2 + Math.floor(Math.random() * 3)
-    const usedDoors = [...DOOR_ZS].sort(() => Math.random() - 0.5).slice(0, count)
-    for (let a = 0; a < count; a++) {
-      const i = N * WAITING_PER_STATION + a
-      const doorZ = usedDoors[a] + (Math.random() - 0.5) * 2
-      const local = new THREE.Vector2(doorX, doorZ)
-      const exit = new THREE.Vector2(
-        frame.side * (PLATFORM_GEOM.outer - 1.3 - Math.random() * 2),
-        THREE.MathUtils.clamp(doorZ + (Math.random() - 0.5) * 14, -PLATFORM_GEOM.len / 2 + 3, PLATFORM_GEOM.len / 2 - 3),
-      )
-      this.aData.setX(i, Math.floor(Math.random() * SPRITE_ROWS))
-      this.writeLocal(i, station, local.x, local.y)
-      this.walkers.push({
-        index: i,
-        station,
-        local,
-        waypoints: [exit],
-        wp: 0,
-        delay: 0.3 + Math.random() * 1.4,
-        speed: WALK_SPEED * (0.95 + Math.random() * 0.3),
       })
     }
     this.aData.needsUpdate = true
@@ -673,7 +865,49 @@ export class Passengers {
     this.boardingStation = -1
   }
 
-  update(dt: number, timeOfDay: number, nightFactor: number, targetStationIndex: number) {
+  /**
+   * The attendant's shift, in three gestures. Pointing at the incoming train
+   * (指差喚呼 — point and call) is a real safety procedure, not decoration:
+   * the arm goes out as the train appears, the bow greets the driver at a
+   * stand, and the raised arm signals the platform clear on departure.
+   */
+  private updateStaff(dt: number, ctx: PassengerContext) {
+    const set = (s: number, situation: number, pose: number) => {
+      const i = STAFF_BASE + s
+      if (this.staffSituation[s] !== situation) {
+        this.staffSituation[s] = situation
+        this.staffTimer[s] = 0
+      } else {
+        this.staffTimer[s] += dt
+      }
+      const held = this.staffTimer[s]
+      // Poses that are gestures, not stances, decay back to standing.
+      let frame = pose
+      if (pose === POSE_BOW && held > 2.4) frame = POSE_STAND
+      if (pose === POSE_POINT_UP && held > 2.8) frame = held < 5.0 ? POSE_BOW : POSE_STAND
+      if (this.staffPose[s] !== frame) {
+        this.staffPose[s] = frame
+        this.aData.setZ(i, frame)
+        this.aData.needsUpdate = true
+      }
+    }
+
+    const t = ctx.targetStation
+    if (ctx.doorsOpen > 0.05 || ctx.stopped) set(t, 2, POSE_BOW)
+    else if (ctx.distanceToTarget < 165) set(t, 1, POSE_POINT)
+    else set(t, 0, POSE_STAND)
+
+    // The platform just left gets the departure half of the ritual.
+    const p = prevStationIndex(t)
+    if (p !== t) {
+      if (ctx.speed01 > 0.02 && ctx.distanceBehind < 150) set(p, 3, POSE_POINT_UP)
+      else set(p, 0, POSE_STAND)
+    }
+  }
+
+  update(dt: number, nightFactor: number, ctx: PassengerContext) {
+    const targetStationIndex = ctx.targetStation
+    this.updateStaff(dt, ctx)
     this.uniforms.uTime.value += dt
     this.uniforms.uNight.value = nightFactor
     this.shadowUniforms.uNight.value = nightFactor
@@ -681,7 +915,7 @@ export class Passengers {
     this.densityAccum += dt
     if (this.densityAccum >= DENSITY_REFRESH_SECONDS) {
       this.densityAccum = 0
-      this.refreshAmbient(crowdDensityForHour(timeOfDay))
+      this.refreshAmbient()
       // Boarded slots stay empty while their platform is still in sight;
       // once the train is past the NEXT station they quietly restock.
       if (this.lastBoardedStation >= 0 && this.lastBoardedStation !== targetStationIndex && this.lastBoardedStation !== prevStationIndex(targetStationIndex)) {

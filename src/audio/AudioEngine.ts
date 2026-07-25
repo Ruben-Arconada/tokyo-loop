@@ -12,6 +12,13 @@ export interface AnnounceSegment {
 export interface AnnounceOptions {
   fanfare?: boolean
   /**
+   * Checked before the announcement starts AND before each language: an
+   * arrival announcement for a station already behind you is worse than
+   * silence. Blowing through the loop at speed used to queue them until the
+   * PA was two stations out of date.
+   */
+  valid?: () => boolean
+  /**
    * Announcements of the same kind replace each other while waiting in the
    * queue (e.g. a newer "depart" makes a stale queued "depart" pointless),
    * but a playing announcement is never cut off mid-sentence.
@@ -23,6 +30,7 @@ interface QueuedAnnouncement {
   segments: AnnounceSegment[]
   fanfare: boolean
   kind: string
+  valid?: () => boolean
 }
 
 /** Pause between languages within one announcement, and between two queued announcements — breathing room so the PA never feels rushed. */
@@ -89,11 +97,13 @@ export class AudioEngine {
   private autoResumeInstalled = false
   private announcing = false
   private announceQueue: QueuedAnnouncement[] = []
+  private currentItem: QueuedAnnouncement | null = null
+  /** Bumped on every start/abort so stale callbacks from an old sequence die quietly. */
+  private announceEpoch = 0
   private lastAmbientAt = 0
   private jointTimer = 0.8
   private ambNextAt = 0
   private paBedGain: GainNode | null = null
-  private paBedSource: AudioBufferSourceNode | null = null
   private crowdGain: GainNode | null = null
   private footstepNextAt = 0
   private stationMurmurGain: GainNode | null = null
@@ -147,6 +157,7 @@ export class AudioEngine {
 
     this.noiseBuffer = this.buildNoiseBuffer()
     this.startAmbientBed()
+    this.ensurePaBed()
     // If the weather was already rainy before the tap-to-start unlock, the
     // rain bed has a level waiting for its nodes.
     if (this.rainLevel > 0) this.setRain(this.rainLevel)
@@ -1014,8 +1025,17 @@ export class AudioEngine {
    */
   announce(segments: AnnounceSegment[], opts: AnnounceOptions = {}) {
     if (!this.ctx || !('speechSynthesis' in window) || !segments.length) return
-    const item: QueuedAnnouncement = { segments, fanfare: !!opts.fanfare, kind: opts.kind ?? 'general' }
+    const item: QueuedAnnouncement = { segments, fanfare: !!opts.fanfare, kind: opts.kind ?? 'general', valid: opts.valid }
     if (this.announcing) {
+      // A newer announcement of the same kind makes the playing one stale, so
+      // cut it off rather than letting the queue drift out of sync with the
+      // world. `valid` is what decides — the caller knows which station it
+      // was about.
+      if (this.currentItem?.kind === item.kind && this.currentItem.valid && !this.currentItem.valid()) {
+        this.abortCurrentAnnouncement()
+        this.playAnnouncement(item)
+        return
+      }
       const queuedIdx = this.announceQueue.findIndex((q) => q.kind === item.kind)
       if (queuedIdx >= 0) this.announceQueue[queuedIdx] = item
       else if (this.announceQueue.length < 3) this.announceQueue.push(item)
@@ -1035,9 +1055,17 @@ export class AudioEngine {
    * speaker-band hiss opens with a keying click and stays under the whole
    * announcement, which reads as "coming through the train's PA".
    */
-  private startPaBed() {
-    const ctx = this.ctx!
+  /**
+   * The PA's carrier hiss. Built ONCE and left running at gain 0 — it used to
+   * be created and started per announcement, which put an
+   * AudioBufferSourceNode.start() on the main thread at the exact moment the
+   * attention chime sounds. That is once per station, which is exactly the
+   * cadence of the ~320 ms freezes the first real-device lap recorded, and
+   * starting a fresh source is one of the calls iOS is slowest at.
+   */
+  private ensurePaBed() {
     if (this.paBedGain) return
+    const ctx = this.ctx!
     const src = ctx.createBufferSource()
     src.buffer = this.noiseBuffer
     src.loop = true
@@ -1046,15 +1074,21 @@ export class AudioEngine {
     bp.frequency.value = 1500
     bp.Q.value = 0.35
     this.paBedGain = ctx.createGain()
-    const t = ctx.currentTime
-    this.paBedGain.gain.setValueAtTime(0, t)
-    this.paBedGain.gain.linearRampToValueAtTime(0.011, t + 0.25)
+    this.paBedGain.gain.value = 0
     src.connect(bp)
     bp.connect(this.paBedGain)
     this.paBedGain.connect(this.dryGain!)
     this.paBedGain.connect(this.wetSend!)
     src.start()
-    this.paBedSource = src
+  }
+
+  private startPaBed() {
+    const ctx = this.ctx!
+    this.ensurePaBed()
+    const t = ctx.currentTime
+    this.paBedGain!.gain.cancelScheduledValues(t)
+    this.paBedGain!.gain.setValueAtTime(this.paBedGain!.gain.value, t)
+    this.paBedGain!.gain.linearRampToValueAtTime(0.011, t + 0.25)
     // Keying click.
     const osc = ctx.createOscillator()
     osc.type = 'square'
@@ -1069,18 +1103,38 @@ export class AudioEngine {
     osc.stop(t + 0.05)
   }
 
+  /** Fades the carrier out; the source itself keeps running silently (see ensurePaBed). */
   private stopPaBed() {
     if (!this.ctx || !this.paBedGain) return
     const t = this.ctx.currentTime
+    this.paBedGain.gain.cancelScheduledValues(t)
+    this.paBedGain.gain.setValueAtTime(this.paBedGain.gain.value, t)
     this.paBedGain.gain.setTargetAtTime(0, t, 0.18)
-    const src = this.paBedSource
-    window.setTimeout(() => src?.stop(), 900)
-    this.paBedGain = null
-    this.paBedSource = null
+  }
+
+  /** Cuts the current announcement dead (used when it has gone stale). */
+  private abortCurrentAnnouncement() {
+    this.announceEpoch++
+    try {
+      speechSynthesis.cancel()
+    } catch {
+      // Some WebViews throw if the engine is mid-teardown; silence is the goal anyway.
+    }
+    this.stopPaBed()
+    this.announcing = false
+    this.currentItem = null
   }
 
   private playAnnouncement(item: QueuedAnnouncement) {
+    if (item.valid && !item.valid()) {
+      // Went stale while it waited its turn — drop it and take the next one.
+      const next = this.announceQueue.shift()
+      if (next) this.playAnnouncement(next)
+      return
+    }
     perfMark('announce')
+    this.currentItem = item
+    const epoch = ++this.announceEpoch
     this.announcing = true
     const totalChars = item.segments.reduce((n, s) => n + s.text.length, 0)
     const fanfareDuration = item.fanfare ? this.playMelody(RETRO_FANFARE, 'retro', 0.4) || 0.8 : 0
@@ -1089,6 +1143,7 @@ export class AudioEngine {
     perfTime('pa-bed', () => this.startPaBed())
 
     window.setTimeout(() => {
+      if (epoch !== this.announceEpoch) return
       // Clear only leftovers (e.g. the unlock primer) — by construction
       // nothing of ours is speaking when a new sequence starts.
       // Timed: on iOS this block is the prime suspect for the ~320 ms freezes
@@ -1099,7 +1154,10 @@ export class AudioEngine {
       })
 
       const speakAt = (i: number) => {
-        if (i >= utterances.length) {
+        // Epoch guard: an aborted announcement must not keep speaking from
+        // inside its own onend chain.
+        if (epoch !== this.announceEpoch) return
+        if (i >= utterances.length || (item.valid && !item.valid())) {
           this.finishAnnouncement()
           return
         }
@@ -1122,6 +1180,7 @@ export class AudioEngine {
   /** Breathing gap after an announcement, then the next queued one (if any) takes the mic. */
   private finishAnnouncement() {
     this.stopPaBed()
+    this.currentItem = null
     window.setTimeout(() => {
       this.announcing = false
       const next = this.announceQueue.shift()

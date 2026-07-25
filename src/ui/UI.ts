@@ -2,6 +2,7 @@ import { STATIONS } from '../data/stations'
 import type { StopResult } from '../game/Train'
 import { TEAM } from '../data/team'
 import { SEASONS, WEATHERS, weatherFace, rainPhaseLabel, type Season, type Weather } from '../game/Seasons'
+import { CAMERA_MODES, type CameraMode } from '../game/cameraModes'
 
 export interface UICallbacks {
   onStart: () => void
@@ -14,6 +15,10 @@ export interface UICallbacks {
   /** Season / weather chosen from the HUD pickers. */
   onSeasonSet: (season: Season) => void
   onWeatherSet: (weather: Weather) => void
+  /** Which eye the player looks through: cab, outside, or standing on the platform. */
+  onCameraSet: (mode: CameraMode) => void
+  /** Second PA language (Japanese is always there). */
+  onPaLangSet: (lang: 'en' | 'es') => void
   /** Frame-time recording: start/stop, hand over the log, throw it away. */
   onPerfToggle: () => void
   onPerfExport: () => string
@@ -52,6 +57,11 @@ export class UI {
   private atmoChip!: HTMLButtonElement
   private atmoGlyphEl!: HTMLSpanElement
   private perfChip!: HTMLDivElement
+  private camChip!: HTMLButtonElement
+  private occFill!: HTMLDivElement
+  private occLabel!: HTMLElement
+  private lastOccText = ''
+  private cameraMode: CameraMode = 'cab'
   private perfMenuBtn!: HTMLButtonElement
   private perfHeadlineEl!: HTMLParagraphElement
   private perfActionsEl!: HTMLDivElement
@@ -151,7 +161,14 @@ export class UI {
         </div>
         <div class="notch-readout">N</div>
       </div>
+      <button class="cam-chip" aria-label="Cambiar vista">
+        <span class="cam-icon">🚉</span><span class="cam-label">Cabina</span>
+      </button>
       <div class="perf-chip hidden"><span class="perf-dot"></span><span class="perf-fps">--</span><small>fps</small></div>
+      <div class="occupancy-chip">
+        <div class="occupancy-bar"><div class="occupancy-fill"></div></div>
+        <small class="occupancy-label">A BORDO 0</small>
+      </div>
       <div class="score-chip">
         <span class="score-value">0</span>
         <small class="score-best">MEJOR 0</small>
@@ -175,6 +192,15 @@ export class UI {
     this.scoreBestEl = this.hud.querySelector('.score-best')!
     this.lineDiagram = this.hud.querySelector('.line-diagram')!
     this.perfChip = this.hud.querySelector('.perf-chip')!
+    this.camChip = this.hud.querySelector('.cam-chip')!
+    this.occFill = this.hud.querySelector('.occupancy-fill')!
+    this.occLabel = this.hud.querySelector('.occupancy-label')!
+    // One tap cycles: the three views are few enough that a picker would be
+    // more taps than just stepping through them.
+    this.camChip.addEventListener('click', () => {
+      const i = CAMERA_MODES.findIndex((m) => m.id === this.cameraMode)
+      this.cb.onCameraSet(CAMERA_MODES[(i + 1) % CAMERA_MODES.length].id)
+    })
 
     for (let i = 0; i < STATIONS.length; i++) {
       const dot = document.createElement('div')
@@ -344,6 +370,13 @@ export class UI {
         </div>
         <button class="btn-atmo">Atmósfera — hora, estación y clima</button>
         <div class="perf-block">
+          <span class="perf-title">Megafonía</span>
+          <div class="pa-lang-row">
+            <button data-pa="es">日本語 + Español</button>
+            <button data-pa="en">日本語 + English</button>
+          </div>
+        </div>
+        <div class="perf-block">
           <span class="perf-title">Rendimiento</span>
           <button class="btn-perf">Medir rendimiento</button>
           <p class="perf-headline">Sin datos todavía.</p>
@@ -365,6 +398,13 @@ export class UI {
     })
     el.querySelector('.btn-close')!.addEventListener('click', () => this.toggleMenu())
     el.querySelector('.btn-credits')!.addEventListener('click', () => this.showCredits())
+    el.querySelectorAll<HTMLButtonElement>('[data-pa]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        const lang = btn.dataset.pa as 'en' | 'es'
+        this.cb.onPaLangSet(lang)
+        this.setPaLang(lang)
+      })
+    })
     this.perfMenuBtn = el.querySelector('.btn-perf')!
     this.perfHeadlineEl = el.querySelector('.perf-headline')!
     this.perfActionsEl = el.querySelector('.perf-actions')!
@@ -399,6 +439,41 @@ export class UI {
     `
     el.querySelector('.btn-close')!.addEventListener('click', () => el.remove())
     this.mount.appendChild(el)
+  }
+
+  /** How full the train is. Turns amber as it fills and red once nobody else fits. */
+  setOccupancy(onboard: number, capacity: number, full: boolean) {
+    const pct = Math.min(100, Math.round((onboard / capacity) * 100))
+    const text = `A BORDO ${Math.round(onboard)}`
+    if (text !== this.lastOccText) {
+      this.lastOccText = text
+      this.occLabel.textContent = text
+    }
+    this.occFill.style.width = `${pct}%`
+    this.occFill.className = `occupancy-fill${pct > 92 ? ' packed' : pct > 70 ? ' busy' : ''}`
+    if (full) this.flashToast('¡Tren completo! Se han quedado en el andén', 'overshot')
+  }
+
+  /** Rolled past a platform: says who paid for it, which is the point of the penalty. */
+  showSkipToast(stationIdx: number, stranded: number, carried: number, penalty: number) {
+    const station = STATIONS[stationIdx]
+    const bits: string[] = []
+    if (stranded > 0) bits.push(`${stranded} en el andén`)
+    if (carried > 0) bits.push(`${carried} querían bajar`)
+    const detail = bits.length ? ` — ${bits.join(', ')}` : ''
+    this.flashToast(`${station.nameEn} sin parada${detail}${penalty > 0 ? `  −${penalty}` : ''}`, 'overshot')
+  }
+
+  setCameraMode(mode: CameraMode) {
+    this.cameraMode = mode
+    const m = CAMERA_MODES.find((x) => x.id === mode)!
+    ;(this.camChip.querySelector('.cam-icon') as HTMLElement).textContent = m.icon
+    ;(this.camChip.querySelector('.cam-label') as HTMLElement).textContent = m.label
+    this.camChip.setAttribute('aria-label', `Vista: ${m.label}. Tocar para cambiar.`)
+  }
+
+  setPaLang(lang: 'en' | 'es') {
+    this.menuOverlay.querySelectorAll<HTMLButtonElement>('[data-pa]').forEach((b) => b.classList.toggle('active', b.dataset.pa === lang))
   }
 
   /** Live frame counter. Only touches the DOM when the rounded number changes. */
