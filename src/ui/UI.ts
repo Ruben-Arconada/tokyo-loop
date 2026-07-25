@@ -3,6 +3,7 @@ import type { StopResult } from '../game/Train'
 import { TEAM } from '../data/team'
 import { SEASONS, WEATHERS, weatherFace, rainPhaseLabel, type Season, type Weather } from '../game/Seasons'
 import { CAMERA_MODES, type CameraMode } from '../game/cameraModes'
+import { Schedule, SCHEDULE_LEVELS, ON_TIME_TOLERANCE, LATE_TOLERANCE, type ScheduleLevel } from '../game/Schedule'
 
 export interface UICallbacks {
   onStart: () => void
@@ -15,6 +16,8 @@ export interface UICallbacks {
   /** Season / weather chosen from the HUD pickers. */
   onSeasonSet: (season: Season) => void
   onWeatherSet: (weather: Weather) => void
+  /** How tight the timetable is. */
+  onScheduleLevelSet: (level: ScheduleLevel) => void
   /** Which eye the player looks through: cab, outside, or standing on the platform. */
   onCameraSet: (mode: CameraMode) => void
   /** Second PA language (Japanese is always there). */
@@ -67,6 +70,9 @@ export class UI {
   private perfMenuBtn!: HTMLButtonElement
   private perfHeadlineEl!: HTMLParagraphElement
   private perfActionsEl!: HTMLDivElement
+  private delayChip!: HTMLDivElement
+  private delayValueEl!: HTMLSpanElement
+  private lastDelayText = ''
   private lastFpsText = ''
   /** Cached so the per-frame phase refresh stays a string compare, not a DOM write. */
   private lastPhaseText = ''
@@ -152,6 +158,7 @@ export class UI {
         </div>
       </div>
       <div class="line-diagram"></div>
+      <div class="delay-chip on-time"><small>HORARIO</small><span class="delay-value">0s</span></div>
       <div class="hud-bottom">
         <button class="door-btn" aria-label="Puertas">
           <span class="door-btn-progress"></span>
@@ -193,6 +200,8 @@ export class UI {
     this.stationNowCodeEl = this.hud.querySelector('.hud-station-now-code')!
     this.stationNextCodeEl = this.hud.querySelector('.hud-station-next-code')!
     this.segmentFillEl = this.hud.querySelector('.segment-progress-fill')!
+    this.delayChip = this.hud.querySelector('.delay-chip')!
+    this.delayValueEl = this.hud.querySelector('.delay-value')!
     this.segmentTrainEl = this.hud.querySelector('.segment-progress-train')!
     this.doorBtn = this.hud.querySelector('.door-btn')!
     this.doorBtnLabel = this.hud.querySelector('.door-btn-label')!
@@ -381,6 +390,12 @@ export class UI {
         </div>
         <button class="btn-atmo">Atmósfera — hora, estación y clima</button>
         <div class="perf-block">
+          <span class="perf-title">Horario</span>
+          <div class="pa-lang-row sched-row">
+            ${SCHEDULE_LEVELS.map((l) => `<button data-sched="${l.id}" title="${l.hint}">${l.label}</button>`).join('')}
+          </div>
+        </div>
+        <div class="perf-block">
           <span class="perf-title">Megafonía</span>
           <div class="pa-lang-row">
             <button data-pa="es">日本語 + Español</button>
@@ -409,6 +424,9 @@ export class UI {
     })
     el.querySelector('.btn-close')!.addEventListener('click', () => this.toggleMenu())
     el.querySelector('.btn-credits')!.addEventListener('click', () => this.showCredits())
+    el.querySelectorAll<HTMLButtonElement>('[data-sched]').forEach((btn) => {
+      btn.addEventListener('click', () => this.cb.onScheduleLevelSet(btn.dataset.sched as ScheduleLevel))
+    })
     el.querySelectorAll<HTMLButtonElement>('[data-pa]').forEach((btn) => {
       btn.addEventListener('click', () => {
         const lang = btn.dataset.pa as 'en' | 'es'
@@ -488,6 +506,51 @@ export class UI {
     if (carried > 0) bits.push(`${carried} querían bajar`)
     const detail = bits.length ? ` — ${bits.join(', ')}` : ''
     this.flashToast(`${station.nameEn} sin parada${detail}${penalty > 0 ? `  −${penalty}` : ''}`, 'overshot')
+  }
+
+  /**
+   * Running punctuality. Green while you are on the timetable, amber as it
+   * slips, red once the arrival would count as late — the same thresholds the
+   * score uses, so the colour is a promise and not decoration.
+   */
+  setDelay(seconds: number) {
+    const text = Schedule.format(seconds)
+    if (text !== this.lastDelayText) {
+      this.lastDelayText = text
+      this.delayValueEl.textContent = text
+    }
+    const cls = seconds > LATE_TOLERANCE ? 'late' : seconds > ON_TIME_TOLERANCE ? 'slipping' : 'on-time'
+    if (!this.delayChip.classList.contains(cls)) this.delayChip.className = `delay-chip ${cls}`
+  }
+
+  /** Verdict on an arrival, in the language a train crew would use. */
+  showPunctualityToast(delay: number) {
+    if (delay <= ON_TIME_TOLERANCE) {
+      this.flashToast(delay < -ON_TIME_TOLERANCE ? `Adelantado ${Schedule.format(delay)}` : 'En horario ⏱', 'perfect')
+    } else if (delay <= LATE_TOLERANCE) {
+      this.flashToast(`Ajustado — ${Schedule.format(delay)}`, 'ok')
+    } else {
+      this.flashToast(`Con retraso ${Schedule.format(delay)}`, 'overshot')
+    }
+  }
+
+  setScheduleLevel(level: ScheduleLevel) {
+    this.menuOverlay.querySelectorAll<HTMLButtonElement>('[data-sched]').forEach((b) => b.classList.toggle('active', b.dataset.sched === level))
+  }
+
+  /**
+   * A one-off explanation, shown when the game does something the player
+   * needs to understand rather than merely notice. Dismissed by tapping it —
+   * it never blocks the train.
+   */
+  showHint(title: string, body: string) {
+    const el = document.createElement('div')
+    el.className = 'hint-card'
+    el.innerHTML = `<strong>${title}</strong><p>${body}</p><button>Entendido</button>`
+    const close = () => el.remove()
+    el.querySelector('button')!.addEventListener('click', close)
+    window.setTimeout(close, 11000)
+    this.mount.appendChild(el)
   }
 
   /** The station-camera dressing: shown only while looking through it. */

@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { Track, TrackOffsetCurve, CatenaryCurve, HILL_PEAK, EMBANKMENT, embankmentSurface } from './Track'
-import { Train, notchLabel, MIN_NOTCH, MAX_NOTCH, OPEN_INSTANT_SECONDS, OPEN_QUICK_SECONDS, CLOSE_WINDOW_SECONDS, CLOSE_HURRY_SECONDS, type DoorActionInfo } from './Train'
+import { Train, notchLabel, MIN_NOTCH, MAX_NOTCH, MAX_SPEED_KMH, SPEED_SCALE, OPEN_INSTANT_SECONDS, OPEN_QUICK_SECONDS, CLOSE_WINDOW_SECONDS, CLOSE_HURRY_SECONDS, type DoorActionInfo } from './Train'
 import { City } from './City'
 import { Passengers } from './Passengers'
 import { Precipitation } from './Precipitation'
@@ -9,6 +9,7 @@ import { TrainConsist, CAB_OFFSET } from './TrainConsist'
 import type { CameraMode } from './cameraModes'
 import { PerfLog, setActivePerfLog, perfMark } from './PerfLog'
 import { PassengerFlow, TRAIN_CAPACITY } from './PassengerFlow'
+import { Schedule, ON_TIME_TOLERANCE, LATE_TOLERANCE, type ScheduleLevel } from './Schedule'
 import { registerPool, applySeasonToPool, overcastTarget, precipProfile, type Season, type Weather, type SeasonalPool } from './Seasons'
 import { Scenery } from './Scenery'
 import { DayNightCycle } from './DayNightCycle'
@@ -57,6 +58,12 @@ function doorSidePhrases(side: 'left' | 'right'): { ja: string; en: string; es: 
 }
 
 const CAMERA_KEY = 'yamanote-camera'
+const SCHEDULE_KEY = 'yamanote-schedule'
+const INTERRUPT_TIP_KEY = 'yamanote-tip-interrupt'
+/** Punctuality points: on time pays, late costs, and the cap keeps one bad stop from ruining a lap. */
+const ON_TIME_POINTS = 40
+const LATE_PENALTY_PER_SECOND = 2
+const LATE_PENALTY_CAP = 90
 
 const BEST_SCORE_KEY = 'yamanote-best-score'
 const SEASON_KEY = 'yamanote-season'
@@ -128,6 +135,9 @@ export class Game {
   private readonly dayNightStartHour = 7.5
   private paLang: PaSecondLang = detectSecondLang()
   private flow!: PassengerFlow
+  private schedule!: Schedule
+  /** Shown once, the first time the player cuts a boarding short. */
+  private interruptTipShown = localStorage.getItem(INTERRUPT_TIP_KEY) === '1'
   /** Throttles the sprite refresh — the counts move slowly, the queue redraw is a DOM-free but non-trivial pass. */
   private waitingRefresh = 0
   /** Ground + embankment vertex-color pools, retinted per season alongside the vegetation. */
@@ -237,6 +247,16 @@ export class Game {
         const gained = this.applyScore(result.grade)
         this.ui.showStopToast(idx, result, gained)
         this.ui.setStationResult(idx, result.grade)
+        // Punctuality is scored separately from stopping accuracy: they are
+        // two different skills and conflating them hides which one you failed.
+        const delay = this.schedule.arrive(idx)
+        if (delay <= ON_TIME_TOLERANCE) {
+          this.score += ON_TIME_POINTS
+        } else if (delay > LATE_TOLERANCE) {
+          this.score = Math.max(0, this.score - Math.min(LATE_PENALTY_CAP, Math.round((delay - LATE_TOLERANCE) * LATE_PENALTY_PER_SECOND)))
+        }
+        this.ui.setScore(this.score, this.bestScore, this.perfectStreak)
+        this.ui.showPunctualityToast(delay)
       },
       onMissed: (idx) => {
         perfMark('missed')
@@ -255,10 +275,18 @@ export class Game {
       onDoorsOpen: (idx, info) => this.handleDoorsOpen(idx, info),
       onBoardingComplete: () => audio.playMelody(BOARDING_DONE_CUE, 'attention', 0.4),
       onCloseHurryUp: () => this.handleDoorsClosingWarning(),
-      onDoorsClose: (_idx, info) => this.handleDoorsClose(info),
+      onDoorsClose: (idx, info) => {
+        this.schedule.depart(this.train.targetStationIndex === idx ? (idx + 1) % STATIONS.length : this.train.targetStationIndex)
+        this.handleDoorsClose(info)
+      },
     })
     this.city = new City(this.scene, this.track)
     this.flow = new PassengerFlow(this.dayNightStartHour)
+    this.schedule = new Schedule(
+      this.track,
+      MAX_SPEED_KMH * SPEED_SCALE,
+      (localStorage.getItem(SCHEDULE_KEY) as ScheduleLevel) || 'normal',
+    )
     this.passengers = new Passengers(this.scene, this.track, this.camera)
     this.scenery = new Scenery(this.scene, this.track)
     this.dayNight = new DayNightCycle(this.scene)
@@ -284,6 +312,11 @@ export class Game {
         if (!this.running) this.renderOnce()
       },
       onCameraSet: (m) => this.setCameraMode(m),
+      onScheduleLevelSet: (level) => {
+        this.schedule.setLevel(level, this.track, MAX_SPEED_KMH * SPEED_SCALE)
+        localStorage.setItem(SCHEDULE_KEY, level)
+        this.ui.setScheduleLevel(level)
+      },
       onPaLangSet: (lang) => {
         this.paLang = lang
         localStorage.setItem(PA_LANG_KEY, lang)
@@ -320,6 +353,7 @@ export class Game {
     })
     this.pushPerfState()
     this.ui.setPaLang(this.paLang)
+    this.ui.setScheduleLevel(this.schedule.level)
     this.setCameraMode(this.cameraMode)
     this.onResize()
     this.updateCameraFromTrain()
@@ -376,6 +410,7 @@ export class Game {
   }
 
   private start() {
+    this.schedule.reset(this.train.targetStationIndex)
     audio.unlock()
     this.started = true
     this.clock.start()
@@ -506,7 +541,19 @@ export class Game {
   /** One control for both door moves — the train decides which (if any) applies right now. */
   private handleDoorButton() {
     if (!this.started) return
-    if (this.train.requestDoorAction()) navigator.vibrate?.(12)
+    const wasBoarding = this.train.state === 'doors_open' && !this.train.boardingComplete
+    if (!this.train.requestDoorAction()) return
+    navigator.vibrate?.(12)
+    // The first time you cut a boarding short, say what the trade actually is.
+    // It is the central decision of the job and it is not obvious from a button.
+    if (wasBoarding && !this.interruptTipShown) {
+      this.interruptTipShown = true
+      localStorage.setItem(INTERRUPT_TIP_KEY, '1')
+      this.ui.showHint(
+        'Has cortado el embarque',
+        'Ganas tiempo para el horario, pero quien no haya llegado a la puerta se queda en el andén — y cuenta en tu contra.',
+      )
+    }
   }
 
   private handleLook(dx: number, dy: number) {
@@ -1341,6 +1388,8 @@ export class Game {
     // Real seconds, not clock-scaled: the train runs in real time, so if
     // arrivals followed the accelerated day the platform would win by default.
     this.flow.update(dt, this.dayNight.timeOfDay)
+    const dwelling = this.train.state === 'stopped' || this.train.state === 'doors_open' || this.train.state === 'doors_closing'
+    this.schedule.update(dt, dwelling)
     this.waitingRefresh += dt
     if (this.waitingRefresh > 1.4) {
       this.waitingRefresh = 0
@@ -1412,6 +1461,7 @@ export class Game {
       : this.train.state === 'doors_open' ? (this.train.boardingComplete ? 'can-close' : 'boarding')
       : this.train.state === 'doors_closing' ? 'closing'
       : 'idle'
+    this.ui.setDelay(this.schedule.delay(segmentProgress))
     this.ui.updateTrain({
       speedKmh: this.train.speedKmh,
       notchLabel: notchLabel(this.train.notch),

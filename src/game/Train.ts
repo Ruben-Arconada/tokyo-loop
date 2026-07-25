@@ -21,7 +21,7 @@ const POWER_ACCEL_KMH_S = [0.9, 1.5, 2.1, 2.7, 3.3] // P1..P5
 const BRAKE_DECEL_KMH_S = [1.0, 1.6, 2.2, 2.8, 3.4, 4.0, 4.6] // B1..B7
 const EMERGENCY_DECEL_KMH_S = 6.0
 const COAST_DRAG_KMH_S = 0.15
-const MAX_SPEED_KMH = 95
+export const MAX_SPEED_KMH = 95
 // Grade resistance with the agreed arcade factor 0.25: the visual ~16% hill
 // behaves like a physical ~4% — g·3.6·0.25 ≈ 8.8 (km/h)/s per unit of
 // tangent slope. Climbing bleeds momentum, descending feeds it.
@@ -88,6 +88,8 @@ export class Train {
   boardingSeconds = 8
   boardingRemaining = 0
   boardingComplete = false
+  /** True when the last door close cut a transfer short — the HUD explains it once. */
+  lastCloseInterrupted = false
   private track: Track
   private events: TrainEvents
   private announcedArriving = false
@@ -134,7 +136,12 @@ export class Train {
       this.openDoors(false)
       return true
     }
-    if (this.state === 'doors_open' && this.boardingComplete) {
+    if (this.state === 'doors_open') {
+      // Closing mid-boarding is allowed on purpose. It is the only way to buy
+      // back time against the timetable, and the only way the "people left
+      // behind" rule can ever fire from a decision rather than an accident.
+      // The caller is told whether it was a clean close or an interruption.
+      this.lastCloseInterrupted = !this.boardingComplete
       this.closeDoors(false)
       return true
     }

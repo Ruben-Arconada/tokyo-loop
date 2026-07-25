@@ -189,6 +189,64 @@ canvas.game-canvas {
   gap: var(--space-2);
 }
 
+/* Punctuality: the number the whole timetable loop hangs on, so it lives with
+   the station pills rather than off in a corner. */
+.delay-chip {
+  /* Its own slot under the route diagram: inside the station column it grew
+     that column and pushed the segment bar over the diagram. */
+  position: absolute;
+  top: calc(var(--safe-top) + 82px);
+  right: calc(var(--safe-right) + var(--space-2));
+  display: flex;
+  align-items: baseline;
+  gap: 6px;
+  background: var(--chip-bg);
+  border: 1px solid rgba(255, 255, 255, 0.22);
+  box-shadow: var(--chip-shadow);
+  backdrop-filter: var(--chip-blur);
+  border-radius: var(--radius-md);
+  padding: 2px var(--space-2);
+  font-variant-numeric: tabular-nums;
+  transition: border-color 0.3s ease, color 0.3s ease;
+}
+.delay-chip small { font-size: var(--text-micro); letter-spacing: 0.08em; color: var(--text-muted); }
+.delay-value { font-size: var(--text-label); font-weight: 700; }
+.delay-chip.on-time { border-color: rgba(143, 195, 31, 0.55); color: var(--color-power); }
+.delay-chip.slipping { border-color: rgba(255, 206, 74, 0.6); color: var(--color-warn); }
+.delay-chip.late { border-color: rgba(255, 92, 92, 0.7); color: var(--color-brake); }
+
+/* One-off explanations. Sits above the HUD but never blocks the controls. */
+.hint-card {
+  position: absolute;
+  left: 50%;
+  bottom: calc(var(--safe-bottom) + 116px);
+  transform: translateX(-50%);
+  width: min(90vw, 380px);
+  background: rgba(12, 14, 22, 0.95);
+  border: 1px solid rgba(255, 206, 74, 0.55);
+  border-radius: var(--radius-lg);
+  box-shadow: var(--chip-shadow);
+  backdrop-filter: blur(14px);
+  padding: var(--space-4);
+  z-index: 28;
+  pointer-events: auto;
+  text-align: left;
+}
+.hint-card strong { display: block; color: var(--color-warn); font-size: var(--text-body); margin-bottom: var(--space-1); }
+.hint-card p { margin: 0 0 var(--space-3); font-size: var(--text-label); line-height: 1.5; color: var(--text-secondary); }
+.hint-card button {
+  width: 100%;
+  padding: var(--space-2);
+  border-radius: var(--radius-md);
+  background: rgba(255, 206, 74, 0.22);
+  border: 1px solid rgba(255, 206, 74, 0.6);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-label);
+  cursor: pointer;
+}
+.sched-row button { font-size: var(--text-micro); }
+
 /* Reference bar: how far along the current inter-station hop we are. */
 .segment-progress {
   position: relative;
