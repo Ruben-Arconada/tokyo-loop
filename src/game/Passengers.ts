@@ -55,8 +55,6 @@ const STAFF_Z = 29.5
 /** Ambient visibility only re-rolls this often — cheap, and pops hide inside the crowd churn. */
 const DENSITY_REFRESH_SECONDS = 1.6
 const WALK_SPEED = 1.5
-/** Alighters get this long to clear the doorway before anyone steps in. */
-const ALIGHT_CLEAR_SECONDS = 1.9
 
 // aData.y modes, mirrored in the vertex shader.
 const MODE_IDLE = 0
@@ -540,6 +538,8 @@ export class Passengers {
   private frames: StationFrame[] = []
   private walkers: Walker[] = []
   private boardingStation = -1
+  /** Guards releaseQueue against being run twice for the same stop. */
+  private queueReleased = -1
   private lastBoardedStation = -1
   private densityAccum = DENSITY_REFRESH_SECONDS // primed: first update() paints the crowd
   private readonly tmpV3 = new THREE.Vector3()
@@ -787,15 +787,16 @@ export class Passengers {
    * nearest (implied) train door and boards within `seconds`; a few riders
    * step off first and drift toward the back of the platform.
    */
-  beginBoarding(station: number, seconds: number, alighting = 4) {
+  /**
+   * Doors open: the riders getting off step out, straight down the middle of
+   * the doorway. The two waiting files stand aside precisely so this lane
+   * stays clear — nobody boards until releaseQueue() says the door is free.
+   */
+  beginAlighting(station: number, alighting = 4) {
     this.endBoarding()
     this.boardingStation = station
     const frame = this.frames[station]
     const doorX = frame.side * (PLATFORM_GEOM.inner + 0.55)
-
-    // ——— The order matters, and it is the whole point ———
-    // Riders off first, straight out down the middle of the doorway. The two
-    // waiting files stand aside precisely so this lane stays clear.
     const shown = Math.min(ALIGHT_POOL, Math.max(0, alighting))
     const doorPick = [...DOOR_ZS].sort(() => Math.random() - 0.5)
     for (let a = 0; a < shown; a++) {
@@ -822,9 +823,20 @@ export class Passengers {
       })
     }
 
-    // Then the queues file in — head of the queue first, one at a time per
-    // door, and never before the alighters have had time to clear.
-    const clearAt = shown > 0 ? ALIGHT_CLEAR_SECONDS : 0.35
+    this.aData.needsUpdate = true
+  }
+
+  /**
+   * The doorway is clear: the files may step in, head of the queue first and
+   * one at a time per door. Called by the transfer once the alighters are out,
+   * so the visible order always matches the counters.
+   */
+  releaseQueue(station: number, seconds: number) {
+    if (this.queueReleased === station) return
+    this.queueReleased = station
+    const frame = this.frames[station]
+    const doorX = frame.side * (PLATFORM_GEOM.inner + 0.55)
+    const clearAt = 0.15
     for (let i = 0; i < this.slots.length; i++) {
       const slot = this.slots[i]
       if (slot.station !== station || slot.state !== 'ambient') continue
@@ -852,17 +864,30 @@ export class Passengers {
     this.aData.needsUpdate = true
   }
 
-  /** Doors are closing: any walkers still mid-stride hop aboard (they made it, honest). */
+  /**
+   * Doors closing. Anyone who reached the doorway is aboard; anyone still in
+   * the queue goes back to standing there, because they did not make it and
+   * the counters have not counted them.
+   */
   endBoarding() {
     for (const w of this.walkers) {
-      this.setMode(w.index, MODE_HIDDEN)
-      if (w.slot) {
+      const reachedDoor = w.wp >= w.waypoints.length - 1
+      if (w.slot && reachedDoor) {
+        this.setMode(w.index, MODE_HIDDEN)
         w.slot.state = 'boarded'
         this.lastBoardedStation = w.station
+      } else if (w.slot) {
+        // Back to the platform: still waiting, still counted as waiting.
+        w.slot.state = 'ambient'
+        w.local.copy(w.slot.local)
+        this.setMode(w.index, MODE_IDLE)
+      } else {
+        this.setMode(w.index, MODE_HIDDEN)
       }
     }
     this.walkers.length = 0
     this.boardingStation = -1
+    this.queueReleased = -1
   }
 
   /**

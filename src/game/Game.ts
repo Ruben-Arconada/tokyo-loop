@@ -5,7 +5,7 @@ import { Train, notchLabel, MIN_NOTCH, MAX_NOTCH, OPEN_INSTANT_SECONDS, OPEN_QUI
 import { City } from './City'
 import { Passengers } from './Passengers'
 import { Precipitation } from './Precipitation'
-import { TrainConsist, CAB_OFFSET, CONSIST_LEN } from './TrainConsist'
+import { TrainConsist, CAB_OFFSET } from './TrainConsist'
 import type { CameraMode } from './cameraModes'
 import { PerfLog, setActivePerfLog, perfMark } from './PerfLog'
 import { PassengerFlow, TRAIN_CAPACITY } from './PassengerFlow'
@@ -74,6 +74,16 @@ const DOOR_CLOSE_SHARP_POINTS = 30
 const PLATFORM_EYE_Y = 1.2 + 1.62
 /** Platform edge offset from the track centreline (City's TRACK_CLEARANCE). */
 const PLATFORM_INNER = 3
+/** Height of the driver's eye above the rail head. */
+const CAB_EYE_Y = 3.15
+/** Orbit radius of the outside view, and what it aims at. */
+const EXT_DISTANCE = 36
+const EXT_FOCUS_Y = 2.8
+/** Elevation limits: never at train height, never a map view. */
+const EXT_PITCH_MIN = 0.18
+const EXT_PITCH_MAX = 0.95
+/** How far past a platform the train must get before the platform camera hands over. */
+const PLATFORM_HANDOVER_UNITS = 150
 const BOARDING_BASE_SECONDS = 5.5
 const BOARDING_CROWD_SECONDS = 5.5
 /** A skipped station can sting, but it must never wipe a good run. */
@@ -128,13 +138,29 @@ export class Game {
   private timeScale = 1
   private lookYaw = 0
   private lookPitch = 0
+  /** Outside-view orbit: yaw is free, pitch is fenced (see EXT_PITCH_*). */
+  private extYaw = 0.55
+  private extPitch = 0.42
+  /** Which platform the standing camera is on — it lags the train's target on purpose. */
+  private platformStation = 0
   private leverPivot!: THREE.Object3D
   private destinationMat!: THREE.MeshBasicMaterial
   private lastDestinationIdx = -1
   private lastCrossingPhase = false
   private perf = new PerfLog()
   private score = 0
-  private lastStop: import('./PassengerFlow').StopOutcome | null = null
+  /** The transfer in progress at a stop: people cross the doorway over time, not all at once. */
+  private transfer: {
+    station: number
+    alightLeft: number
+    boardLeft: number
+    alighted: number
+    boarded: number
+    rate: number
+    /** Fractional people carried between frames, so a slow rate still moves someone. */
+    carry: number
+    phase: 'waiting' | 'alighting' | 'boarding' | 'done'
+  } | null = null
   private perfectStreak = 0
   private bestScore = Number(localStorage.getItem(BEST_SCORE_KEY) ?? 0)
 
@@ -174,23 +200,31 @@ export class Game {
         this.handleArrivingAnnounce(idx)
       },
       onStopped: (idx, result) => {
-        // The stop is resolved in PEOPLE first: who gets off, who fits on,
-        // who is left standing there. Boarding time then follows from the
-        // actual number of bodies moving, not from a clock.
-        this.lastStop = this.flow.stopAt(idx)
-        const moving = this.lastStop.alighted + this.lastStop.boarded
+        // Nobody moves yet — the stop only PLANS the transfer. People walk
+        // through the doors while they are open (see updateTransfer), so
+        // closing early really does leave them behind.
+        const plan = this.flow.planStop(idx)
+        const moving = plan.toAlight + plan.toBoard
         this.train.boardingSeconds = THREE.MathUtils.clamp(
           BOARDING_BASE_SECONDS + (moving / 40) * BOARDING_CROWD_SECONDS,
           BOARDING_BASE_SECONDS,
           BOARDING_BASE_SECONDS + BOARDING_CROWD_SECONDS * 2.2,
         )
+        this.transfer = {
+          station: idx,
+          alightLeft: plan.toAlight,
+          boardLeft: plan.toBoard,
+          alighted: 0,
+          boarded: 0,
+          // Fast enough that a well-judged dwell clears the doorway, slow
+          // enough that a rushed one visibly does not.
+          rate: Math.max(6, moving / Math.max(2.5, this.train.boardingSeconds * 0.72)),
+          carry: 0,
+          phase: 'waiting',
+        }
         const gained = this.applyScore(result.grade)
         this.ui.showStopToast(idx, result, gained)
         this.ui.setStationResult(idx, result.grade)
-        // Only shout "full" when it actually cost someone their train — at
-        // rush hour the train is at capacity almost every stop, and a toast
-        // every time would be noise instead of news.
-        this.ui.setOccupancy(this.flow.onboard, TRAIN_CAPACITY, this.lastStop.leftBehind > 15)
       },
       onMissed: (idx) => {
         perfMark('missed')
@@ -421,6 +455,42 @@ export class Game {
     }
   }
 
+  /**
+   * Moves people through the open doorway, a few per frame. Alighters first
+   * and the queue only after they are clear — the order is the whole point of
+   * the ritual, and it is also why holding the doors an extra second is worth
+   * something. Whatever has not crossed when the doors shut simply never
+   * happened: those riders are still aboard and those people are still on the
+   * platform, and the counters say so.
+   */
+  private updateTransfer(dt: number) {
+    const tr = this.transfer
+    if (!tr || tr.phase === 'waiting' || tr.phase === 'done') return
+    if (this.train.doorsOpenAmount < 0.6) return // still swinging: nobody steps through a half-open door
+
+    tr.carry += tr.rate * dt
+    const step = Math.floor(tr.carry)
+    if (step <= 0) return
+    tr.carry -= step
+
+    if (tr.phase === 'alighting') {
+      const moved = this.flow.alight(tr.station, Math.min(step, tr.alightLeft))
+      tr.alightLeft -= moved
+      tr.alighted += moved
+      if (tr.alightLeft <= 0 || moved === 0) {
+        tr.phase = 'boarding'
+        // The doorway is clear: now the files may step in.
+        this.passengers.releaseQueue(tr.station, this.train.boardingSeconds)
+      }
+    } else if (tr.phase === 'boarding') {
+      const moved = this.flow.board(tr.station, Math.min(step, tr.boardLeft))
+      tr.boardLeft -= moved
+      tr.boarded += moved
+      if (tr.boardLeft <= 0 || moved === 0) tr.phase = 'done'
+    }
+    this.ui.setOccupancy(this.flow.onboard, TRAIN_CAPACITY, false)
+  }
+
   /** One control for both door moves — the train decides which (if any) applies right now. */
   private handleDoorButton() {
     if (!this.started) return
@@ -428,6 +498,14 @@ export class Game {
   }
 
   private handleLook(dx: number, dy: number) {
+    if (this.cameraMode === 'exterior') {
+      // Free all the way round the sides; the elevation is what gets fenced.
+      this.extYaw -= dx * 0.005
+      this.extPitch = THREE.MathUtils.clamp(this.extPitch + dy * 0.004, EXT_PITCH_MIN, EXT_PITCH_MAX)
+      if (!this.running) this.renderOnce()
+      return
+    }
+    if (this.cameraMode !== 'cab') return
     const sens = 0.0032
     this.lookYaw = THREE.MathUtils.clamp(this.lookYaw - dx * sens, -LOOK_YAW_LIMIT, LOOK_YAW_LIMIT)
     this.lookPitch = THREE.MathUtils.clamp(this.lookPitch - dy * sens, -LOOK_PITCH_LIMIT, LOOK_PITCH_LIMIT)
@@ -486,7 +564,13 @@ export class Game {
     }, chimeDuration * 1000 + 120)
     // The platform reacts to the doors actually opening: waiting sprites
     // stream aboard, a few riders step off first.
-    this.passengers.beginBoarding(idx, this.train.boardingSeconds, Math.round((this.lastStop?.alighted ?? 4) / 6))
+    // Doors open: the alighting half of the ritual starts. The queue is
+    // released only once these are clear (updateTransfer decides when).
+    if (this.transfer && this.transfer.station === idx) {
+      this.transfer.phase = this.transfer.alightLeft > 0 ? 'alighting' : 'boarding'
+      this.passengers.beginAlighting(idx, Math.round(this.transfer.alightLeft / 6))
+      if (this.transfer.phase === 'boarding') this.passengers.releaseQueue(idx, this.train.boardingSeconds)
+    }
     if (!info.auto) {
       if (info.delaySeconds <= OPEN_INSTANT_SECONDS) this.applyDoorBonus(DOOR_OPEN_INSTANT_POINTS, '¡Puertas al instante!')
       else if (info.delaySeconds <= OPEN_QUICK_SECONDS) this.applyDoorBonus(DOOR_OPEN_QUICK_POINTS, 'Puertas rápidas')
@@ -503,7 +587,24 @@ export class Game {
     )
   }
 
+  /** Doors shut: settle up. Whoever did not cross is simply still where they were. */
+  private settleTransfer() {
+    const tr = this.transfer
+    if (!tr) return
+    this.transfer = null
+    const missed = tr.alightLeft + tr.boardLeft
+    this.ui.setOccupancy(this.flow.onboard, TRAIN_CAPACITY, false)
+    this.ui.showTransferToast(tr.station, tr.alighted, tr.boarded, missed)
+    // Cutting a transfer short is a real failure of the job, not a shortcut.
+    if (missed > 12) {
+      const penalty = Math.min(60, Math.round(missed * 0.35))
+      this.score = Math.max(0, this.score - penalty)
+      this.ui.setScore(this.score, this.bestScore, this.perfectStreak)
+    }
+  }
+
   private handleDoorsClose(info: DoorActionInfo) {
+    this.settleTransfer()
     audio.stopMelodyLoop()
     audio.playDoorCycle(false)
     audio.playMelody(DOOR_CHIME_CLOSE, 'attention', 0.4)
@@ -866,10 +967,18 @@ export class Game {
     this.scene.add(wire)
   }
 
+  /**
+   * The cab, built in eye-local coordinates but hung from the SCENE, not from
+   * the camera. Parented to the camera it rotated with your head — you could
+   * never turn to look at your own console, because the console turned with
+   * you. Now updateCameraFromTrain() plants the rig at the eye's base
+   * transform each frame and only the camera takes the look rotation, so the
+   * cab stays bolted to the train and you look around inside it.
+   */
   private buildCabRig() {
     const cab = new THREE.Group()
     this.cabRig = cab
-    this.camera.add(cab)
+    this.scene.add(cab)
 
     // Cab dome light: a soft warm pool over the console so the controls and
     // pillars stay readable after dark (stronger at night, ember-low by day).
@@ -926,6 +1035,30 @@ export class Game {
 
     // The physical master controller — a modeled lever that tilts with the
     // train's notch, in front of the DOM lever the player actually drags.
+    // The master controller sits in a slot it can actually travel along —
+    // a raised plate with a dark slit cut down it and notch marks either
+    // side, so the lever reads as part of the desk instead of stuck to it.
+    const slotPlateMat = new THREE.MeshStandardMaterial({ color: 0x23262d, roughness: 0.5, metalness: 0.45 })
+    const slotPlate = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.012, 0.30), slotPlateMat)
+    slotPlate.position.set(0.58, -0.375, -0.74)
+    slotPlate.rotation.x = -0.25
+    cab.add(slotPlate)
+    const slitMat = new THREE.MeshBasicMaterial({ color: 0x05060a })
+    const slit = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.004, 0.25), slitMat)
+    slit.position.set(0.58, -0.368, -0.74)
+    slit.rotation.x = -0.25
+    cab.add(slit)
+    // Detent ticks along the slot: P5…N…B7, the marks the notch clicks into.
+    const tickMat = new THREE.MeshStandardMaterial({ color: 0xb9bec7, roughness: 0.6, emissive: 0x33373f, emissiveIntensity: 0.5 })
+    const tickGeo = new THREE.BoxGeometry(0.035, 0.005, 0.008)
+    for (let i = 0; i < 7; i++) {
+      const tick = new THREE.Mesh(tickGeo, tickMat)
+      const along = -0.105 + i * 0.035
+      tick.position.set(0.505, -0.368 + along * 0.25, -0.74 + along)
+      tick.rotation.x = -0.25
+      cab.add(tick)
+    }
+
     const leverMount = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 0.06, 10), consoleMat)
     leverMount.position.set(0.58, -0.38, -0.72)
     cab.add(leverMount)
@@ -1009,11 +1142,13 @@ export class Game {
     this.cabRig.visible = mode === 'cab'
     this.consist.setVisible(mode !== 'cab')
     this.ui.setCameraMode(mode)
-    // Looking around is a cab affordance; the outside views frame themselves.
+    // The cab's head rotation is its own; entering an outside view resets it
+    // so returning to the cab always faces down the track.
     if (mode !== 'cab') {
       this.lookYaw = 0
       this.lookPitch = 0
     }
+    if (mode === 'platform') this.platformStation = this.train.targetStationIndex
     this.updateCameraFromTrain()
     if (!this.running) this.renderOnce()
   }
@@ -1030,11 +1165,16 @@ export class Game {
       const tCab = THREE.MathUtils.euclideanModulo(t + CAB_OFFSET / len, 1)
       const point = this.track.pointAt(tCab)
       const tangent = this.track.tangentAt(tCab).normalize()
-      const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize()
-      const eye = point.clone().addScaledVector(normal, 0.95).add(new THREE.Vector3(0, 3.3, 0))
+      // Dead on the centreline: offset to one side, the track ran off-centre
+      // in the windscreen and the whole view read as crooked.
+      const eye = point.clone().add(new THREE.Vector3(0, CAB_EYE_Y, 0))
       const m = new THREE.Matrix4().lookAt(eye, eye.clone().add(tangent), worldUp)
       const baseQuat = new THREE.Quaternion().setFromRotationMatrix(m)
       const lookQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(this.lookPitch, this.lookYaw, 0, 'YXZ'))
+      // The rig takes the BASE transform only — that is what keeps the cab
+      // still while the head turns.
+      this.cabRig.position.copy(eye)
+      this.cabRig.quaternion.copy(baseQuat)
       this.camera.position.copy(eye)
       this.camera.quaternion.copy(baseQuat).multiply(lookQuat)
       return
@@ -1042,44 +1182,56 @@ export class Game {
 
     const side = STATIONS[this.train.targetStationIndex].doorSide === 'left' ? 1 : -1
     if (this.cameraMode === 'exterior') {
-      // NOTE the sign. The platform frame (City, Passengers) builds its X axis
-      // as cross(up, tangent) = (tz, 0, -tx); the obvious (-tz, 0, tx) is its
-      // NEGATIVE, and using it put every outside camera on the wrong side of
-      // the track — looking at the back of the train with the platform hidden
-      // behind it.
-      // Three-quarter view from the door side and behind: the flank with the
-      // doors on it, the whole consist, and the road ahead all in one frame.
-      const tBack = THREE.MathUtils.euclideanModulo(t - (CONSIST_LEN * 0.78) / len, 1)
-      const point = this.track.pointAt(tBack)
-      const tangent = this.track.tangentAt(tBack).normalize()
+      // An orbit around the consist, deliberately fenced in: you can swing all
+      // the way around the sides, but the elevation is clamped so the camera
+      // never drops to train height (which put you inside the bodywork and
+      // lost the train entirely) and never rises to a map view. Distance is
+      // fixed, so the train cannot leave the frame.
+      const point = this.track.pointAt(t)
+      const tangent = this.track.tangentAt(t).normalize()
       const normal = new THREE.Vector3(tangent.z, 0, -tangent.x).normalize()
-      const eye = point.clone().addScaledVector(normal, side * 15).add(new THREE.Vector3(0, 8.6, 0))
-      // Aim a third of the way up the train, not at the centre: that keeps the
-      // nose in frame and leaves the road ahead visible above it.
-      const focus = this.track.pointAt(THREE.MathUtils.euclideanModulo(t + (CONSIST_LEN * 0.25) / len, 1)).clone().add(new THREE.Vector3(0, 2.2, 0))
+      const yaw = this.extYaw + (side > 0 ? 0 : Math.PI)
+      const dist = EXT_DISTANCE * Math.cos(this.extPitch)
+      const height = EXT_DISTANCE * Math.sin(this.extPitch)
+      const focus = point.clone().add(new THREE.Vector3(0, EXT_FOCUS_Y, 0))
+      const eye = focus
+        .clone()
+        .addScaledVector(normal, Math.cos(yaw) * dist)
+        .addScaledVector(tangent, Math.sin(yaw) * dist)
+        .add(new THREE.Vector3(0, height, 0))
       const m = new THREE.Matrix4().lookAt(eye, focus, worldUp)
       this.camera.position.copy(eye)
       this.camera.quaternion.setFromRotationMatrix(m)
       return
     }
 
+
     // Platform view: standing on the slab of the station being approached,
     // roughly where a passenger waits, watching the train come in.
-    const marker = this.track.markerFor(this.train.targetStationIndex)
+    // The platform camera stays put until the train has really gone. Following
+    // targetStationIndex teleported you to the next station the instant the
+    // train's nose cleared this one, mid-departure.
+    if (this.platformStation !== this.train.targetStationIndex) {
+      const held = this.track.markerFor(this.platformStation).tFraction
+      const behind = ((((t - held) % 1) + 1) % 1) * len
+      if (behind > PLATFORM_HANDOVER_UNITS && behind < len * 0.5) this.platformStation = this.train.targetStationIndex
+    }
+    const marker = this.track.markerFor(this.platformStation)
     const pPoint = this.track.pointAt(marker.tFraction)
     const pTangent = this.track.tangentAt(marker.tFraction).normalize()
     const pNormal = new THREE.Vector3(pTangent.z, 0, -pTangent.x).normalize()
+    const pSide = STATIONS[this.platformStation].doorSide === 'left' ? 1 : -1
     // Standing well back from the edge and looking ALONG the platform: that
     // frames the queues, the doorway in front of you and the train's flank
     // running away toward the cab, instead of a wall of car two metres off.
     const eye = pPoint
       .clone()
-      .addScaledVector(pNormal, side * (PLATFORM_INNER + 4.6))
+      .addScaledVector(pNormal, pSide * (PLATFORM_INNER + 4.6))
       .addScaledVector(pTangent, -16)
       .add(new THREE.Vector3(0, PLATFORM_EYE_Y, 0))
     const focus = pPoint
       .clone()
-      .addScaledVector(pNormal, side * (PLATFORM_INNER + 1.4))
+      .addScaledVector(pNormal, pSide * (PLATFORM_INNER + 1.4))
       .addScaledVector(pTangent, 12)
       .add(new THREE.Vector3(0, 1.75, 0))
     const m = new THREE.Matrix4().lookAt(eye, focus, worldUp)
@@ -1173,10 +1325,15 @@ export class Game {
       this.lastCrossingPhase = this.scenery.crossingBlinkPhase
       if (this.scenery.crossingBellActive) audio.crossingTick(0.7)
     }
+    this.updateTransfer(dt)
+    // The doors only ever open at the station being served, and while stopped
+    // that is the TARGET: currentStationIndex still names the previous one
+    // until the doors finish closing, which opened the wrong side wherever
+    // two consecutive platforms disagreed.
     this.consist.update(
       this.train.progressFraction,
       this.train.doorsOpenAmount,
-      STATIONS[this.train.currentStationIndex].doorSide,
+      STATIONS[this.train.targetStationIndex].doorSide,
       this.dayNight.nightFactor,
     )
     this.applyPrecipitation()

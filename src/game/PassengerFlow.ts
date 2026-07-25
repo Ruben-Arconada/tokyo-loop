@@ -100,45 +100,47 @@ export class PassengerFlow {
   }
 
   /**
-   * A stop: everyone who wanted this station gets off, then the platform
-   * boards into whatever room is left. Returns what the player should be told.
+   * What this stop WOULD move, without moving anybody. The transfer itself
+   * happens person by person while the doors are open (see alight/board), so
+   * that closing early genuinely leaves people behind instead of quietly
+   * counting them as served.
    */
-  stopAt(station: number): StopOutcome {
-    const alighted = this.wantOff(station)
-    this.onboard -= alighted
-    this.destinations[station] = Math.max(0, this.destinations[station] - alighted)
+  planStop(station: number): { toAlight: number; toBoard: number } {
+    const toAlight = this.wantOff(station)
+    // Room is judged AFTER the alighters are out — that is the order the
+    // doorway actually works in, and it is why holding the doors matters.
+    const room = Math.max(0, this.capacity - (this.onboard - toAlight))
+    return { toAlight, toBoard: Math.min(room, Math.round(this.waiting[station])) }
+  }
 
+  /** Moves `n` riders off the train here. Returns how many actually could. */
+  alight(station: number, n: number): number {
+    const moved = Math.max(0, Math.min(n, this.wantOff(station)))
+    this.onboard -= moved
+    this.destinations[station] = Math.max(0, this.destinations[station] - moved)
+    return moved
+  }
+
+  /** Moves `n` people from this platform onto the train. Returns how many fitted. */
+  board(station: number, n: number): number {
     const room = Math.max(0, this.capacity - this.onboard)
-    const wanting = Math.round(this.waiting[station])
-    const boarded = Math.min(room, wanting)
-    this.onboard += boarded
-    this.waiting[station] = Math.max(0, this.waiting[station] - boarded)
-
+    const moved = Math.max(0, Math.min(n, Math.floor(this.waiting[station]), room))
+    if (moved <= 0) return 0
+    this.onboard += moved
+    this.waiting[station] = Math.max(0, this.waiting[station] - moved)
     // Spread the new riders' destinations over the stations ahead, weighted
-    // by how attractive each is — so hubs really do empty the train.
-    if (boarded > 0) {
-      // Trip length decays exponentially with a mean of ~5 stops: on a loop
-      // line most people ride a handful of stations. The first attempt used a
-      // near-flat falloff, which spread every boarder across all 29 stations
-      // ahead and made only 3% of the train get off anywhere — so once it
-      // filled it never emptied again.
-      let total = 0
-      for (let k = 1; k < N; k++) total += WEIGHTS[(station + k) % N] * Math.exp(-k / 5)
-      for (let k = 1; k < N; k++) {
-        const idx = (station + k) % N
-        this.destinations[idx] += (boarded * WEIGHTS[idx] * Math.exp(-k / 5)) / total
-      }
+    // by how attractive each is — so hubs really do empty the train. Trip
+    // length decays with a mean of ~5 stops: on a loop line most people ride
+    // a handful of stations. A near-flat falloff (the first attempt) spread
+    // every boarder over all 29 stations ahead, so only 3% of the train ever
+    // got off anywhere and once it filled it never emptied again.
+    let total = 0
+    for (let k = 1; k < N; k++) total += WEIGHTS[(station + k) % N] * Math.exp(-k / 5)
+    for (let k = 1; k < N; k++) {
+      const idx = (station + k) % N
+      this.destinations[idx] += (moved * WEIGHTS[idx] * Math.exp(-k / 5)) / total
     }
-
-    const leftBehind = wanting - boarded
-    return {
-      alighted,
-      boarded,
-      leftBehind,
-      waitingAfter: Math.round(this.waiting[station]),
-      onboard: Math.round(this.onboard),
-      full: room <= 0 && wanting > 0,
-    }
+    return moved
   }
 
   /** Rolled through without stopping. Nobody gets what they wanted. */

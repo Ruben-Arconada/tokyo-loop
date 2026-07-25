@@ -55,17 +55,15 @@ export const DOOR_ZS: number[] = CAR_OFFSETS.flatMap((c) => CAR_DOOR_ZS.map((d) 
 export const CONSIST_LEN = CAR_COUNT * CAR_LEN + (CAR_COUNT - 1) * CAR_GAP
 
 /**
- * How far ahead of the consist centre the driver's eye sits.
- *
- * Physically this should be the nose, 28.8 m out. It isn't, and on purpose:
- * with the consist centred on the platform (which is what lines the doors up
- * with the queues) a nose-mounted eye ends up PAST the platform at a perfect
- * stop, staring at open track with the station behind the shoulder. The
- * player loses the one reference they stop by. Sixteen metres keeps the
- * platform filling the windscreen while the train still sits where it
- * belongs — and nobody can see their own nose from inside a cab anyway.
+ * The driver's eye, inside the leading cab just behind the windscreen — which
+ * is where Rubén wants it and where it belongs now that there is a train to be
+ * inside of. The consequence is deliberate: with the consist centred on the
+ * platform (what lines the doorways up with the queues), a perfect stop leaves
+ * the cab at the platform's LEADING end, alongside the attendant standing at
+ * the stopping mark. That attendant is now the visual reference you stop by,
+ * exactly as on the real thing.
  */
-export const CAB_OFFSET = 16
+export const CAB_OFFSET = CONSIST_LEN / 2 - 0.7
 
 /** Uguisu green — the loop's own colour, matching the HUD's line diagram. */
 const BODY_COLOR = 0x8fc31f

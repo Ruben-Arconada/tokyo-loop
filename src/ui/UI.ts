@@ -454,6 +454,21 @@ export class UI {
     if (full) this.flashToast('¡Tren completo! Se han quedado en el andén', 'overshot')
   }
 
+  /**
+   * What the stop actually moved. `missed` are the people who were still
+   * queueing (or still aboard) when the doors shut — the number that makes
+   * closing early cost something.
+   */
+  showTransferToast(stationIdx: number, alighted: number, boarded: number, missed: number) {
+    const station = STATIONS[stationIdx]
+    const bits: string[] = []
+    if (alighted > 0) bits.push(`↓${alighted}`)
+    if (boarded > 0) bits.push(`↑${boarded}`)
+    if (!bits.length) bits.push('sin movimiento')
+    const tail = missed > 0 ? ` · ${missed} se quedaron con las puertas cerradas` : ''
+    this.flashToast(`${station.nameEn}  ${bits.join(' ')}${tail}`, missed > 12 ? 'overshot' : 'good')
+  }
+
   /** Rolled past a platform: says who paid for it, which is the point of the penalty. */
   showSkipToast(stationIdx: number, stranded: number, carried: number, penalty: number) {
     const station = STATIONS[stationIdx]
