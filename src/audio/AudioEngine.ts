@@ -1,5 +1,6 @@
 import type { PlayableNote } from '../data/melodies'
 import { ATTENTION_CHIME, RETRO_FANFARE } from '../data/melodies'
+import { perfMark, perfTime } from '../game/PerfLog'
 
 export type Timbre = 'bell' | 'chime' | 'attention' | 'retro'
 export type AnnounceLang = 'ja' | 'en' | 'es'
@@ -1079,18 +1080,23 @@ export class AudioEngine {
   }
 
   private playAnnouncement(item: QueuedAnnouncement) {
+    perfMark('announce')
     this.announcing = true
     const totalChars = item.segments.reduce((n, s) => n + s.text.length, 0)
     const fanfareDuration = item.fanfare ? this.playMelody(RETRO_FANFARE, 'retro', 0.4) || 0.8 : 0
     this.duckFor(3.5 + totalChars * 0.06 + fanfareDuration)
-    const chimeDuration = this.playMelody(ATTENTION_CHIME, 'attention', 0.32) || 0.3
-    this.startPaBed()
+    const chimeDuration = perfTime('chime', () => this.playMelody(ATTENTION_CHIME, 'attention', 0.32) || 0.3)
+    perfTime('pa-bed', () => this.startPaBed())
 
     window.setTimeout(() => {
       // Clear only leftovers (e.g. the unlock primer) — by construction
       // nothing of ours is speaking when a new sequence starts.
-      speechSynthesis.cancel()
-      const utterances = item.segments.map((seg) => this.buildUtterance(seg.lang, seg.text))
+      // Timed: on iOS this block is the prime suspect for the ~320 ms freezes
+      // that showed up once per station in the first real-device lap.
+      const utterances = perfTime('speak-init', () => {
+        speechSynthesis.cancel()
+        return item.segments.map((seg) => this.buildUtterance(seg.lang, seg.text))
+      })
 
       const speakAt = (i: number) => {
         if (i >= utterances.length) {
@@ -1107,7 +1113,7 @@ export class AudioEngine {
         utter.onend = advance
         // Fallback in case `onend` never fires (a known flakiness in some browsers' queued-utterance handling).
         window.setTimeout(advance, item.segments[i].text.length * 140 + 2200)
-        speechSynthesis.speak(utter)
+        perfTime('speak', () => speechSynthesis.speak(utter))
       }
       speakAt(0)
     }, (fanfareDuration + chimeDuration) * 1000 + 150)

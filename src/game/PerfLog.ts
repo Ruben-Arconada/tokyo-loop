@@ -29,8 +29,11 @@ const MAX_BINS = 1800
 /** Per-second slice of the ride: [tSec, frames, meanMs, maxMs, draws, tris, speedKmh, progress‰]. */
 type Bin = [number, number, number, number, number, number, number, number]
 
-/** One hitch: [tSec, ms, progress‰, station, draws, tris]. */
-type Hitch = [number, number, number, number, number, number]
+/** One hitch: [tSec, ms, progress‰, station, draws, kTris, tagsRecientes]. */
+type Hitch = [number, number, number, number, number, number, string]
+/** How far back a hitch looks for game events that might have caused it. */
+const MARK_WINDOW_MS = 2000
+const MARK_RING = 48
 
 export interface PerfSample {
   frameMs: number
@@ -96,6 +99,12 @@ export class PerfLog {
   private gaps = 0
   /** Captured once at start: everything about the device I can't ask for later. */
   private context: Record<string, unknown> = {}
+  /** Ring of recent game events, so a hitch can name what happened just before it. */
+  private markTags: string[] = new Array(MARK_RING).fill('')
+  private markTimes = new Float64Array(MARK_RING)
+  private markHead = 0
+  /** Synchronous cost per instrumented block: tag → [veces, msTotal, msPeor]. */
+  private costs = new Map<string, [number, number, number]>()
 
   /** Live frame rate for the on-screen counter, smoothed just enough to be readable. */
   fpsNow = 0
@@ -119,6 +128,9 @@ export class PerfLog {
     this.binSpeed = 0
     this.lastPersist = this.startedAt
     this.gaps = 0
+    this.markTimes.fill(0)
+    this.markHead = 0
+    this.costs.clear()
     this.context = context
     this.recording = true
   }
@@ -175,6 +187,9 @@ export class PerfLog {
         s.stationIdx,
         s.draws,
         Math.round(s.tris / 1000),
+        // What the game was doing in the run-up. A stall with a name is a bug
+        // you can fix; a stall without one is a guess.
+        this.recentMarks(now - s.frameMs),
       ])
     }
 
@@ -182,6 +197,47 @@ export class PerfLog {
     // Survive an iOS tab kill mid-lap: the log is worthless if backgrounding
     // the PWA between the ride and the copy button throws it away.
     if (now - this.lastPersist > 5000) this.persist()
+  }
+
+  /** Notes that a game event happened right now (cheap: two array writes). */
+  mark(tag: string) {
+    if (!this.recording) return
+    this.markHead = (this.markHead + 1) % MARK_RING
+    this.markTags[this.markHead] = tag
+    this.markTimes[this.markHead] = performance.now()
+  }
+
+  /** Runs `fn` and books how long it blocked, under `tag`. Also leaves a mark. */
+  time<T>(tag: string, fn: () => T): T {
+    if (!this.recording) return fn()
+    const t0 = performance.now()
+    try {
+      return fn()
+    } finally {
+      const ms = performance.now() - t0
+      const c = this.costs.get(tag)
+      if (c) {
+        c[0]++
+        c[1] += ms
+        if (ms > c[2]) c[2] = ms
+      } else {
+        this.costs.set(tag, [1, ms, ms])
+      }
+      this.mark(tag)
+    }
+  }
+
+  /** Tags seen in the window before `at` — the frame's own duration is subtracted by the caller so a mark made DURING the stall still counts. */
+  private recentMarks(at: number): string {
+    const out: string[] = []
+    for (let i = 0; i < MARK_RING; i++) {
+      const idx = (this.markHead - i + MARK_RING) % MARK_RING
+      const t = this.markTimes[idx]
+      if (!t || at - t > MARK_WINDOW_MS || t > at + 400) continue
+      const tag = this.markTags[idx]
+      if (!out.includes(tag)) out.push(tag)
+    }
+    return out.join(',')
   }
 
   private closeBin(now: number, progress: number) {
@@ -273,6 +329,10 @@ export class PerfLog {
       bins: this.bins,
       // [tSec, ms, progress‰, station, draws, kTris] — worst first, capped
       hitches: this.hitches.slice().sort((a, b) => b[1] - a[1]).slice(0, MAX_HITCHES),
+      // tag: [veces, msTotal, msPeor] — el bloqueo síncrono medido EN SU MÓVIL.
+      costs: Object.fromEntries(
+        [...this.costs.entries()].sort((a, b) => b[1][1] - a[1][1]).map(([k, v]) => [k, v.map((n) => Math.round(n * 10) / 10)]),
+      ),
     })
   }
 
@@ -297,4 +357,23 @@ export class PerfLog {
   static clearStored() {
     localStorage.removeItem(STORE_KEY)
   }
+}
+
+// ————————————————————————————————————————————————————————————————
+// Hooks so systems that know nothing about the recorder (audio, scenery) can
+// still label what they were doing. No-ops until a recording is running.
+// ————————————————————————————————————————————————————————————————
+
+let active: PerfLog | null = null
+
+export function setActivePerfLog(log: PerfLog | null) {
+  active = log
+}
+
+export function perfMark(tag: string) {
+  active?.mark(tag)
+}
+
+export function perfTime<T>(tag: string, fn: () => T): T {
+  return active ? active.time(tag, fn) : fn()
 }

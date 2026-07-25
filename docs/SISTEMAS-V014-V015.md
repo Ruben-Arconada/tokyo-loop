@@ -272,12 +272,30 @@ Formato de exportación (JSON compacto, ~13 KB por vuelta completa de 7 min):
 ctx      { ua, gpu, dpr, cap, vw, vh, pwa, season, weather, hour, timeScale, shadows }
 summary  { seconds, frames, meanFps, p05, p50, p95, p99, maxMs, over17, over33, over50, maxDraws, maxTris, gaps }
 bins[]   [tSec, frames, meanMs, maxMs, draws, kTris, kmh, progress‰]   ← uno por segundo
-hitches[][tSec, ms, progress‰, station, draws, kTris]                  ← frames ≥50 ms, peores primero
+hitches[][tSec, ms, progress‰, station, draws, kTris, tags]            ← frames ≥50 ms, peores primero
+costs    { tag: [veces, msTotal, msPeor] }                             ← bloqueo SÍNCRONO medido en el móvil
 ```
+
+`tags` son los eventos de juego marcados en los 2 s previos al tirón
+(`perfMark`), y `costs` mide bloques envueltos en `perfTime` — los hooks están
+al final de `PerfLog.ts` y son no-ops mientras no haya grabación. Hoy están
+instrumentados `announce`/`chime`/`pa-bed`/`speak-init`/`speak` (la locución
+trilingüe), `station`, `arriving` y `missed`. Sirve para no adivinar: un tirón
+con nombre es un bug, y sin nombre es una corazonada.
 
 `progress‰` es la posición en el anillo ×1000, así que un tirón se localiza en el
 mapa: cruzar ese número con `docs/vista-cenital-tokyo-loop.jpg` o con los markers
 de `Track` dice qué se estaba dibujando.
+
+**Primera vuelta real (iPhone 14 Pro Max, PWA, iOS 18.7, invierno+tormenta,
+2026-07-25)**: techo de 60 Hz (p05 15,3 ms — Safari no da 120 Hz aquí), 60 fps
+clavados los 3 primeros minutos y decaimiento sostenido a ~44 fps a partir del
+minuto 3 **con MENOS carga** (110→91 draws, 464k→438k tris), o sea estrangulamiento
+térmico, no escena. 22 congelaciones de 315-347 ms, todas junto a un marcador de
+estación y una por estación. `maxDraws` 125 < 160 del presupuesto. OJO: esa
+vuelta fue con tormenta, y con `overcast` alto el sol NO proyecta sombras
+(`castShadow` con o < 0,55), así que el pase de sombras no entró — el caso peor
+(despejado a mediodía) sigue sin medir.
 
 En el HUD: chip con el contador y punto rojo parpadeante mientras graba (encima
 del marcador). En el menú de pausa: iniciar/detener, titular con el resumen, y

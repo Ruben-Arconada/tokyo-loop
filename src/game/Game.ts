@@ -5,7 +5,7 @@ import { Train, notchLabel, MIN_NOTCH, MAX_NOTCH, OPEN_INSTANT_SECONDS, OPEN_QUI
 import { City, crowdDensityForHour } from './City'
 import { Passengers } from './Passengers'
 import { Precipitation } from './Precipitation'
-import { PerfLog } from './PerfLog'
+import { PerfLog, setActivePerfLog, perfMark } from './PerfLog'
 import { registerPool, applySeasonToPool, overcastTarget, precipProfile, type Season, type Weather, type SeasonalPool } from './Seasons'
 import { Scenery } from './Scenery'
 import { DayNightCycle } from './DayNightCycle'
@@ -67,6 +67,8 @@ export class Game {
   /** Last rain/wind levels actually pushed to the audio engine — the per-frame profile only reaches it when they have moved. */
   private lastRainAudioLevel = -1
   private lastWindAudioLevel = -1
+  /** Which station the perf log has already been told about — one mark per change, not per frame. */
+  private lastMarkedStation = -1
   /** Ground + embankment vertex-color pools, retinted per season alongside the vegetation. */
   private terrainPools: SeasonalPool[] = []
   private ballastMat!: THREE.MeshStandardMaterial
@@ -124,7 +126,10 @@ export class Game {
     this.track = new Track()
     this.train = new Train(this.track, {
       onDepartAnnounce: (_cur, next) => this.handleDepartAnnounce(next),
-      onArrivingAnnounce: (idx) => this.handleArrivingAnnounce(idx),
+      onArrivingAnnounce: (idx) => {
+        perfMark('arriving')
+        this.handleArrivingAnnounce(idx)
+      },
       onStopped: (idx, result) => {
         // Rush hour = fuller platform = longer boarding; decided at stop
         // time so the door phase and the sprites agree on the same crowd.
@@ -134,6 +139,7 @@ export class Game {
         this.ui.setStationResult(idx, result.grade)
       },
       onMissed: (idx) => {
+        perfMark('missed')
         this.perfectStreak = 0
         this.ui.showMissedToast(idx)
         this.ui.setStationResult(idx, 'missed')
@@ -215,7 +221,9 @@ export class Game {
   private togglePerfRecording() {
     if (this.perf.recording) {
       this.perf.stop()
+      setActivePerfLog(null)
     } else {
+      setActivePerfLog(this.perf)
       const gl = this.renderer.getContext()
       const dbg = gl.getExtension('WEBGL_debug_renderer_info')
       this.perf.start({
@@ -991,6 +999,10 @@ export class Game {
     // Every window-lit material shares this: windows pop on one by one
     // through dusk as it rises from 0 to 1.
     WINDOW_DUSK_UNIFORM.value = this.dayNight.nightFactor
+    if (this.train.targetStationIndex !== this.lastMarkedStation) {
+      this.lastMarkedStation = this.train.targetStationIndex
+      perfMark('station')
+    }
     this.city.update(dt, this.dayNight.nightFactor, this.train.targetStationIndex)
     this.passengers.update(dt, this.dayNight.timeOfDay, this.dayNight.nightFactor, this.train.targetStationIndex)
     this.scenery.update(dt, this.dayNight, this.train.progressFraction)
