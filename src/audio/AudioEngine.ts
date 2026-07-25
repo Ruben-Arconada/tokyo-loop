@@ -99,7 +99,12 @@ export class AudioEngine {
   private stationMurmurPanner: StereoPannerNode | null = null
   private rainWashGain: GainNode | null = null
   private rainPatterGain: GainNode | null = null
+  /** Kept so the patter can be re-voiced per frame — speed opens it up, doors open it further. */
+  private rainPatterFilter: BiquadFilterNode | null = null
   private rainLevel = 0
+  private windGain: GainNode | null = null
+  private windFilter: BiquadFilterNode | null = null
+  private windLevel = 0
   /** Season shapes the insect chorus — set from the game, defaults to spring. */
   private season: 'spring' | 'summer' | 'autumn' | 'winter' = 'spring'
 
@@ -144,6 +149,7 @@ export class AudioEngine {
     // If the weather was already rainy before the tap-to-start unlock, the
     // rain bed has a level waiting for its nodes.
     if (this.rainLevel > 0) this.setRain(this.rainLevel)
+    if (this.windLevel > 0) this.setWind(this.windLevel)
     this.loadVoices()
 
     this.resumeContext()
@@ -322,16 +328,48 @@ export class AudioEngine {
     const stillness = 1 - Math.min(1, speed01 * 6)
     this.roomToneGain?.gain.setTargetAtTime(0.03 * stillness * duckMul, t, 0.4)
 
-    // Rain breathes: a slow ±20% swell over the wash layer, because a
-    // statistically constant level is something the ear deletes in minutes.
-    if (this.rainLevel > 0 && this.rainWashGain) {
-      this.rainWashGain.gain.setTargetAtTime(this.rainLevel * 0.05 * (1 + 0.2 * Math.sin(t * 0.44)), t, 0.6)
-    }
+    // `crowd` is how far the doors are open (the caller's name for it) —
+    // the weather bed cares about that as much as the platform noise does.
+    this.updateWeatherBed(t, speed01, crowd, ducked)
 
     this.updateRailJoints(dt, speed01, duckMul)
     this.updateTimeAmbience(t, hour, speed01, duckMul)
     this.updateCrowd(t, hour, crowd, duckMul)
     this.updateStationMurmur(t, hour, stationMurmur, stationPan, duckMul)
+  }
+
+  /**
+   * Re-voices rain and wind every frame. Two things decide how weather
+   * SOUNDS from inside a train, and neither is the weather itself:
+   *
+   * - Speed. Standing at a platform you hear the rain out there — a wash,
+   *   soft and distant. Running, the drops arrive ON the cab: the patter
+   *   band takes over and opens up in frequency. Same rain, different seat.
+   * - Doors. Open them and the outside floods in, brighter and louder;
+   *   close them and the glass puts it back behind a wall. This is the
+   *   moment the weather is loudest in the whole game.
+   *
+   * The PA duck applies here too — gentler than on the motor, so a storm
+   * still breathes underneath an announcement instead of vanishing.
+   */
+  private updateWeatherBed(t: number, speed01: number, doorsOpen: number, ducked: boolean) {
+    const duck = ducked ? 0.65 : 1
+    const open = 1 + 0.55 * doorsOpen
+    if (this.rainLevel > 0 && this.rainWashGain && this.rainPatterGain) {
+      // A statistically constant level is something the ear deletes in
+      // minutes, so the wash breathes on a slow ±20% swell.
+      const swell = 1 + 0.2 * Math.sin(t * 0.44)
+      this.rainWashGain.gain.setTargetAtTime(this.rainLevel * 0.05 * swell * open * duck, t, 0.6)
+      this.rainPatterGain.gain.setTargetAtTime(this.rainLevel * 0.016 * (1 + 1.2 * speed01) * open * duck, t, 0.35)
+      this.rainPatterFilter?.frequency.setTargetAtTime(3200 + speed01 * 2400 + doorsOpen * 700, t, 0.4)
+    }
+    if (this.windLevel > 0 && this.windGain) {
+      // Two detuned sines: gusts that never land on the same beat twice.
+      const gust = 0.55 + 0.45 * (0.5 + 0.5 * Math.sin(t * 0.23) * Math.cos(t * 0.07))
+      this.windGain.gain.setTargetAtTime(this.windLevel * 0.055 * gust * open * duck, t, 0.7)
+      // The gust whistles as it rises, and the cab's own slipstream adds to it.
+      this.windFilter?.frequency.setTargetAtTime(380 + gust * 520 + speed01 * 340, t, 0.6)
+    }
   }
 
   /**
@@ -371,7 +409,9 @@ export class AudioEngine {
   /**
    * Rain bed: a broadband wash (lowpassed noise) plus a bright patter band —
    * both looping the shared noise buffer, faded by level. Level 0 costs
-   * nothing beyond two silent gain nodes once created.
+   * nothing beyond two silent gain nodes once created. The MIX between the
+   * two layers is not set here: updateWeatherBed() re-voices it every frame
+   * from the train's speed and doors (see the note there).
    */
   setRain(level01: number) {
     this.rainLevel = level01
@@ -400,6 +440,7 @@ export class AudioEngine {
       bp.type = 'bandpass'
       bp.frequency.value = 3600
       bp.Q.value = 0.6
+      this.rainPatterFilter = bp
       this.rainPatterGain = ctx.createGain()
       this.rainPatterGain.gain.value = 0
       patter.connect(bp)
@@ -410,6 +451,99 @@ export class AudioEngine {
     // Slow fades: weather rolls in, it doesn't switch.
     this.rainWashGain.gain.setTargetAtTime(level01 * 0.05, t, 1.2)
     this.rainPatterGain!.gain.setTargetAtTime(level01 * 0.016, t, 1.2)
+  }
+
+  /**
+   * Storm wind: a low, wide noise bed with its own gust life. This is the
+   * voice a ventisca has and a nevada doesn't — snow itself is silent, so
+   * without wind a blizzard sounds exactly like a clear winter afternoon.
+   * Level is stored here; the gusting happens per frame in updateWeatherBed.
+   */
+  setWind(level01: number) {
+    this.windLevel = level01
+    if (!this.ctx || !this.master) return
+    if (!this.windGain) {
+      const ctx = this.ctx
+      const src = ctx.createBufferSource()
+      src.buffer = this.noiseBuffer
+      src.loop = true
+      src.playbackRate.value = 0.62 // slower than the rain layers: wind is a bigger, lazier noise
+      this.windFilter = ctx.createBiquadFilter()
+      this.windFilter.type = 'bandpass'
+      this.windFilter.frequency.value = 480
+      this.windFilter.Q.value = 0.5
+      this.windGain = ctx.createGain()
+      this.windGain.gain.value = 0
+      src.connect(this.windFilter)
+      this.windFilter.connect(this.windGain)
+      this.windGain.connect(this.master)
+      src.start()
+    }
+    if (level01 === 0) this.windGain.gain.setTargetAtTime(0, this.ctx.currentTime, 1.4)
+  }
+
+  /**
+   * One thunderclap, scheduled `delay` seconds out — the gap between the
+   * flash and the sound IS the distance, so the caller times it, not us.
+   * `strength` 0..1 shapes what arrives: a far strike is all low rumble with
+   * a long tail, a near one leads with a bright crack.
+   */
+  thunder(strength: number, delay: number) {
+    if (!this.ctx || !this.master || !this.noiseBuffer) return
+    const ctx = this.ctx
+    const at = ctx.currentTime + Math.max(0, delay)
+    const near = Math.min(1, Math.max(0, strength))
+    const body = 2.2 + (1 - near) * 3.4 // far thunder rolls for much longer
+    // Loud relative to the rain bed (0.05) on purpose — thunder is the one
+    // sound in the game that's allowed to be bigger than the train.
+    const vol = 0.07 + near * 0.15
+
+    // Rumble: noise dragged through a lowpass that closes as it decays, so
+    // the tail gets darker the way real thunder does rolling off the city.
+    const rumble = ctx.createBufferSource()
+    rumble.buffer = this.noiseBuffer
+    rumble.loop = true
+    rumble.playbackRate.value = 0.35 + Math.random() * 0.15
+    const lp = ctx.createBiquadFilter()
+    lp.type = 'lowpass'
+    lp.frequency.setValueAtTime(220 + near * 420, at)
+    lp.frequency.exponentialRampToValueAtTime(70, at + body)
+    lp.Q.value = 0.8
+    const g = ctx.createGain()
+    g.gain.setValueAtTime(0.0001, at)
+    // Rolls IN over a beat when far, slams when near.
+    g.gain.exponentialRampToValueAtTime(vol, at + 0.06 + (1 - near) * 0.5)
+    // Two swells inside the decay keep it from sounding like one noise fade.
+    g.gain.exponentialRampToValueAtTime(vol * 0.45, at + body * 0.35)
+    g.gain.exponentialRampToValueAtTime(vol * 0.7, at + body * 0.55)
+    g.gain.exponentialRampToValueAtTime(0.0001, at + body)
+    rumble.connect(lp)
+    lp.connect(g)
+    g.connect(this.master)
+    g.connect(this.wetSend!)
+    rumble.start(at)
+    rumble.stop(at + body + 0.2)
+
+    // The crack, only for strikes close enough to have one.
+    if (near > 0.45) {
+      const crack = ctx.createBufferSource()
+      crack.buffer = this.noiseBuffer
+      crack.playbackRate.value = 1.4
+      const hp = ctx.createBiquadFilter()
+      hp.type = 'highpass'
+      hp.frequency.value = 900
+      const cg = ctx.createGain()
+      const cvol = (near - 0.45) * 0.22
+      cg.gain.setValueAtTime(0.0001, at)
+      cg.gain.linearRampToValueAtTime(cvol, at + 0.012)
+      cg.gain.exponentialRampToValueAtTime(0.0001, at + 0.5)
+      crack.connect(hp)
+      hp.connect(cg)
+      cg.connect(this.master)
+      cg.connect(this.wetSend!)
+      crack.start(at)
+      crack.stop(at + 0.6)
+    }
   }
 
   /** Rough crowd curve — peaks at the morning/evening rush, quiet overnight. */

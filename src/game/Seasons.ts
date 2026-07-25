@@ -164,19 +164,114 @@ export function applySeasonToPool(pool: SeasonalPool, season: Season) {
 }
 
 // ————————————————————————————————————————————————————————————————
-// Weather — a second, independent axis. 'rain' becomes snow when the
-// season is winter (one particle system, two costumes).
+// Weather — a second, independent axis. Precipitation becomes snow when the
+// season is winter (one particle system, two costumes), so the same four
+// options read as rain/storm in three seasons and nevada/ventisca in winter.
 // ————————————————————————————————————————————————————————————————
 
-export type Weather = 'clear' | 'cloudy' | 'rain'
+export type Weather = 'clear' | 'cloudy' | 'rain' | 'storm'
 
-export const WEATHERS: { id: Weather; label: string; icon: string }[] = [
+export interface WeatherOption {
+  id: Weather
+  label: string
+  icon: string
+  /** Winter wears the same state under another name — "Lluvia" in January would be a lie. */
+  winterLabel?: string
+  winterIcon?: string
+}
+
+export const WEATHERS: WeatherOption[] = [
   { id: 'clear', label: 'Despejado', icon: '☀️' },
   { id: 'cloudy', label: 'Nublado', icon: '☁️' },
-  { id: 'rain', label: 'Lluvia', icon: '🌧️' },
+  { id: 'rain', label: 'Lluvia', icon: '🌧️', winterLabel: 'Nieve', winterIcon: '🌨️' },
+  { id: 'storm', label: 'Tormenta', icon: '⛈️', winterLabel: 'Ventisca', winterIcon: '❄️' },
 ]
+
+/** The label/icon a weather wears in a given season (winter renames rain → nieve, tormenta → ventisca). */
+export function weatherFace(weather: Weather, season: Season): { label: string; icon: string } {
+  const w = WEATHERS.find((x) => x.id === weather)!
+  const winter = season === 'winter'
+  return { label: (winter && w.winterLabel) || w.label, icon: (winter && w.winterIcon) || w.icon }
+}
 
 /** How overcast the sky should aim to be for a weather state (DayNightCycle lerps toward it). */
 export function overcastTarget(weather: Weather): number {
-  return weather === 'clear' ? 0 : weather === 'cloudy' ? 0.7 : 1
+  return weather === 'clear' ? 0 : weather === 'cloudy' ? 0.7 : weather === 'rain' ? 1 : 1.15
+}
+
+// ————————————————————————————————————————————————————————————————
+// Rain phases by the clock. Rather than multiplying the menu with
+// drizzle/shower/downpour entries, the SAME rain breathes over the day the
+// way Tokyo's actually does: soft and steady at dawn, building through the
+// afternoon into the convective peak, easing off overnight.
+// ————————————————————————————————————————————————————————————————
+
+/** 0.62 (pre-dawn drizzle) … 1 (late-afternoon peak) — the hour's weight on any falling weather. */
+export function rainPhase01(hour: number): number {
+  return 0.62 + 0.38 * (0.5 - 0.5 * Math.cos((((hour - 4 + 24) % 24) / 24) * Math.PI * 2))
+}
+
+/** What that phase is called right now — shown under the weather picker so the hour's effect is legible, not a secret. */
+export function rainPhaseLabel(weather: Weather, season: Season, hour: number): string {
+  if (weather !== 'rain' && weather !== 'storm') return ''
+  const p = rainPhase01(hour)
+  if (season === 'winter') {
+    if (weather === 'storm') return 'Ventisca cerrada'
+    return p < 0.75 ? 'Nevada fina' : p < 0.9 ? 'Nevada' : 'Nevada copiosa'
+  }
+  if (weather === 'storm') return p < 0.8 ? 'Tormenta lejana' : 'Tormenta encima'
+  return p < 0.75 ? 'Chirimiri' : p < 0.9 ? 'Lluvia constante' : 'Aguacero'
+}
+
+/**
+ * Everything the precipitation curtain needs for one frame. Written into a
+ * scratch object — this is read every frame (the hour moves continuously),
+ * so it must not allocate.
+ */
+export interface PrecipProfile {
+  /** Is anything falling at all. */
+  falling: boolean
+  /** Dressed as snow (winter) rather than rain. */
+  snow: boolean
+  /** 0..1 fraction of the curtain's instances kept alive — the "how hard it's coming down" dial. */
+  density: number
+  /** Lateral gust in world units/s: 0 = it falls straight down even at a standstill. */
+  wind: number
+  /** Multiplier over the base fall speed. */
+  fallScale: number
+  /** Rain bed level for the audio engine. */
+  audioLevel: number
+  /** Wind bed level — the voice a storm has beyond its rain, and the ONLY voice a blizzard has. */
+  windAudio: number
+}
+
+const PROFILE: PrecipProfile = { falling: false, snow: false, density: 0, wind: 0, fallScale: 1, audioLevel: 0, windAudio: 0 }
+
+export function precipProfile(weather: Weather, season: Season, hour: number): PrecipProfile {
+  const snow = season === 'winter'
+  const falling = weather === 'rain' || weather === 'storm'
+  const phase = rainPhase01(hour)
+  PROFILE.falling = falling
+  PROFILE.snow = snow
+  if (!falling) {
+    PROFILE.density = 0
+    PROFILE.wind = 0
+    PROFILE.fallScale = 1
+    PROFILE.audioLevel = 0
+    PROFILE.windAudio = 0
+    return PROFILE
+  }
+  const storm = weather === 'storm'
+  // Storm always comes down hard; plain rain lets the hour decide.
+  PROFILE.density = storm ? 0.85 + 0.15 * phase : 0.4 + 0.42 * phase
+  // A storm blows sideways on its own; ordinary rain only slants because the
+  // train is moving through it.
+  PROFILE.wind = storm ? (snow ? 11 : 8.5) * (0.75 + 0.25 * phase) : 0
+  PROFILE.fallScale = storm ? 1.35 : 0.85 + 0.25 * phase
+  // Snowfall is nearly SILENT — a low breath of wind, no patter bed.
+  PROFILE.audioLevel = snow ? (storm ? 0.4 : 0.12) : storm ? 1 : 0.55 + 0.35 * phase
+  // A ventisca is almost pure wind (its snow makes no sound of its own); a
+  // rain storm gets wind UNDER the rain, not instead of it.
+  PROFILE.windAudio = storm ? (snow ? 0.95 : 0.5) * (0.8 + 0.2 * phase) : 0
+  return PROFILE
 }

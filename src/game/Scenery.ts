@@ -1775,7 +1775,7 @@ export class Scenery {
    * fuller and lower. Rain/snow: a heavy lid — big, low, stretched slabs.
    */
   private seedClouds() {
-    const heavy = this.weatherLook === 'rain'
+    const heavy = this.weatherLook === 'rain' || this.weatherLook === 'storm'
     const mid = this.weatherLook === 'cloudy'
     const dummy = new THREE.Object3D()
     for (let i = 0; i < CLOUD_COUNT; i++) {
@@ -1884,9 +1884,12 @@ export class Scenery {
     // a snowfall keeps the light ash lid that reads as snow-laden, and
     // plain cloudy sits in between.
     const o = dayNight.overcast
-    const raining = this.weatherLook === 'rain'
+    const storm = this.weatherLook === 'storm'
+    const raining = this.weatherLook === 'rain' || storm
     const snowing = raining && this.season === 'winter'
-    const overcastTintTarget = snowing ? OVERCAST_CLOUD : raining ? STORM_CLOUD : MID_CLOUD
+    // A blizzard keeps snow's light lid but drops it a stop darker; a rain
+    // storm gets the darkest nimbus in the wardrobe.
+    const overcastTintTarget = snowing ? (storm ? MID_CLOUD : OVERCAST_CLOUD) : raining ? STORM_CLOUD : MID_CLOUD
     const tint = this.cloudMat.uniforms.tint.value as THREE.Color
     tint.copy(horizon).lerp(WHITE, 0.55).multiplyScalar(1 - night * 0.82)
     if (o > 0.001) tint.lerp(overcastTintTarget, (raining && !snowing ? 0.85 : 0.7) * o)

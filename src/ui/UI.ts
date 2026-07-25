@@ -1,7 +1,7 @@
 import { STATIONS } from '../data/stations'
 import type { StopResult } from '../game/Train'
 import { TEAM } from '../data/team'
-import { SEASONS, WEATHERS, type Season, type Weather } from '../game/Seasons'
+import { SEASONS, WEATHERS, weatherFace, rainPhaseLabel, type Season, type Weather } from '../game/Seasons'
 
 export interface UICallbacks {
   onStart: () => void
@@ -40,9 +40,16 @@ export class UI {
   private hud: HTMLDivElement
   private startOverlay: HTMLDivElement
   private menuOverlay: HTMLDivElement
+  private atmoOverlay: HTMLDivElement
   private toastEl: HTMLDivElement
   private menuOpen = false
+  private atmoOpen = false
   private paused = false
+  private atmoChip!: HTMLButtonElement
+  private atmoGlyphEl!: HTMLSpanElement
+  /** Cached so the per-frame phase refresh stays a string compare, not a DOM write. */
+  private lastPhaseText = ''
+  private lastAtmoWinter: boolean | null = null
 
   private clockEl!: HTMLSpanElement
   private phaseEl!: HTMLSpanElement
@@ -84,6 +91,9 @@ export class UI {
 
     this.menuOverlay = this.buildMenuOverlay()
     mount.appendChild(this.menuOverlay)
+
+    this.atmoOverlay = this.buildAtmoOverlay()
+    mount.appendChild(this.atmoOverlay)
   }
 
   private buildHud() {
@@ -96,24 +106,13 @@ export class UI {
             <line x1="3" y1="18" x2="21" y2="18" />
           </svg>
         </button>
-        <button class="hud-clock" aria-label="Cambiar hora del día">
-          <span class="hud-clock-time">07:30</span>
+        <button class="hud-clock" aria-label="Atmósfera: hora, estación y clima" aria-haspopup="dialog" aria-expanded="false">
+          <span class="hud-clock-row">
+            <span class="hud-clock-time">07:30</span>
+            <span class="hud-clock-atmo" aria-hidden="true">🌸☀️</span>
+          </span>
           <span class="hud-clock-phase">Mañana</span>
         </button>
-        <button class="hud-atmo-btn hud-season-btn" aria-label="Estación del año">🌸</button>
-        <button class="hud-atmo-btn hud-weather-btn" aria-label="Clima">☀️</button>
-        <div class="time-picker hidden">
-          <small class="picker-title">Hora del día</small>
-          ${TIME_PRESETS.map((p) => `<button data-hour="${p.hour}">${p.label}</button>`).join('')}
-        </div>
-        <div class="time-picker season-picker hidden">
-          <small class="picker-title">Estación del año</small>
-          ${SEASONS.map((s) => `<button data-season="${s.id}">${s.icon} ${s.label}</button>`).join('')}
-        </div>
-        <div class="time-picker weather-picker hidden">
-          <small class="picker-title">Clima</small>
-          ${WEATHERS.map((w) => `<button data-weather="${w.id}">${w.icon} ${w.label}</button>`).join('')}
-        </div>
         <div class="hud-stations">
           <div class="hud-stations-row">
             <div class="hud-station-now">
@@ -175,72 +174,111 @@ export class UI {
     }
 
     this.hud.querySelector('.hud-menu-btn')!.addEventListener('click', () => this.toggleMenu())
-
-    // Three sibling pickers off the top bar (hour / season / weather), all
-    // the same pattern: chip toggles its own list, opening one closes the
-    // rest, tapping an option applies and closes.
-    const timePicker = this.hud.querySelector('.time-picker:not(.season-picker):not(.weather-picker)') as HTMLDivElement
-    const seasonPicker = this.hud.querySelector('.season-picker') as HTMLDivElement
-    const weatherPicker = this.hud.querySelector('.weather-picker') as HTMLDivElement
-    const allPickers = [timePicker, seasonPicker, weatherPicker]
-    const chipOf = new Map<HTMLDivElement, HTMLButtonElement>([
-      [timePicker, this.hud.querySelector('.hud-clock') as HTMLButtonElement],
-      [seasonPicker, this.hud.querySelector('.hud-season-btn') as HTMLButtonElement],
-      [weatherPicker, this.hud.querySelector('.hud-weather-btn') as HTMLButtonElement],
-    ])
-    const syncAria = () => {
-      for (const [p, chip] of chipOf) chip.setAttribute('aria-expanded', String(!p.classList.contains('hidden')))
-    }
-    const toggleOnly = (which: HTMLDivElement) => {
-      for (const p of allPickers) p.classList.toggle('hidden', p !== which || !p.classList.contains('hidden'))
-      // Anchor the list under its own chip: hard-coded offsets break the
-      // moment anyone touches the top-bar layout.
-      if (!which.classList.contains('hidden')) {
-        const hudRect = this.hud.getBoundingClientRect()
-        const chipRect = chipOf.get(which)!.getBoundingClientRect()
-        which.style.left = `${Math.max(8, Math.min(chipRect.left - hudRect.left, hudRect.width - 180))}px`
-      }
-      syncAria()
-    }
-    for (const [p, chip] of chipOf) chip.addEventListener('click', () => toggleOnly(p))
-    // A tap anywhere else dismisses whatever list is open.
-    document.addEventListener('pointerdown', (e) => {
-      const target = e.target as HTMLElement
-      if (target.closest('.time-picker, .hud-clock, .hud-atmo-btn')) return
-      for (const p of allPickers) p.classList.add('hidden')
-      syncAria()
-    })
-    timePicker.querySelectorAll('button').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        this.cb.onTimeSet(parseFloat((btn as HTMLElement).dataset.hour!))
-        timePicker.classList.add('hidden')
-        syncAria()
-      })
-    })
-    seasonPicker.querySelectorAll('button').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        this.cb.onSeasonSet((btn as HTMLElement).dataset.season as Season)
-        seasonPicker.classList.add('hidden')
-        syncAria()
-      })
-    })
-    weatherPicker.querySelectorAll('button').forEach((btn) => {
-      btn.addEventListener('click', () => {
-        this.cb.onWeatherSet((btn as HTMLElement).dataset.weather as Weather)
-        weatherPicker.classList.add('hidden')
-        syncAria()
-      })
-    })
+    this.atmoChip = this.hud.querySelector('.hud-clock')!
+    this.atmoGlyphEl = this.hud.querySelector('.hud-clock-atmo')!
+    this.atmoChip.addEventListener('click', () => this.toggleAtmo())
   }
 
-  /** Reflects the applied season/weather on the HUD chips and marks the active options. */
-  setAtmo(season: Season, weather: Weather) {
+  /**
+   * The atmosphere panel: hour, season and weather in ONE centered sheet
+   * instead of three look-alike dropdowns fighting over the top bar. That bar
+   * is 40px of screen on a phone — every chip it doesn't carry is a chip that
+   * isn't pushing the station pills onto a second row.
+   *
+   * Deliberately does NOT pause: the whole point of this panel is watching
+   * the sky answer, so the world keeps running behind a lighter-than-usual
+   * backdrop while it's open.
+   */
+  private buildAtmoOverlay(): HTMLDivElement {
+    const el = document.createElement('div')
+    el.className = 'overlay atmo-overlay hidden'
+    el.innerHTML = `
+      <div class="overlay-card atmo-card" role="dialog" aria-label="Atmósfera">
+        <h2>Atmósfera</h2>
+        <p class="atmo-hint">Se aplica al instante — el mundo sigue rodando detrás.</p>
+        <div class="atmo-sections">
+          <section class="atmo-section">
+            <h3>Hora del día</h3>
+            <div class="atmo-grid atmo-grid-time">
+              ${TIME_PRESETS.map((p) => `<button data-hour="${p.hour}">${p.label}</button>`).join('')}
+            </div>
+          </section>
+          <section class="atmo-section">
+            <h3>Estación del año</h3>
+            <div class="atmo-grid">
+              ${SEASONS.map((s) => `<button data-season="${s.id}"><span class="atmo-icon">${s.icon}</span>${s.label}</button>`).join('')}
+            </div>
+          </section>
+          <section class="atmo-section">
+            <h3>Clima</h3>
+            <div class="atmo-grid atmo-grid-weather">
+              ${WEATHERS.map((w) => `<button data-weather="${w.id}"><span class="atmo-icon">${w.icon}</span><span class="atmo-weather-label">${w.label}</span></button>`).join('')}
+            </div>
+            <p class="atmo-phase"></p>
+          </section>
+        </div>
+        <button class="btn-close">Listo</button>
+      </div>
+    `
+    el.querySelector('.btn-close')!.addEventListener('click', () => this.toggleAtmo(false))
+    // Tapping the dimmed area outside the card dismisses it.
+    el.addEventListener('click', (e) => {
+      if (e.target === el) this.toggleAtmo(false)
+    })
+    el.querySelectorAll<HTMLButtonElement>('[data-hour]').forEach((btn) => {
+      btn.addEventListener('click', () => this.cb.onTimeSet(parseFloat(btn.dataset.hour!)))
+    })
+    el.querySelectorAll<HTMLButtonElement>('[data-season]').forEach((btn) => {
+      btn.addEventListener('click', () => this.cb.onSeasonSet(btn.dataset.season as Season))
+    })
+    el.querySelectorAll<HTMLButtonElement>('[data-weather]').forEach((btn) => {
+      btn.addEventListener('click', () => this.cb.onWeatherSet(btn.dataset.weather as Weather))
+    })
+    return el
+  }
+
+  private toggleAtmo(force?: boolean) {
+    this.atmoOpen = force ?? !this.atmoOpen
+    this.atmoOverlay.classList.toggle('hidden', !this.atmoOpen)
+    this.atmoChip.setAttribute('aria-expanded', String(this.atmoOpen))
+  }
+
+  /** Reflects the applied season/weather on the HUD chip and marks the active options. */
+  setAtmo(season: Season, weather: Weather, hour: number) {
     const s = SEASONS.find((x) => x.id === season)!
-    const w = WEATHERS.find((x) => x.id === weather)!
-    ;(this.hud.querySelector('.hud-season-btn') as HTMLButtonElement).textContent = s.icon
-    ;(this.hud.querySelector('.hud-weather-btn') as HTMLButtonElement).textContent = w.icon
-    this.hud.querySelectorAll<HTMLButtonElement>('.season-picker button').forEach((b) => b.classList.toggle('active', b.dataset.season === season))
-    this.hud.querySelectorAll<HTMLButtonElement>('.weather-picker button').forEach((b) => b.classList.toggle('active', b.dataset.weather === weather))
+    const face = weatherFace(weather, season)
+    this.atmoGlyphEl.textContent = `${s.icon}${face.icon}`
+    this.atmoChip.setAttribute('aria-label', `Atmósfera: ${s.label}, ${face.label}`)
+    this.atmoOverlay.querySelectorAll<HTMLButtonElement>('[data-season]').forEach((b) => b.classList.toggle('active', b.dataset.season === season))
+    this.atmoOverlay.querySelectorAll<HTMLButtonElement>('[data-weather]').forEach((b) => b.classList.toggle('active', b.dataset.weather === weather))
+    this.updateAtmoPhase(season, weather, hour)
+  }
+
+  /**
+   * Keeps the weather names honest against the calendar (winter's "Lluvia"
+   * is Nieve, its "Tormenta" is Ventisca) and shows which PHASE the hour has
+   * the rain in right now — that's how the hour of the day earns its say in the
+   * weather without adding a single extra option to the menu.
+   * Called every frame, so it only touches the DOM when the text changes.
+   */
+  updateAtmoPhase(season: Season, weather: Weather, hour: number) {
+    const winter = season === 'winter'
+    if (winter !== this.lastAtmoWinter) {
+      this.lastAtmoWinter = winter
+      this.atmoOverlay.querySelectorAll<HTMLButtonElement>('[data-weather]').forEach((b) => {
+        const opt = WEATHERS.find((w) => w.id === b.dataset.weather)!
+        const face = weatherFace(opt.id, season)
+        b.querySelector('.atmo-icon')!.textContent = face.icon
+        b.querySelector('.atmo-weather-label')!.textContent = face.label
+      })
+    }
+    const phase = rainPhaseLabel(weather, season, hour)
+    if (phase !== this.lastPhaseText) {
+      this.lastPhaseText = phase
+      const el = this.atmoOverlay.querySelector('.atmo-phase') as HTMLElement
+      el.textContent = phase ? `Ahora mismo: ${phase.toLowerCase()}` : ''
+      el.classList.toggle('hidden', !phase)
+    }
   }
 
   /** Paints a station's dot with its stop result; the color persists for the rest of the loop. */
@@ -293,11 +331,18 @@ export class UI {
             <button data-scale="4">Rápido</button>
           </div>
         </div>
+        <button class="btn-atmo">Atmósfera — hora, estación y clima</button>
         <button class="btn-credits">Sobre el equipo</button>
         <button class="btn-close">Cerrar</button>
       </div>
     `
     el.querySelector('.btn-resume')!.addEventListener('click', () => this.toggleMenu())
+    // From the pause menu, the panel replaces the menu rather than stacking
+    // on it — and unpauses, since its whole job is showing the sky respond.
+    el.querySelector('.btn-atmo')!.addEventListener('click', () => {
+      this.toggleMenu()
+      this.toggleAtmo(true)
+    })
     el.querySelector('.btn-close')!.addEventListener('click', () => this.toggleMenu())
     el.querySelector('.btn-credits')!.addEventListener('click', () => this.showCredits())
     el.querySelectorAll('.time-scale-buttons button').forEach((btn) => {

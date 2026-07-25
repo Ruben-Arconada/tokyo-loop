@@ -20,6 +20,8 @@ interface Keyframe {
 }
 
 const C = (hex: number) => new THREE.Color(hex)
+/** Sheet-lightning white — very slightly blue, the way a discharge reads through cloud. */
+const FLASH_COLOR = new THREE.Color(0xdfe8ff)
 const SUN_DIR_SCRATCH = new THREE.Vector3()
 const MOON_DIR_SCRATCH = new THREE.Vector3()
 
@@ -133,6 +135,16 @@ export class DayNightCycle {
   overcastGoal = 0
   /** Current eased overcast amount — Scenery reads this to darken the clouds. */
   overcast = 0
+  /** Storms throw lightning on their own schedule while this is set. */
+  stormy = false
+  /** 0..1 sky flash for the current frame — sheet lightning, not a bolt sprite: the whole overcast lid lights up, which is what a storm looks like from inside a train. */
+  flash = 0
+  /** Fired at each strike with (secondsUntilThunder, strength) — sound travels, so a distant flash gets its clap seconds later. */
+  onLightning: ((delay: number, strength: number) => void) | null = null
+  private strikeTimer = 6
+  /** Second (and third) flicker of the same strike — real lightning almost never flashes once. */
+  private reflashIn = -1
+  private reflashAmount = 0
   readonly sunLight: THREE.DirectionalLight
   readonly moonLight: THREE.DirectionalLight
   readonly ambient: THREE.HemisphereLight
@@ -258,6 +270,35 @@ export class DayNightCycle {
     return Math.sin(((this.timeOfDay - 6) / 12) * Math.PI) * 90
   }
 
+  /**
+   * Lightning bookkeeping: decay the current flash, run the countdown to the
+   * next strike, and fire the thunder callback with the delay its distance
+   * implies. Strength doubles as distance — a weak flash is a far one, so it
+   * gets a late, long rumble; a strong one cracks almost immediately.
+   */
+  private updateLightning(dt: number) {
+    this.flash = Math.max(0, this.flash - dt * (5 + this.flash * 6))
+    if (this.reflashIn > 0) {
+      this.reflashIn -= dt
+      if (this.reflashIn <= 0) {
+        this.flash = Math.max(this.flash, this.reflashAmount)
+        this.reflashIn = -1
+      }
+    }
+    if (!this.stormy) {
+      this.strikeTimer = 4 + Math.random() * 6
+      return
+    }
+    this.strikeTimer -= dt
+    if (this.strikeTimer > 0) return
+    this.strikeTimer = 5 + Math.random() * 12
+    const strength = 0.3 + Math.random() * 0.7
+    this.flash = strength
+    this.reflashIn = 0.09 + Math.random() * 0.13
+    this.reflashAmount = strength * (0.45 + Math.random() * 0.4)
+    this.onLightning?.(0.4 + (1 - strength) * 6, strength)
+  }
+
   update(dt: number, focusPoint = new THREE.Vector3()) {
     if (!this.paused) {
       this.timeOfDay = (this.timeOfDay + (dt * 24) / REAL_SECONDS_PER_DAY) % 24
@@ -288,7 +329,24 @@ export class DayNightCycle {
       kf.fogFar *= 1 - 0.38 * o
     }
 
+    // Lightning rides on top of everything: the cloud lid itself becomes the
+    // light source for a few frames, so sky, fog and ambient all jump
+    // together (a directional flash would cast impossible hard shadows).
+    this.updateLightning(dt)
+    if (this.flash > 0.001) {
+      const f = Math.min(1, this.flash)
+      kf.skyTop.lerp(FLASH_COLOR, f * 0.5)
+      kf.skyMid.lerp(FLASH_COLOR, f * 0.62)
+      kf.skyBottom.lerp(FLASH_COLOR, f * 0.7)
+      kf.fogColor.lerp(FLASH_COLOR, f * 0.55)
+      kf.ambientIntensity += f * 1.5
+    }
+
     const elevationDeg = this.sunElevationDeg()
+    // A storm asks for MORE than a full lid (see overcastTarget), so the
+    // complement is clamped before anything multiplies by it — a negative
+    // opacity paints stars back in.
+    const clearAmount = Math.max(0, 1 - o)
     const azimuthDeg = 100 + this.timeOfDay * 2
     const elevRad = THREE.MathUtils.degToRad(elevationDeg)
     const azRad = THREE.MathUtils.degToRad(azimuthDeg)
@@ -337,16 +395,16 @@ export class DayNightCycle {
     this.sunSprite.position.copy(focusPoint).addScaledVector(sunDir, 1900)
     this.sunSprite.visible = elevationDeg > -8
     const sunMat = this.sunSprite.material as THREE.SpriteMaterial
-    sunMat.opacity = THREE.MathUtils.clamp((elevationDeg + 8) / 14, 0, 1) * (1 - o)
+    sunMat.opacity = THREE.MathUtils.clamp((elevationDeg + 8) / 14, 0, 1) * clearAmount
 
     this.moonSprite.position.copy(focusPoint).addScaledVector(moonDir, 1900)
     this.moonSprite.visible = elevationDeg < 8
     const moonMat = this.moonSprite.material as THREE.SpriteMaterial
-    moonMat.opacity = THREE.MathUtils.clamp((-elevationDeg + 8) / 14, 0, 1) * 0.9 * (1 - o)
+    moonMat.opacity = THREE.MathUtils.clamp((-elevationDeg + 8) / 14, 0, 1) * 0.9 * clearAmount
 
     // A closed sky hides the stars long before it hides the city glow.
-    this.starsMaterial.opacity = this.nightFactor * 0.75 * (1 - o)
-    this.starsBrightMaterial.opacity = this.nightFactor * 0.95 * (1 - o)
+    this.starsMaterial.opacity = this.nightFactor * 0.75 * clearAmount
+    this.starsBrightMaterial.opacity = this.nightFactor * 0.95 * clearAmount
     this.stars.position.copy(focusPoint)
     this.starsBright.position.copy(focusPoint)
     // Sky dome follows the cab so its gradient (and margins against distant

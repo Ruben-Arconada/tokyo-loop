@@ -5,7 +5,7 @@ import { Train, notchLabel, MIN_NOTCH, MAX_NOTCH, OPEN_INSTANT_SECONDS, OPEN_QUI
 import { City, crowdDensityForHour } from './City'
 import { Passengers } from './Passengers'
 import { Precipitation } from './Precipitation'
-import { registerPool, applySeasonToPool, overcastTarget, type Season, type Weather, type SeasonalPool } from './Seasons'
+import { registerPool, applySeasonToPool, overcastTarget, precipProfile, type Season, type Weather, type SeasonalPool } from './Seasons'
 import { Scenery } from './Scenery'
 import { DayNightCycle } from './DayNightCycle'
 import { audio } from '../audio/AudioEngine'
@@ -63,6 +63,9 @@ export class Game {
   private precipitation: Precipitation
   private season: Season = (localStorage.getItem(SEASON_KEY) as Season) || 'spring'
   private weather: Weather = (localStorage.getItem(WEATHER_KEY) as Weather) || 'clear'
+  /** Last rain/wind levels actually pushed to the audio engine — the per-frame profile only reaches it when they have moved. */
+  private lastRainAudioLevel = -1
+  private lastWindAudioLevel = -1
   /** Ground + embankment vertex-color pools, retinted per season alongside the vegetation. */
   private terrainPools: SeasonalPool[] = []
   private ballastMat!: THREE.MeshStandardMaterial
@@ -172,6 +175,9 @@ export class Game {
     })
 
     this.precipitation = new Precipitation(this.scene)
+    // Sound follows light: the flash is drawn the frame it happens, the clap
+    // arrives however many seconds later its distance says.
+    this.dayNight.onLightning = (delay, strength) => audio.thunder(strength, delay)
     this.applyAtmosphere()
 
     window.addEventListener('resize', () => this.onResize())
@@ -266,13 +272,40 @@ export class Game {
     this.ballastMat.color.setScalar(winter ? 1.65 : 1)
     this.wearMat.opacity = winter ? 0.25 : 1
     this.dayNight.overcastGoal = overcastTarget(this.weather)
-    const falling = this.weather === 'rain'
-    this.precipitation.set(falling, winter)
+    // Thundersnow is a freak event, not a Tokyo January: a winter storm is a
+    // ventisca — all wind and snow, no lightning.
+    this.dayNight.stormy = this.weather === 'storm' && !winter
+    // Precipitation itself is driven per frame from applyPrecipitation(),
+    // because its strength also depends on the hour, which never stops moving.
+    this.applyPrecipitation()
     audio.setSeason(this.season)
-    // Snowfall is nearly SILENT — just a low breath of wind from the wash
-    // layer; rain gets the full two-layer bed.
-    audio.setRain(falling ? (winter ? 0.12 : 0.85) : 0)
-    this.ui.setAtmo(this.season, this.weather)
+    this.ui.setAtmo(this.season, this.weather, this.dayNight.timeOfDay)
+  }
+
+  /**
+   * Pushes the current weather+season+hour into the precipitation curtain and
+   * the rain bed. Called every frame: the hour is a continuous input (rain
+   * builds through the afternoon and eases overnight — see rainPhase01), so
+   * this can't be a one-off on the weather change. Writing the profile costs
+   * a few uniform-bound numbers into a shared scratch object; the audio side
+   * only gets poked when the level has actually moved, since each call
+   * schedules Web Audio ramps.
+   */
+  private applyPrecipitation() {
+    const p = precipProfile(this.weather, this.season, this.dayNight.timeOfDay)
+    this.precipitation.set(p)
+    // Rain sounds louder from a train that's running: the same drops arrive
+    // at the glass with the train's speed behind them. The visual half of
+    // that idea is the streak rake in Precipitation.
+    const level = p.audioLevel * (1 + 0.4 * this.train.speed01)
+    if (Math.abs(level - this.lastRainAudioLevel) > 0.03 || (level === 0) !== (this.lastRainAudioLevel === 0)) {
+      this.lastRainAudioLevel = level
+      audio.setRain(level)
+    }
+    if (Math.abs(p.windAudio - this.lastWindAudioLevel) > 0.03 || (p.windAudio === 0) !== (this.lastWindAudioLevel === 0)) {
+      this.lastWindAudioLevel = p.windAudio
+      audio.setWind(p.windAudio)
+    }
   }
 
   /** One control for both door moves — the train decides which (if any) applies right now. */
@@ -926,6 +959,7 @@ export class Game {
       this.lastCrossingPhase = this.scenery.crossingBlinkPhase
       if (this.scenery.crossingBellActive) audio.crossingTick(0.7)
     }
+    this.applyPrecipitation()
     this.precipitation.update(dt, this.camera.position, this.dayNight.nightFactor)
     this.updateHeadlight()
     // Positional platform murmur: nearest station (ahead or just passed)
@@ -952,6 +986,7 @@ export class Game {
     this.updateCameraFromTrain()
     this.updateLever()
     this.ui.updateClock(this.dayNight.timeOfDay, this.dayNight.phaseLabel)
+    this.ui.updateAtmoPhase(this.season, this.weather, this.dayNight.timeOfDay)
     // Progress along the current segment for the HUD's reference bar.
     const currentT = this.track.markerFor(this.train.currentStationIndex).tFraction
     const targetT = this.track.markerFor(this.train.targetStationIndex).tFraction

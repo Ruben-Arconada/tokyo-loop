@@ -164,66 +164,14 @@ canvas.game-canvas {
 }
 .hud-clock:active { transform: scale(0.97); }
 
-.time-picker {
-  position: absolute;
-  top: calc(var(--safe-top) + 78px);
-  left: calc(var(--safe-left) + 60px);
-  display: flex;
-  flex-direction: column;
-  gap: var(--space-1);
-  background: rgba(10, 12, 20, 0.9);
-  border: var(--chip-border);
-  border-radius: var(--radius-lg);
-  padding: var(--space-2);
-  backdrop-filter: blur(14px);
-  box-shadow: var(--chip-shadow);
-  z-index: 25;
-  pointer-events: auto;
-}
-.time-picker.hidden { display: none; }
-/* Each dropdown announces WHICH selector it is — three look-alike lists
-   opening off the same bar read as one muddled control without it. */
-.picker-title {
-  font-size: var(--text-micro);
-  letter-spacing: 0.08em;
-  text-transform: uppercase;
-  color: var(--text-muted);
-  padding: 2px var(--space-2) 0;
-}
-/* Season / weather chips: compact squares in the clock's family. */
-.hud-atmo-btn {
-  pointer-events: auto;
-  background: var(--chip-bg);
-  border: var(--chip-border);
-  box-shadow: var(--chip-shadow);
-  backdrop-filter: var(--chip-blur);
-  color: var(--text-primary);
-  width: 40px;
-  height: 40px;
-  border-radius: var(--radius-md);
-  font-size: 17px;
-  line-height: 1;
-  display: flex;
-  align-items: center;
-  justify-content: center;
-  transition: transform 0.1s ease, opacity 0.1s ease;
-}
-.hud-atmo-btn:active { transform: scale(0.95); }
-/* Fallback anchors; UI.ts re-anchors each picker under its chip on open. */
-.season-picker { left: calc(var(--safe-left) + 152px); }
-.weather-picker { left: calc(var(--safe-left) + 200px); }
-.time-picker button.active { background: rgba(255, 206, 74, 0.25); }
-.time-picker button {
-  background: rgba(255, 255, 255, 0.08);
-  border: none;
-  border-radius: var(--radius-md);
-  color: var(--text-primary);
-  font-size: var(--text-body);
-  padding: var(--space-2) var(--space-4);
-  text-align: left;
-  cursor: pointer;
-}
-.time-picker button:active { background: rgba(255, 255, 255, 0.2); }
+/* The clock chip is the ONE door to hour + season + weather: it reads the
+   current state (07:30 · 🌸🌧️) and opens the atmosphere panel. Three
+   separate chips with three dropdowns used to live here and cost the top bar
+   ~90px — which is exactly what pushed the station pills onto a second row. */
+/* Rides on the clock's own line: a third line would grow the chip past the
+   route diagram sitting 58px down. */
+.hud-clock-row { display: flex; align-items: center; gap: 5px; }
+.hud-clock-atmo { font-size: 12px; line-height: 1; }
 .hud-clock-time { font-family: ui-monospace, 'SF Mono', 'Roboto Mono', monospace; font-size: var(--text-value); font-weight: 700; letter-spacing: 0.01em; color: var(--text-primary); }
 .hud-clock-phase { font-size: var(--text-micro); letter-spacing: 0.04em; color: var(--text-muted); }
 
@@ -687,6 +635,94 @@ canvas.game-canvas {
 .team-list li { padding: var(--space-3) 0; border-bottom: 1px solid rgba(255, 255, 255, 0.1); font-size: var(--text-body); }
 .team-list li span { color: var(--text-secondary); }
 
+/* ---------- Atmosphere panel ---------- */
+/* Lighter backdrop than the other overlays on purpose: this sheet is a
+   viewfinder, not a modal — you pick a weather and watch it arrive behind. */
+.atmo-overlay { background: rgba(3, 4, 10, 0.5); }
+.atmo-card { text-align: left; background: rgba(16, 18, 28, 0.94); }
+.atmo-card h2 { text-align: center; }
+.atmo-hint {
+  text-align: center;
+  font-size: var(--text-label);
+  color: var(--text-muted);
+  margin: 0 0 var(--space-5);
+}
+.atmo-section { margin-bottom: var(--space-5); }
+.atmo-section h3 {
+  margin: 0 0 var(--space-2);
+  font-size: var(--text-micro);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  font-weight: 600;
+}
+/* Every option visible at once — the whole reason for the panel. Auto-fit
+   keeps 2 columns on a narrow phone and 3–4 on anything wider without a
+   second breakpoint. */
+.atmo-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(96px, 1fr));
+  gap: var(--space-2);
+}
+.atmo-grid button {
+  display: flex;
+  align-items: center;
+  gap: var(--space-2);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid transparent;
+  border-radius: var(--radius-md);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-label);
+  padding: var(--space-2) var(--space-3);
+  min-height: 42px; /* thumb-sized: this is a touch target, not a menu row */
+  text-align: left;
+  cursor: pointer;
+  transition: background 0.12s ease, border-color 0.12s ease, transform 0.1s ease;
+}
+.atmo-grid button:active { transform: scale(0.97); }
+.atmo-grid button.active {
+  background: rgba(255, 206, 74, 0.22);
+  border-color: rgba(255, 206, 74, 0.65);
+  font-weight: 600;
+}
+.atmo-icon { font-size: 16px; line-height: 1; }
+/* Time presets carry their emoji inline in the label, so they only need the
+   one column rule; weather/season rows get the icon span. */
+.atmo-grid-time button { gap: var(--space-1); }
+.atmo-phase {
+  margin: var(--space-3) 0 0;
+  font-size: var(--text-label);
+  color: var(--color-accent);
+  letter-spacing: 0.02em;
+}
+.atmo-phase.hidden { display: none; }
+/* Landscape phones have ~370px of height: stacking three sections there
+   buries the weather below the fold, which defeats the point of a panel
+   that shows every option at once. Side by side, it all fits again. */
+@media (max-height: 560px) {
+  .atmo-card { max-width: 760px; padding: var(--space-4) var(--space-5); }
+  .atmo-card h2 { margin-bottom: var(--space-1); }
+  .atmo-hint { margin-bottom: var(--space-3); }
+  .atmo-sections { display: grid; grid-template-columns: repeat(3, 1fr); gap: var(--space-4); align-items: start; }
+  .atmo-section { margin-bottom: 0; }
+  .atmo-grid { grid-template-columns: repeat(auto-fit, minmax(84px, 1fr)); }
+  .atmo-grid button { min-height: 38px; padding: var(--space-1) var(--space-2); }
+}
+
+.btn-atmo {
+  width: 100%;
+  margin-top: var(--space-4);
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-body);
+  cursor: pointer;
+}
+
 /* ---------- Responsive tweaks ---------- */
 @media (max-width: 480px) {
   .hud-station-now, .hud-station-next { min-width: 76px; padding: var(--space-1) var(--space-2); }
@@ -698,17 +734,16 @@ canvas.game-canvas {
 }
 
 @media (orientation: portrait) and (max-width: 700px) {
-  /* Narrow portrait: controls row (menu/clock/chips) and station pills live
-     on SEPARATE rows. flex:1 + min-width:0 let the pills' content overflow
-     straight over the chips instead of wrapping — min-width:100% forces the
-     wrap for real, and the line diagram steps down to make room. */
-  .hud-top { flex-wrap: wrap; row-gap: var(--space-1); }
-  .hud-atmo-btn { width: 34px; height: 34px; font-size: 14px; }
+  /* Narrow portrait: menu + clock + both station pills now fit on ONE row —
+     folding the season and weather chips into the clock is what bought the
+     ~90px that used to force the pills onto a second line (and pushed the
+     route diagram down with them). The pills shrink (min-width:0 + ellipsis)
+     instead of wrapping, so the row holds down to ~320px. */
+  .hud-top { gap: var(--space-2); }
   .hud-clock { min-width: 0; padding: var(--space-1) var(--space-2); }
-  .hud-stations { gap: var(--space-1); min-width: 100%; order: 2; }
+  .hud-stations { gap: var(--space-1); }
   .hud-station-now, .hud-station-next { min-width: 0; padding: var(--space-1) 7px; }
   .hud-station-now small, .hud-station-next small { display: none; }
   .hud-station-now-name, .hud-station-next-name { font-size: 11px; max-width: 22vw; }
-  .line-diagram { top: calc(var(--safe-top) + 104px); }
-  .time-picker { top: calc(var(--safe-top) + 52px); }
+  .atmo-card { padding: var(--space-5) var(--space-4); }
 }
