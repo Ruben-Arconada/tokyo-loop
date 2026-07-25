@@ -112,12 +112,32 @@ export class AudioEngine {
   private rainPatterGain: GainNode | null = null
   /** Kept so the patter can be re-voiced per frame — speed opens it up, doors open it further. */
   private rainPatterFilter: BiquadFilterNode | null = null
+  private rainWashFilter: BiquadFilterNode | null = null
+  /** The actual looping sources — created when the layer wakes, STOPPED once it has faded out (see sleepLayer). */
+  private rainSources: AudioBufferSourceNode[] = []
+  private rainStopHandle: number | null = null
   private rainLevel = 0
   private windGain: GainNode | null = null
   private windFilter: BiquadFilterNode | null = null
+  private windSource: AudioBufferSourceNode | null = null
+  private windStopHandle: number | null = null
   private windLevel = 0
+  /** Sea wash for the Kamakura coast stretch — same sleep discipline as the rain. */
+  private shoreGain: GainNode | null = null
+  private shoreFilter: BiquadFilterNode | null = null
+  private shoreSource: AudioBufferSourceNode | null = null
+  private shoreStopHandle: number | null = null
+  private shoreLevel = 0
+  /** All small nature voices route through this bus + lowpass, so rain can genuinely muffle them (not just duck). */
+  private natureBus: GainNode | null = null
+  private natureLP: BiquadFilterNode | null = null
   /** Season shapes the insect chorus — set from the game, defaults to spring. */
   private season: 'spring' | 'summer' | 'autumn' | 'winter' = 'spring'
+  /** 0 = open air, 1 = inside the tunnel: more reverb, louder reflections, weather gone. */
+  private tunnelFactor = 0
+  /** Master mute: silences the Web Audio graph AND the speech announcements, then suspends the context to save battery. */
+  private muted = false
+  private muteSuspendHandle: number | null = null
 
   get ready() {
     return this.ctx !== null
@@ -148,12 +168,28 @@ export class AudioEngine {
     this.dryGain.gain.value = 1
     this.dryGain.connect(this.master)
 
+    // Nature voices (birds, cicadas, crickets) live behind a shared lowpass:
+    // rain rolls the cutoff down so the chorus goes MUFFLED and distant, the
+    // way small sounds actually behave under a downpour — the old gain-only
+    // duck kept them crisp, just quieter.
+    this.natureLP = this.ctx.createBiquadFilter()
+    this.natureLP.type = 'lowpass'
+    this.natureLP.frequency.value = 16000
+    this.natureBus = this.ctx.createGain()
+    this.natureBus.connect(this.natureLP)
+    this.natureLP.connect(this.dryGain)
+
     this.convolver = this.ctx.createConvolver()
     this.convolver.buffer = this.buildImpulseResponse()
     this.wetSend = this.ctx.createGain()
     this.wetSend.gain.value = 0.22
     this.wetSend.connect(this.convolver)
     this.convolver.connect(this.master)
+    // A touch of the nature chorus reaches the reverb too (birdsong used to).
+    const natureWet = this.ctx.createGain()
+    natureWet.gain.value = 0.4
+    this.natureLP!.connect(natureWet)
+    natureWet.connect(this.wetSend)
 
     this.noiseBuffer = this.buildNoiseBuffer()
     this.startAmbientBed()
@@ -162,18 +198,56 @@ export class AudioEngine {
     // rain bed has a level waiting for its nodes.
     if (this.rainLevel > 0) this.setRain(this.rainLevel)
     if (this.windLevel > 0) this.setWind(this.windLevel)
+    if (this.shoreLevel > 0) this.setShore(this.shoreLevel)
     this.loadVoices()
 
     this.resumeContext()
     this.kickSilentBuffer()
     this.primeSpeechSynthesis()
     this.installAutoResume()
+    if (this.muted) this.applyMute(true)
   }
 
   /** Resumes the AudioContext if the platform left it (or put it back) in a suspended state. */
   private resumeContext() {
+    if (this.muted) return // a muted engine stays suspended on purpose
     if (this.ctx && this.ctx.state !== 'running') {
       this.ctx.resume().catch(() => {})
+    }
+  }
+
+  get isMuted(): boolean {
+    return this.muted
+  }
+
+  /**
+   * The HUD mute switch. More than a gain of zero: speech synthesis renders
+   * OUTSIDE the Web Audio graph (a master at 0 would not silence the PA), and
+   * a muted context might as well stop burning battery — so announcements are
+   * dropped at the door and the context is suspended once the fade lands.
+   */
+  setMuted(muted: boolean) {
+    this.muted = muted
+    if (this.ctx) this.applyMute(muted)
+  }
+
+  private applyMute(muted: boolean) {
+    const ctx = this.ctx!
+    if (this.muteSuspendHandle !== null) {
+      window.clearTimeout(this.muteSuspendHandle)
+      this.muteSuspendHandle = null
+    }
+    if (muted) {
+      this.stopMelodyLoop()
+      this.announceQueue.length = 0
+      this.abortCurrentAnnouncement()
+      this.master!.gain.setTargetAtTime(0, ctx.currentTime, 0.06)
+      this.muteSuspendHandle = window.setTimeout(() => {
+        if (this.muted) ctx.suspend().catch(() => {})
+      }, 350)
+    } else {
+      ctx.resume().catch(() => {})
+      this.master!.gain.setTargetAtTime(0.85, ctx.currentTime, 0.08)
     }
   }
 
@@ -315,22 +389,27 @@ export class AudioEngine {
    * how much boarding bustle to play (doors-open amount).
    */
   updateAmbient(speed01: number, brakeAmount: number, hour = 12, crowd = 0, stationMurmur = 0, stationPan = 0) {
-    if (!this.ctx) return
+    // Muted = suspended context: currentTime is frozen, so every
+    // setTargetAtTime would pile un-pruned automation events for the whole
+    // silence (Diego's round-1 catch) — the opposite of the battery win.
+    if (!this.ctx || this.muted) return
     const t = this.ctx.currentTime
     const dt = Math.min(Math.max(t - this.lastAmbientAt, 0), 0.1)
     this.lastAmbientAt = t
     const eased = Math.pow(speed01, 0.6)
     const ducked = t < this.duckUntil
     const duckMul = ducked ? 0.5 : 1
+    // The lining throws the train's own sound straight back at the cab.
+    const tunnelBoost = 1 + 0.55 * this.tunnelFactor
 
     // Softer motor: lower ceiling than before, and the sub follows an octave down.
     this.motorOsc?.frequency.setTargetAtTime(55 + eased * 190, t, 0.08)
     this.motorSubOsc?.frequency.setTargetAtTime((55 + eased * 190) / 2, t, 0.08)
     this.motorFilter?.frequency.setTargetAtTime(130 + eased * 640, t, 0.08)
-    this.motorGain?.gain.setTargetAtTime(speed01 > 0.01 ? (0.045 + eased * 0.095) * duckMul : 0, t, 0.15)
+    this.motorGain?.gain.setTargetAtTime(speed01 > 0.01 ? (0.045 + eased * 0.095) * duckMul * tunnelBoost : 0, t, 0.15)
 
     this.noiseFilter?.frequency.setTargetAtTime(300 + eased * 2200, t, 0.1)
-    this.noiseGain?.gain.setTargetAtTime(speed01 > 0.01 ? (0.02 + eased * 0.055) * duckMul : 0, t, 0.15)
+    this.noiseGain?.gain.setTargetAtTime(speed01 > 0.01 ? (0.02 + eased * 0.055) * duckMul * tunnelBoost : 0, t, 0.15)
 
     if (brakeAmount > 0.55 && speed01 > 0.03 && speed01 < 0.5) {
       this.noiseFilter?.frequency.setTargetAtTime(1800 + brakeAmount * 1500, t, 0.05)
@@ -382,6 +461,16 @@ export class AudioEngine {
       // The gust whistles as it rises, and the cab's own slipstream adds to it.
       this.windFilter?.frequency.setTargetAtTime(380 + gust * 520 + speed01 * 340, t, 0.6)
     }
+    if (this.shoreLevel > 0 && this.shoreGain) {
+      // Waves breathe far slower than rain — the ~13-second swell of surf.
+      // Ducked under rain (three noise beds stacked in 300-850 Hz read as
+      // one mud otherwise), and the filter opens toward ~1.2 kHz on the
+      // crest so the foam gets its "shhh" instead of reading as traffic.
+      const swell = 0.55 + 0.45 * (0.5 + 0.5 * Math.sin(t * 0.48) * Math.sin(t * 0.31 + 1.2))
+      const rainDuck = 1 - 0.6 * Math.min(1, this.rainLevel)
+      this.shoreGain.gain.setTargetAtTime(this.shoreLevel * 0.055 * swell * open * duck * rainDuck, t, 0.9)
+      this.shoreFilter?.frequency.setTargetAtTime(340 + swell * 860, t, 0.8)
+    }
   }
 
   /**
@@ -420,10 +509,15 @@ export class AudioEngine {
 
   /**
    * Rain bed: a broadband wash (lowpassed noise) plus a bright patter band —
-   * both looping the shared noise buffer, faded by level. Level 0 costs
-   * nothing beyond two silent gain nodes once created. The MIX between the
+   * both looping the shared noise buffer, faded by level. The MIX between the
    * two layers is not set here: updateWeatherBed() re-voices it every frame
    * from the train's speed and doors (see the note there).
+   *
+   * SLEEP DISCIPLINE (the panel's ask): the filter/gain chain is persistent,
+   * but the looping SOURCES are stopped a few seconds after the level hits 0
+   * and recreated on demand — a clear afternoon no longer drags two silent
+   * buffer loops through the whole session. The start() cost only ever lands
+   * on a weather change, never on the per-station hot path.
    */
   setRain(level01: number) {
     this.rainLevel = level01
@@ -431,23 +525,16 @@ export class AudioEngine {
     const ctx = this.ctx
     const t = ctx.currentTime
     if (!this.rainWashGain) {
-      const wash = ctx.createBufferSource()
-      wash.buffer = this.noiseBuffer
-      wash.loop = true
+      // Persistent half of the chain, built once.
       const lp = ctx.createBiquadFilter()
       lp.type = 'lowpass'
       lp.frequency.value = 850
+      this.rainWashFilter = lp
       this.rainWashGain = ctx.createGain()
       this.rainWashGain.gain.value = 0
-      wash.connect(lp)
       lp.connect(this.rainWashGain)
       this.rainWashGain.connect(this.master)
-      wash.start()
 
-      const patter = ctx.createBufferSource()
-      patter.buffer = this.noiseBuffer
-      patter.loop = true
-      patter.playbackRate.value = 1.31 // detune vs the wash so the two layers never phase-lock
       const bp = ctx.createBiquadFilter()
       bp.type = 'bandpass'
       bp.frequency.value = 3600
@@ -455,14 +542,46 @@ export class AudioEngine {
       this.rainPatterFilter = bp
       this.rainPatterGain = ctx.createGain()
       this.rainPatterGain.gain.value = 0
-      patter.connect(bp)
       bp.connect(this.rainPatterGain)
       this.rainPatterGain.connect(this.master)
-      patter.start()
+    }
+    if (level01 > 0) {
+      if (this.rainStopHandle !== null) {
+        window.clearTimeout(this.rainStopHandle)
+        this.rainStopHandle = null
+      }
+      if (this.rainSources.length === 0) {
+        const wash = ctx.createBufferSource()
+        wash.buffer = this.noiseBuffer
+        wash.loop = true
+        wash.connect(this.rainWashFilter!)
+        wash.start()
+        const patter = ctx.createBufferSource()
+        patter.buffer = this.noiseBuffer
+        patter.loop = true
+        patter.playbackRate.value = 1.31 // detune vs the wash so the two layers never phase-lock
+        patter.connect(this.rainPatterFilter!)
+        patter.start()
+        this.rainSources.push(wash, patter)
+      }
+    } else if (this.rainSources.length > 0 && this.rainStopHandle === null) {
+      // Let the 1.2 s fade land first, then genuinely stop the loops.
+      this.rainStopHandle = window.setTimeout(() => {
+        this.rainStopHandle = null
+        if (this.rainLevel > 0) return // weather turned again while fading
+        for (const src of this.rainSources) {
+          try { src.stop() } catch { /* already stopped */ }
+          src.disconnect()
+        }
+        this.rainSources.length = 0
+      }, 3000)
     }
     // Slow fades: weather rolls in, it doesn't switch.
     this.rainWashGain.gain.setTargetAtTime(level01 * 0.05, t, 1.2)
     this.rainPatterGain!.gain.setTargetAtTime(level01 * 0.016, t, 1.2)
+    // The nature chorus goes muffled under rain: the shared lowpass closes
+    // from wide open down toward 2.4 kHz as the rain gets serious.
+    this.natureLP?.frequency.setTargetAtTime(16000 - 13600 * Math.min(1, level01 * 1.3), t, 0.8)
   }
 
   /**
@@ -470,28 +589,152 @@ export class AudioEngine {
    * voice a ventisca has and a nevada doesn't — snow itself is silent, so
    * without wind a blizzard sounds exactly like a clear winter afternoon.
    * Level is stored here; the gusting happens per frame in updateWeatherBed.
+   * Sleeps like the rain: the source stops once the level has faded to 0.
    */
   setWind(level01: number) {
     this.windLevel = level01
     if (!this.ctx || !this.master) return
+    const ctx = this.ctx
     if (!this.windGain) {
-      const ctx = this.ctx
-      const src = ctx.createBufferSource()
-      src.buffer = this.noiseBuffer
-      src.loop = true
-      src.playbackRate.value = 0.62 // slower than the rain layers: wind is a bigger, lazier noise
       this.windFilter = ctx.createBiquadFilter()
       this.windFilter.type = 'bandpass'
       this.windFilter.frequency.value = 480
       this.windFilter.Q.value = 0.5
       this.windGain = ctx.createGain()
       this.windGain.gain.value = 0
-      src.connect(this.windFilter)
       this.windFilter.connect(this.windGain)
       this.windGain.connect(this.master)
-      src.start()
     }
-    if (level01 === 0) this.windGain.gain.setTargetAtTime(0, this.ctx.currentTime, 1.4)
+    if (level01 > 0) {
+      if (this.windStopHandle !== null) {
+        window.clearTimeout(this.windStopHandle)
+        this.windStopHandle = null
+      }
+      if (!this.windSource) {
+        const src = ctx.createBufferSource()
+        src.buffer = this.noiseBuffer
+        src.loop = true
+        src.playbackRate.value = 0.62 // slower than the rain layers: wind is a bigger, lazier noise
+        src.connect(this.windFilter!)
+        src.start()
+        this.windSource = src
+      }
+    } else {
+      this.windGain.gain.setTargetAtTime(0, ctx.currentTime, 1.4)
+      if (this.windSource && this.windStopHandle === null) {
+        this.windStopHandle = window.setTimeout(() => {
+          this.windStopHandle = null
+          if (this.windLevel > 0 || !this.windSource) return
+          try { this.windSource.stop() } catch { /* already stopped */ }
+          this.windSource.disconnect()
+          this.windSource = null
+        }, 3600)
+      }
+    }
+  }
+
+  /**
+   * The sea, for the Kamakura coast stretch: a deep, slow wash that only
+   * exists while the train is near the water (and mostly when it is slow
+   * enough to hear anything past its own motor). Same sleep rules as the
+   * rain — inland, this layer is not merely silent, it is OFF.
+   */
+  setShore(level01: number) {
+    this.shoreLevel = level01
+    if (!this.ctx || !this.master) return
+    const ctx = this.ctx
+    if (!this.shoreGain) {
+      this.shoreFilter = ctx.createBiquadFilter()
+      this.shoreFilter.type = 'lowpass'
+      this.shoreFilter.frequency.value = 420
+      this.shoreGain = ctx.createGain()
+      this.shoreGain.gain.value = 0
+      this.shoreFilter.connect(this.shoreGain)
+      this.shoreGain.connect(this.master)
+    }
+    if (level01 > 0) {
+      if (this.shoreStopHandle !== null) {
+        window.clearTimeout(this.shoreStopHandle)
+        this.shoreStopHandle = null
+      }
+      if (!this.shoreSource) {
+        const src = ctx.createBufferSource()
+        src.buffer = this.noiseBuffer
+        src.loop = true
+        src.playbackRate.value = 0.48 // the sea is the biggest, laziest noise of all
+        src.connect(this.shoreFilter!)
+        src.start()
+        this.shoreSource = src
+      }
+    } else {
+      this.shoreGain.gain.setTargetAtTime(0, ctx.currentTime, 1.6)
+      if (this.shoreSource && this.shoreStopHandle === null) {
+        this.shoreStopHandle = window.setTimeout(() => {
+          this.shoreStopHandle = null
+          if (this.shoreLevel > 0 || !this.shoreSource) return
+          try { this.shoreSource.stop() } catch { /* already stopped */ }
+          this.shoreSource.disconnect()
+          this.shoreSource = null
+        }, 4200)
+      }
+    }
+  }
+
+  /**
+   * Inside the tunnel the world changes shape: every sound the train makes
+   * comes straight back off the lining (more reverb, louder motor bed), and
+   * the sky's voices are simply gone — the caller already zeroes rain/wind,
+   * this handles what the tunnel ADDS.
+   */
+  setTunnel(f01: number) {
+    this.tunnelFactor = f01
+    if (!this.ctx || !this.wetSend) return
+    this.wetSend.gain.setTargetAtTime(0.22 + 0.36 * f01, this.ctx.currentTime, 0.4)
+  }
+
+  /**
+   * The pressure event of crossing a portal at speed: a 300 ms swell of
+   * lowpassed noise with a soft thump under it. Same one-shot pattern as
+   * railClack (which starts a fresh source every second of cruising), so it
+   * adds nothing new to the iOS start() hot-path story — and it turns the
+   * tunnel from a crossfade into an EVENT (Aiko, round 1).
+   */
+  tunnelWhoosh(entering: boolean, speed01: number) {
+    if (!this.ctx || !this.master || !this.noiseBuffer || this.muted) return
+    const ctx = this.ctx
+    const t = ctx.currentTime + 0.01
+    const vol = (0.05 + 0.1 * speed01) * (entering ? 1 : 0.8)
+    const src = ctx.createBufferSource()
+    src.buffer = this.noiseBuffer
+    src.playbackRate.value = 0.7
+    const lp = ctx.createBiquadFilter()
+    lp.type = 'lowpass'
+    // Entering: the world closes in (filter slams shut). Leaving: it opens.
+    lp.frequency.setValueAtTime(entering ? 1600 : 500, t)
+    lp.frequency.exponentialRampToValueAtTime(entering ? 500 : 1600, t + 0.3)
+    const g = ctx.createGain()
+    g.gain.setValueAtTime(0.0001, t)
+    g.gain.exponentialRampToValueAtTime(vol, t + 0.09)
+    g.gain.exponentialRampToValueAtTime(0.0001, t + 0.34)
+    src.connect(lp)
+    lp.connect(g)
+    g.connect(this.master)
+    g.connect(this.wetSend!)
+    src.start(t)
+    src.stop(t + 0.4)
+    // The thump: the cab's own body flexing through the pressure step.
+    const osc = ctx.createOscillator()
+    osc.type = 'sine'
+    osc.frequency.setValueAtTime(64, t)
+    osc.frequency.exponentialRampToValueAtTime(38, t + 0.16)
+    const og = ctx.createGain()
+    og.gain.setValueAtTime(0.0001, t)
+    og.gain.exponentialRampToValueAtTime(vol * 0.8, t + 0.02)
+    og.gain.exponentialRampToValueAtTime(0.0001, t + 0.2)
+    osc.connect(og)
+    og.connect(this.master)
+    osc.start(t)
+    osc.stop(t + 0.24)
   }
 
   /**
@@ -501,14 +744,17 @@ export class AudioEngine {
    * a long tail, a near one leads with a bright crack.
    */
   thunder(strength: number, delay: number) {
-    if (!this.ctx || !this.master || !this.noiseBuffer) return
+    if (!this.ctx || !this.master || !this.noiseBuffer || this.muted) return
     const ctx = this.ctx
     const at = ctx.currentTime + Math.max(0, delay)
     const near = Math.min(1, Math.max(0, strength))
     const body = 2.2 + (1 - near) * 3.4 // far thunder rolls for much longer
     // Loud relative to the rain bed (0.05) on purpose — thunder is the one
-    // sound in the game that's allowed to be bigger than the train.
-    const vol = 0.07 + near * 0.15
+    // sound in the game that's allowed to be bigger than the train. UNDER
+    // the city, though, the storm is a rumor: the lining eats the clap
+    // (Diego's round-1 catch — full-volume thunder into a 0.58 wet send
+    // inside a tunnel where every other weather voice is at zero).
+    const vol = (0.07 + near * 0.15) * (1 - 0.85 * this.tunnelFactor)
 
     // Rumble: noise dragged through a lowpass that closes as it decays, so
     // the tail gets darker the way real thunder does rolling off the city.
@@ -536,8 +782,9 @@ export class AudioEngine {
     rumble.start(at)
     rumble.stop(at + body + 0.2)
 
-    // The crack, only for strikes close enough to have one.
-    if (near > 0.45) {
+    // The crack, only for strikes close enough to have one — and never
+    // underground, where only the rumble makes it through.
+    if (near > 0.45 && this.tunnelFactor < 0.5) {
       const crack = ctx.createBufferSource()
       crack.buffer = this.noiseBuffer
       crack.playbackRate.value = 1.4
@@ -603,7 +850,7 @@ export class AudioEngine {
   private updateTimeAmbience(t: number, hour: number, speed01: number, duckMul: number) {
     if (t < this.ambNextAt) return
     const still = 1 - Math.min(1, speed01 * 0.85)
-    const vol = still * duckMul
+    const vol = still * duckMul * (1 - 0.9 * this.tunnelFactor)
     if (vol < 0.15) {
       this.ambNextAt = t + 1.2
       return
@@ -658,8 +905,7 @@ export class AudioEngine {
       g.gain.linearRampToValueAtTime(vol, start + 0.012)
       g.gain.exponentialRampToValueAtTime(0.0001, start + 0.1)
       osc.connect(g)
-      g.connect(this.dryGain!)
-      g.connect(this.wetSend!)
+      g.connect(this.natureBus!)
       osc.start(start)
       osc.stop(start + 0.12)
       start += 0.1 + Math.random() * 0.12
@@ -690,7 +936,7 @@ export class AudioEngine {
     lfoGain.connect(g.gain)
     src.connect(filter)
     filter.connect(g)
-    g.connect(this.dryGain!)
+    g.connect(this.natureBus!)
     src.start(when)
     src.stop(when + dur + 0.6)
     lfo.start(when)
@@ -711,8 +957,7 @@ export class AudioEngine {
       g.gain.linearRampToValueAtTime(vol, start + 0.04)
       g.gain.exponentialRampToValueAtTime(0.0001, start + 0.38)
       osc.connect(g)
-      g.connect(this.dryGain!)
-      g.connect(this.wetSend!)
+      g.connect(this.natureBus!)
       osc.start(start)
       osc.stop(start + 0.42)
       start += 0.42
@@ -732,7 +977,7 @@ export class AudioEngine {
       g.gain.linearRampToValueAtTime(vol, start + 0.008)
       g.gain.exponentialRampToValueAtTime(0.0001, start + 0.045)
       osc.connect(g)
-      g.connect(this.dryGain!)
+      g.connect(this.natureBus!)
       osc.start(start)
       osc.stop(start + 0.06)
       start += 0.07
@@ -763,7 +1008,7 @@ export class AudioEngine {
       g.gain.setValueAtTime(vol, start + 0.08)
       g.gain.exponentialRampToValueAtTime(0.0001, start + 0.14)
       osc.connect(g)
-      g.connect(this.dryGain!)
+      g.connect(this.natureBus!)
       osc.start(start)
       osc.stop(start + 0.16)
       lfo.start(start)
@@ -774,7 +1019,7 @@ export class AudioEngine {
 
   /** Pneumatic hiss + clunk of the doors; `open` alters the envelope slightly. */
   playDoorCycle(open: boolean) {
-    if (!this.ctx) return
+    if (!this.ctx || this.muted) return
     const ctx = this.ctx
     const t = ctx.currentTime + 0.02
     const hiss = ctx.createBufferSource()
@@ -869,7 +1114,7 @@ export class AudioEngine {
   }
 
   playMelody(notes: PlayableNote[], timbre: Timbre = 'bell', volume = 0.5): number {
-    if (!this.ctx || !this.master) return 0
+    if (!this.ctx || !this.master || this.muted) return 0
     let t = this.ctx.currentTime + 0.02
     for (const note of notes) {
       if (note.freq) this.pluck(note.freq, t, note.duration, timbre, volume)
@@ -1024,7 +1269,7 @@ export class AudioEngine {
    * asynchronous — never blocks the game loop or player input.
    */
   announce(segments: AnnounceSegment[], opts: AnnounceOptions = {}) {
-    if (!this.ctx || !('speechSynthesis' in window) || !segments.length) return
+    if (!this.ctx || !('speechSynthesis' in window) || !segments.length || this.muted) return
     const item: QueuedAnnouncement = { segments, fanfare: !!opts.fanfare, kind: opts.kind ?? 'general', valid: opts.valid }
     if (this.announcing) {
       // A newer announcement of the same kind makes the playing one stale, so
@@ -1215,7 +1460,7 @@ export class AudioEngine {
    * so light and bell stay in lockstep.
    */
   crossingTick(volume: number) {
-    if (!this.ctx || volume <= 0.01) return
+    if (!this.ctx || volume <= 0.01 || this.muted) return
     const ctx = this.ctx
     const t = ctx.currentTime
     const osc = ctx.createOscillator()

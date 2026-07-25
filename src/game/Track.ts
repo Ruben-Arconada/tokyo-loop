@@ -18,6 +18,7 @@ export class Track {
   readonly stationMarkers: StationMarker[]
   private readonly length: number
   private readonly hillCenter: number
+  private readonly trenchCenter: number
 
   constructor() {
     this.curve = buildLoopCurve()
@@ -25,6 +26,7 @@ export class Track {
     this.length = this.curve.getLength()
     this.stationMarkers = buildStationMarkers()
     this.hillCenter = hillCenterFraction()
+    this.trenchCenter = trenchCenterFraction()
   }
 
   getLength(): number {
@@ -36,11 +38,12 @@ export class Track {
   // the flat approaches (undershoot dips of ~0.6 units just before and after
   // the climb) and the flat ground plane at -0.5 swallowed the sleepers
   // there. The analytic profile is exactly zero outside its window, so the
-  // approaches cannot dip by construction.
+  // approaches cannot dip by construction. The Shibuya trench is the same
+  // profile with its sign flipped — the hill machinery working in negative.
   pointAt(tFraction: number, target = new THREE.Vector3()): THREE.Vector3 {
     const t = THREE.MathUtils.euclideanModulo(tFraction, 1)
     this.curve.getPointAt(t, target)
-    target.y += hillHeight(t, this.hillCenter)
+    target.y += hillHeight(t, this.hillCenter) - trenchDepth(t, this.trenchCenter)
     return target
   }
 
@@ -49,7 +52,7 @@ export class Track {
     this.curve.getTangentAt(t, target)
     // The flat spline's tangent has y=0; the grade is the analytic profile's
     // slope converted from per-loop-fraction to per-arc-unit.
-    target.y = hillGrade(t, this.hillCenter) / this.length
+    target.y = (hillGrade(t, this.hillCenter) - trenchGrade(t, this.trenchCenter)) / this.length
     return target.normalize()
   }
 
@@ -64,8 +67,29 @@ export class Track {
    */
   gradeYAt(tFraction: number): number {
     const t = THREE.MathUtils.euclideanModulo(tFraction, 1)
-    const g = hillGrade(t, this.hillCenter) / this.length
+    const g = (hillGrade(t, this.hillCenter) - trenchGrade(t, this.trenchCenter)) / this.length
     return g / Math.sqrt(1 + g * g)
+  }
+
+  /** How deep the track sits below grade at `t` (0 outside the trench window). */
+  trenchDepthAt(tFraction: number): number {
+    const t = THREE.MathUtils.euclideanModulo(tFraction, 1)
+    return trenchDepth(t, this.trenchCenter)
+  }
+
+  /**
+   * 0 = open air, 1 = fully inside the covered tunnel. Derived from depth so
+   * the lighting/audio crossfade tracks the portal exactly where the lining
+   * geometry starts (see TUNNEL_COVER_DEPTH).
+   */
+  tunnelAmountAt(tFraction: number): number {
+    const d = this.trenchDepthAt(tFraction)
+    return THREE.MathUtils.clamp((d - TUNNEL_COVER_DEPTH) / 2.2, 0, 1)
+  }
+
+  /** Loop fraction of the trench's deepest point — the tunnel builders sample around this. */
+  get trenchCenterFraction(): number {
+    return this.trenchCenter
   }
 }
 
@@ -101,7 +125,10 @@ export class CatenaryCurve extends THREE.Curve<THREE.Vector3> {
   }
   getPoint(t: number, target = new THREE.Vector3()): THREE.Vector3 {
     const p = this.track.pointAt(t)
-    const sag = Math.sin(((t * this.poleCount) % 1) * Math.PI) * this.sagAmp
+    // Inside the tunnel the wire becomes rigid overhead conductor rail
+    // (剛体架線) — Japanese urban rail boxes never hang a sagging catenary.
+    const rigid = Math.min(1, this.track.trenchDepthAt(t))
+    const sag = Math.sin(((t * this.poleCount) % 1) * Math.PI) * this.sagAmp * (1 - rigid)
     return target.set(p.x, p.y + this.height - sag, p.z)
   }
 }
@@ -144,6 +171,48 @@ export const EMBANKMENT = {
 /** The flat city ground plane's height. */
 export const BASE_GROUND_Y = -0.5
 
+// ── The Shibuya trench and tunnel ───────────────────────────────────────────
+// The dense-city counterpart of the Komagome hill: on the long Shibuya→Ebisu
+// stretch the line dives into a cutting and runs under the city for a few
+// hundred units. Same analytic raised-cosine as the hill, sign flipped, so
+// the approaches cannot ring below (above) grade by construction and the
+// arcade grade physics work unchanged.
+export const TUNNEL_FROM_STATION_ID = 'shibuya'
+export const TRENCH_DEPTH = 20 // world units below grade at the deepest point
+export const TRENCH_HALF_WIDTH = 0.0175 // loop fraction on each side of the center
+/**
+ * Depth at which the covered tunnel begins. Chosen just under the ground
+ * plane's own level so the track is never visibly "under" the plane in the
+ * open: the lining box takes over the moment the rails dip below grade, and
+ * near the portals it emerges above ground as a concrete hood — which is
+ * what a real urban portal looks like.
+ */
+export const TUNNEL_COVER_DEPTH = 0.3
+
+/** Where the tunnel lining must exist: depth at which the box starts/ends, as a |t - center| fraction. */
+export function trenchPortalOffset(): number {
+  // Solve D/2·(1+cos(π·d/H)) = COVER_DEPTH for d.
+  const c = (2 * TUNNEL_COVER_DEPTH) / TRENCH_DEPTH - 1
+  return (Math.acos(c) / Math.PI) * TRENCH_HALF_WIDTH
+}
+
+// ── Terrain 2.0: rolling relief on the far plain ────────────────────────────
+// Gentle positional noise that lifts the distant fields out of billiard-table
+// flatness. Amplitude is ZERO anywhere near the rail corridor (inside 150
+// units) so nothing that stands beside the track — houses, platforms, roads,
+// scenery — ever needs to care, and ramps up to full over the next ~330.
+// Long wavelengths only: the ground plane samples this on a ~145-unit grid,
+// so anything shorter would alias into jagged noise.
+export function terrainRelief(x: number, z: number, dist: number): number {
+  const a = THREE.MathUtils.clamp((Math.abs(dist) - 150) / 330, 0, 1)
+  if (a <= 0) return 0
+  const n =
+    Math.sin(x * 0.00105 + z * 0.00074) +
+    0.6 * Math.sin(x * 0.00058 - z * 0.00091 + 1.7) +
+    0.35 * Math.sin((x + z) * 0.00171 + 0.4)
+  return a * n * 7.2
+}
+
 /**
  * Raw embankment surface at lateral distance `dist` from a track point of
  * height `trackY`. Dips below the ground plane at the skirt on purpose, so the
@@ -172,6 +241,30 @@ function hillCenterFraction(): number {
   let cum = 0
   for (let i = 0; i < Math.max(0, idx); i++) cum += STATIONS[i].distanceToNextKm
   return cum / TOTAL_LOOP_KM
+}
+
+/** Trench midpoint: halfway along the tunnel stretch (its origin station → the next). */
+function trenchCenterFraction(): number {
+  const idx = STATIONS.findIndex((s) => s.id === TUNNEL_FROM_STATION_ID)
+  let cum = 0
+  for (let i = 0; i < Math.max(0, idx); i++) cum += STATIONS[i].distanceToNextKm
+  return (cum + STATIONS[Math.max(0, idx)].distanceToNextKm * 0.5) / TOTAL_LOOP_KM
+}
+
+/** Raised-cosine trench depth (positive = below grade) at a loop fraction. */
+function trenchDepth(fraction: number, center: number): number {
+  const d = Math.abs(wrappedDelta(fraction, center))
+  if (d >= TRENCH_HALF_WIDTH) return 0
+  return TRENCH_DEPTH * 0.5 * (1 + Math.cos((Math.PI * d) / TRENCH_HALF_WIDTH))
+}
+
+/** d(trenchDepth)/d(fraction) — mirrors hillGrade with the sign convention of a dip. */
+function trenchGrade(fraction: number, center: number): number {
+  const d = wrappedDelta(fraction, center)
+  const a = Math.abs(d)
+  if (a >= TRENCH_HALF_WIDTH) return 0
+  const slopeOnA = -TRENCH_DEPTH * 0.5 * (Math.PI / TRENCH_HALF_WIDTH) * Math.sin((Math.PI * a) / TRENCH_HALF_WIDTH)
+  return d < 0 ? -slopeOnA : slopeOnA
 }
 
 // ── The mountain road ────────────────────────────────────────────────────────

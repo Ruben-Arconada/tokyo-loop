@@ -1,7 +1,8 @@
 import * as THREE from 'three'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
-import { Track, TrackOffsetCurve, CatenaryCurve, HILL_PEAK, EMBANKMENT, embankmentSurface } from './Track'
-import { Train, notchLabel, MIN_NOTCH, MAX_NOTCH, MAX_SPEED_KMH, SPEED_SCALE, OPEN_INSTANT_SECONDS, OPEN_QUICK_SECONDS, CLOSE_WINDOW_SECONDS, CLOSE_HURRY_SECONDS, type DoorActionInfo } from './Train'
+import { Track, TrackOffsetCurve, CatenaryCurve, HILL_PEAK, EMBANKMENT, embankmentSurface, terrainRelief } from './Track'
+import { Train, notchLabel, MIN_NOTCH, MAX_NOTCH, MAX_SPEED_KMH, SPEED_SCALE, OPEN_INSTANT_SECONDS, OPEN_QUICK_SECONDS, CLOSE_WINDOW_SECONDS, CLOSE_HURRY_SECONDS, RAIL_ADVISORY_KMH, type DoorActionInfo, type RailCondition } from './Train'
+import { WindshieldFX } from './WindshieldFX'
 import { City } from './City'
 import { Passengers } from './Passengers'
 import { Precipitation } from './Precipitation'
@@ -68,6 +69,33 @@ const LATE_PENALTY_CAP = 90
 const BEST_SCORE_KEY = 'yamanote-best-score'
 const SEASON_KEY = 'yamanote-season'
 const WEATHER_KEY = 'yamanote-weather'
+const WEATHER_AUTO_KEY = 'yamanote-weather-auto'
+const MUTE_KEY = 'yamanote-muted'
+const ATMO_SEEN_KEY = 'yamanote-atmo-seen'
+const RAIL_TIP_KEY = 'yamanote-tip-rail'
+
+// ————————————————————————————————————————————————————————————————
+// H3: the sky with a life of its own. In AUTO mode weather fronts arrive and
+// pass on their own schedule — a Markov walk over the four states, with
+// dwell times long enough that a front feels like an EVENT and short enough
+// that an 8-minute game day usually sees one. Picking any specific weather
+// in the panel takes manual control back; the AUTO chip hands it over again.
+// ————————————————————————————————————————————————————————————————
+const FRONT_CHAIN: Record<Weather, [Weather, number][]> = {
+  clear: [['cloudy', 0.8], ['clear', 0.2]],
+  cloudy: [['rain', 0.45], ['clear', 0.4], ['storm', 0.15]],
+  rain: [['cloudy', 0.5], ['storm', 0.3], ['rain', 0.2]],
+  storm: [['rain', 0.6], ['cloudy', 0.4]],
+}
+const FRONT_DWELL: Record<Weather, [number, number]> = {
+  clear: [80, 200],
+  cloudy: [60, 150],
+  rain: [70, 150],
+  storm: [45, 95],
+}
+/** The Kamakura coast arc of the loop (see Scenery.buildCoast) — where the sea is audible. */
+const BAY_T0 = 0.775
+const BAY_T1 = 0.955
 /** Arcade scoring per stop grade; perfects chain into a streak bonus. */
 const GRADE_POINTS: Record<string, number> = { perfect: 100, good: 60, ok: 30 }
 const STREAK_BONUS = 25
@@ -104,6 +132,8 @@ const BOARDING_BASE_SECONDS = 5.5
 const BOARDING_CROWD_SECONDS = 5.5
 /** A skipped station can sting, but it must never wipe a good run. */
 const SKIP_PENALTY_CAP = 120
+/** What the air inside the tunnel looks like — warm-dark, sodium-tinged. */
+const TUNNEL_FOG = new THREE.Color(0x16120d)
 
 export class Game {
   private renderer: THREE.WebGLRenderer
@@ -116,6 +146,7 @@ export class Game {
   private scenery: Scenery
   private dayNight: DayNightCycle
   private precipitation: Precipitation
+  private windshield!: WindshieldFX
   private consist!: TrainConsist
   private cabRig!: THREE.Group
   /**
@@ -129,6 +160,23 @@ export class Game {
   /** Last rain/wind levels actually pushed to the audio engine — the per-frame profile only reaches it when they have moved. */
   private lastRainAudioLevel = -1
   private lastWindAudioLevel = -1
+  private lastShoreAudioLevel = -1
+  private lastTunnelAudioF = -1
+  /** 0 = open air, 1 = inside the Shibuya tunnel — recomputed each frame from the cab's position. */
+  private tunnelF = 0
+  private wasInTunnel = false
+  /** What the windshield overlay needs from the last precipitation profile. */
+  private wsIntensity = 0
+  private wsSnow = false
+  /** H3 auto weather: on by default for a sky with a life of its own. */
+  private weatherAuto = localStorage.getItem(WEATHER_AUTO_KEY) !== '0'
+  private frontTimer = 50 + Math.random() * 60
+  /** Atmosphere-panel discovery: pulse + one hint until the player opens it once. */
+  private atmoSeen = localStorage.getItem(ATMO_SEEN_KEY) === '1'
+  private atmoTipTimer = 0
+  private atmoTipShown = false
+  private railTipShown = localStorage.getItem(RAIL_TIP_KEY) === '1'
+  private muted = localStorage.getItem(MUTE_KEY) === '1'
   /** Which station the perf log has already been told about — one mark per change, not per frame. */
   private lastMarkedStation = -1
   /** DayNightCycle's own starting hour, so the line starts already populated for it. */
@@ -187,7 +235,14 @@ export class Game {
   private bestScore = Number(localStorage.getItem(BEST_SCORE_KEY) ?? 0)
 
   constructor(mount: HTMLElement) {
-    this.renderer = new THREE.WebGLRenderer({ antialias: true, powerPreference: 'high-performance' })
+    this.renderer = new THREE.WebGLRenderer({
+      antialias: true,
+      powerPreference: 'high-performance',
+      // Screenshot harness only (?capture): keeps the drawing buffer
+      // readable for canvas.drawImage-based captures. Costs memory/perf, so
+      // never on by default — nobody plays with this flag.
+      preserveDrawingBuffer: new URLSearchParams(window.location.search).has('capture'),
+    })
     this.renderer.setPixelRatio(Math.min(window.devicePixelRatio, 2))
     // Mobile GPUs dither blended gradients by default (GL_DITHER is on unless
     // someone turns it off), which speckled the soft cloud sprites into visible
@@ -328,20 +383,42 @@ export class Game {
         this.pushPerfState()
       },
       onWeatherSet: (w) => {
-        this.weather = w
-        localStorage.setItem(WEATHER_KEY, w)
-        this.applyAtmosphere()
+        // Picking a specific weather takes the sky back from the director.
+        this.setWeatherAuto(false)
+        this.applyWeather(w)
         if (!this.running) this.renderOnce()
+      },
+      onWeatherAutoSet: () => {
+        this.setWeatherAuto(true)
+        // Something should visibly happen soon after handing over the sky.
+        this.frontTimer = 6 + Math.random() * 14
+      },
+      onMuteToggle: (m) => {
+        this.muted = m
+        localStorage.setItem(MUTE_KEY, m ? '1' : '0')
+        audio.setMuted(m)
+      },
+      onAtmoOpened: () => {
+        this.atmoSeen = true
+        localStorage.setItem(ATMO_SEEN_KEY, '1')
       },
     })
 
     this.precipitation = new Precipitation(this.scene)
+    this.windshield = new WindshieldFX(mount)
     // Sound follows light: the flash is drawn the frame it happens, the clap
     // arrives however many seconds later its distance says.
     this.dayNight.onLightning = (delay, strength) => audio.thunder(strength, delay)
+    audio.setMuted(this.muted)
+    this.ui.setMuted(this.muted)
+    this.ui.setWeatherAuto(this.weatherAuto)
+    this.ui.setAtmoPulse(!this.atmoSeen)
     this.applyAtmosphere()
 
     window.addEventListener('resize', () => this.onResize())
+    // iOS can move the VISUAL viewport (toolbar collapse, PWA chrome)
+    // without firing a window resize — track it explicitly (RC gate item).
+    window.visualViewport?.addEventListener('resize', () => this.onResize())
     window.addEventListener('keydown', (e) => {
       if (e.code === 'KeyP') this.togglePerfRecording()
       if (e.code === 'KeyD') this.handleDoorButton()
@@ -412,6 +489,11 @@ export class Game {
   private start() {
     this.schedule.reset(this.train.targetStationIndex)
     audio.unlock()
+    // Bake the rainy-day sprite sheet while nothing is happening: the front
+    // director can start rain mid-drive, and a canvas bake + texture upload
+    // on that frame would be a hitch with PerfLog pointing at nothing.
+    const idle = (window as any).requestIdleCallback ?? ((fn: () => void) => window.setTimeout(fn, 2500))
+    idle(() => this.passengers.prebakeWet())
     this.started = true
     this.clock.start()
     this.setRunning(true)
@@ -466,14 +548,93 @@ export class Game {
     this.ballastMat.color.setScalar(winter ? 1.65 : 1)
     this.wearMat.opacity = winter ? 0.25 : 1
     this.dayNight.overcastGoal = overcastTarget(this.weather)
+    // Snow bounces the light back up: an overcast winter noon stays BRIGHT
+    // (H1's "invierno apagado bajo nublado" fix lives in DayNightCycle).
+    this.dayNight.snowAlbedo = winter ? 1 : 0
     // Thundersnow is a freak event, not a Tokyo January: a winter storm is a
     // ventisca — all wind and snow, no lightning.
     this.dayNight.stormy = this.weather === 'storm' && !winter
     // Precipitation itself is driven per frame from applyPrecipitation(),
     // because its strength also depends on the hour, which never stops moving.
     this.applyPrecipitation()
+    this.applyRailCondition()
     audio.setSeason(this.season)
     this.ui.setAtmo(this.season, this.weather, this.dayNight.timeOfDay)
+  }
+
+  /**
+   * Weather-only change (the panel's weather buttons and the H3 front
+   * director): everything applyAtmosphere does EXCEPT the seasonal recolor
+   * passes, which a weather change doesn't need — the director changes the
+   * sky every couple of minutes and repainting 500 houses for that would be
+   * a self-inflicted hitch.
+   */
+  private applyWeather(w: Weather) {
+    this.weather = w
+    localStorage.setItem(WEATHER_KEY, w)
+    this.scenery.setWeather(w)
+    this.dayNight.overcastGoal = overcastTarget(w)
+    this.dayNight.stormy = w === 'storm' && this.season !== 'winter'
+    this.applyPrecipitation()
+    this.applyRailCondition()
+    this.ui.setAtmo(this.season, w, this.dayNight.timeOfDay)
+  }
+
+  private setWeatherAuto(auto: boolean) {
+    this.weatherAuto = auto
+    localStorage.setItem(WEATHER_AUTO_KEY, auto ? '1' : '0')
+    this.ui.setWeatherAuto(auto)
+  }
+
+  /** One step of the H3 front director: walk the chain, dwell, tell the player what's rolling in. */
+  private advanceFront() {
+    const options = FRONT_CHAIN[this.weather]
+    let roll = Math.random()
+    let next: Weather = this.weather
+    for (const [w, p] of options) {
+      roll -= p
+      if (roll <= 0) {
+        next = w
+        break
+      }
+    }
+    const [dMin, dMax] = FRONT_DWELL[next]
+    this.frontTimer = dMin + Math.random() * (dMax - dMin)
+    if (next === this.weather) return
+    const wasFalling = this.weather === 'rain' || this.weather === 'storm'
+    const winter = this.season === 'winter'
+    this.applyWeather(next)
+    // Narrate only the moments that change the driving: precipitation
+    // starting or stopping. Cloud cover comes and goes without commentary.
+    if (!wasFalling && (next === 'rain' || next === 'storm')) {
+      this.ui.showWeatherToast(winter ? 'Empieza a nevar ❄️' : next === 'storm' ? 'Un frente de tormenta encima ⛈️' : 'Empieza a llover 🌧️')
+    } else if (wasFalling && next !== 'rain' && next !== 'storm') {
+      this.ui.showWeatherToast(winter ? 'Deja de nevar' : 'Escampa ☂️')
+    }
+  }
+
+  /** Seconds of reduced adhesion left after the rain stops — a railhead doesn't dry the instant the sky closes. */
+  private wetLingerSeconds = 0
+
+  /** What the railhead is like right now — and everything that reacts when it changes. */
+  private applyRailCondition() {
+    const falling = this.weather === 'rain' || this.weather === 'storm'
+    if (falling) this.wetLingerSeconds = 75
+    const slick = falling || this.wetLingerSeconds > 0
+    const cond: RailCondition = !slick ? 'dry' : this.season === 'winter' ? 'snow' : 'wet'
+    if (cond === this.train.railCondition) return
+    this.train.railCondition = cond
+    this.ui.setRailCondition(cond, RAIL_ADVISORY_KMH[cond])
+    if (cond !== 'dry' && !this.railTipShown && this.started) {
+      this.railTipShown = true
+      localStorage.setItem(RAIL_TIP_KEY, '1')
+      this.ui.showHint(
+        'Adherencia reducida',
+        cond === 'wet'
+          ? 'Con el carril mojado los frenos altos patinan: B4–B7 rinden igual (poco). Empieza a frenar antes — desde la baliza de 250 m, mejor por debajo de 65 km/h.'
+          : 'Nieve en el carril: B3 en adelante rinden igual (poco). Frena mucho antes — desde la baliza de 250 m, mejor por debajo de 55 km/h.',
+      )
+    }
   }
 
   /**
@@ -487,7 +648,25 @@ export class Game {
    */
   private applyPrecipitation() {
     const p = precipProfile(this.weather, this.season, this.dayNight.timeOfDay)
+    // Inside the tunnel there is no sky: the curtain thins to nothing and
+    // the rain bed goes with it (the profile is a scratch object — mutating
+    // it here is exactly what it is for).
+    if (this.tunnelF > 0.001) {
+      p.density *= 1 - this.tunnelF
+      // Floor, not zero, while it IS raining outside: the storm keeps
+      // resonating faintly down the trench, and — the real reason — the
+      // rain sources never sleep+restart across a 20-second tunnel transit
+      // (BufferSource.start() at the exit portal is exactly the iOS
+      // hot-path call the chime freeze taught us to avoid).
+      p.audioLevel = Math.max(p.audioLevel * (1 - this.tunnelF), p.falling && !p.snow ? 0.02 : 0)
+      p.windAudio *= 1 - 0.85 * this.tunnelF
+    }
     this.precipitation.set(p)
+    // Wet-day wardrobe: commuters carry (furled) umbrellas while anything falls.
+    this.passengers.setWet(p.falling)
+    // The windshield overlay reads the same profile the curtain does.
+    this.wsIntensity = p.falling ? p.density : 0
+    this.wsSnow = p.snow
     // Rain sounds louder from a train that's running: the same drops arrive
     // at the glass with the train's speed behind them. The visual half of
     // that idea is the streak rake in Precipitation.
@@ -833,13 +1012,26 @@ export class Game {
       const wx = gPos.getX(i)
       const wz = -gPos.getY(i)
       let d2min = Infinity
-      for (const tp of trackPts) {
-        const dx = tp.x - wx
-        const dz = tp.z - wz
+      let nearIdx = 0
+      for (let k = 0; k < trackPts.length; k++) {
+        const dx = trackPts[k].x - wx
+        const dz = trackPts[k].z - wz
         const d2 = dx * dx + dz * dz
-        if (d2 < d2min) d2min = d2
+        if (d2 < d2min) {
+          d2min = d2
+          nearIdx = k
+        }
       }
       const dist = Math.sqrt(d2min)
+      // Terrain 2.0: the far plain rolls. Amplitude is zero near the rail
+      // corridor by construction (see terrainRelief) and masked to zero on
+      // the seaward side of the bay arc, where the water needs a dead-flat
+      // bed to sit on. Local +z becomes world +y after the -90° rotation.
+      const nearT = nearIdx / trackPts.length
+      const tp = trackPts[nearIdx]
+      const seaward = wx * wx + wz * wz > tp.x * tp.x + tp.z * tp.z
+      const inBaySea = seaward && nearT > 0.76 && nearT < 0.96
+      gPos.setZ(i, inBaySea ? 0 : terrainRelief(wx, wz, dist))
       // Neutral until past the embankment's reach, then out into the fields.
       const far = THREE.MathUtils.clamp((dist - 160) / 320, 0, 1)
       // Low-frequency patchwork so the far ground varies instead of tiling:
@@ -854,6 +1046,7 @@ export class Game {
       gColors[i * 3 + 2] = vCol.b
     }
     groundGeo.setAttribute('color', new THREE.BufferAttribute(gColors, 3))
+    groundGeo.computeVertexNormals() // the displaced hills need real normals to shade
     this.terrainPools.push(registerPool('terrain', groundGeo.getAttribute('color') as THREE.BufferAttribute))
     const ground = new THREE.Mesh(
       groundGeo,
@@ -883,6 +1076,13 @@ export class Game {
     const crownEarth = new THREE.Color(0xc9b48f)
     const plainCol = new THREE.Color(0xffffff)
     const grassCol = new THREE.Color(0x93c46b)
+    // Inside the trench the ground is ballast and slab, not meadow — and it
+    // must NOT join the seasonal repaint (snow doesn't fall inside a covered
+    // tunnel). The trench rings get this fixed tone and are excluded from
+    // the pool registration below (Yui, round 1).
+    const trenchFloor = new THREE.Color(0x8b8d90)
+    let trenchRingFirst = -1
+    let trenchRingLast = -1
     const embCol = new THREE.Color()
     // Same texel density as the ground plane (14000 wide at repeat 56 = one
     // tile per 250 units), so the ribbon's detail matches the terrain it sits
@@ -895,12 +1095,18 @@ export class Game {
       const tangent = this.track.tangentAt(t)
       const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize()
       const climb = THREE.MathUtils.clamp(p.y / HILL_PEAK, 0, 1)
+      const inTrench = this.track.trenchDepthAt(t) > 0.4
+      if (inTrench) {
+        if (trenchRingFirst < 0) trenchRingFirst = i
+        trenchRingLast = i
+      }
       for (let k = 0; k < 4; k++) {
         const crown = k === 1 || k === 2
         const y = embankmentSurface(p.y, embLateral[k])
         const pos = p.clone().addScaledVector(normal, embLateral[k])
         embPositions.push(pos.x, y, pos.z)
-        if (crown) embCol.copy(crownEarth).lerp(grassCol, climb)
+        if (inTrench) embCol.copy(trenchFloor)
+        else if (crown) embCol.copy(crownEarth).lerp(grassCol, climb)
         else embCol.copy(plainCol).lerp(grassCol, climb * 0.6)
         embColors.push(embCol.r, embCol.g, embCol.b)
         embUvs.push(embLateral[k] / EMB_TILE, (t * embTrackLen) / EMB_TILE)
@@ -925,7 +1131,15 @@ export class Game {
     embGeo.setAttribute('uv', new THREE.Float32BufferAttribute(embUvs, 2))
     embGeo.setIndex(embIndices)
     embGeo.computeVertexNormals()
-    this.terrainPools.push(registerPool('terrain', embGeo.getAttribute('color') as THREE.BufferAttribute))
+    // Two pools bracketing the trench window, so the seasons never repaint
+    // the tunnel floor (winter frost INSIDE a covered box read as a bug).
+    const embAttr = embGeo.getAttribute('color') as THREE.BufferAttribute
+    if (trenchRingFirst >= 0) {
+      this.terrainPools.push(registerPool('terrain', embAttr, 0, trenchRingFirst * 4))
+      this.terrainPools.push(registerPool('terrain', embAttr, (trenchRingLast + 1) * 4))
+    } else {
+      this.terrainPools.push(registerPool('terrain', embAttr))
+    }
     const embTex = makeGroundTexture()
     embTex.wrapS = embTex.wrapT = THREE.RepeatWrapping
     const embMat = new THREE.MeshStandardMaterial({
@@ -1008,14 +1222,17 @@ export class Game {
       const tangent = this.track.tangentAt(t)
       const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize()
       const base = p.clone().addScaledVector(normal, poleOffset)
+      // Inside the tunnel the wire hangs from the lining, not from poles —
+      // bury the instances that would otherwise stab through the ceiling.
+      const buried = this.track.trenchDepthAt(t) > 1 ? -500 : 0
 
-      dummy.position.set(base.x, base.y + (poleHeight - 0.58) / 2, base.z)
+      dummy.position.set(base.x, base.y + (poleHeight - 0.58) / 2 + buried, base.z)
       dummy.rotation.set(0, 0, 0)
       dummy.updateMatrix()
       poles.setMatrixAt(i, dummy.matrix)
 
       const armCenter = base.clone().addScaledVector(normal, -armLength / 2)
-      dummy.position.set(armCenter.x, base.y + poleHeight, armCenter.z)
+      dummy.position.set(armCenter.x, base.y + poleHeight + buried, armCenter.z)
       const inward = normal.clone().multiplyScalar(-1)
       dummy.quaternion.setFromUnitVectors(new THREE.Vector3(1, 0, 0), inward)
       dummy.updateMatrix()
@@ -1053,8 +1270,25 @@ export class Game {
 
     // Tinted windshield, set behind the dashboard hardware so it reads as
     // glass between the driver and the world rather than a filter on top.
-    const windshieldMat = new THREE.MeshBasicMaterial({ color: 0x9fc4ff, transparent: true, opacity: 0.045, depthWrite: false })
-    const windshield = new THREE.Mesh(new THREE.PlaneGeometry(5, 3.6), windshieldMat)
+    // The tint FADES OUT toward the plane's edges: a constant-alpha quad
+    // drew a hard vertical exposure line across the view whenever the head
+    // turned toward a side window (Yui caught it crossing the coast).
+    const tintAlpha = (() => {
+      const cnv = document.createElement('canvas')
+      cnv.width = 64
+      cnv.height = 8
+      const cctx = cnv.getContext('2d')!
+      const grad = cctx.createLinearGradient(0, 0, 64, 0)
+      grad.addColorStop(0, '#000')
+      grad.addColorStop(0.28, '#fff')
+      grad.addColorStop(0.72, '#fff')
+      grad.addColorStop(1, '#000')
+      cctx.fillStyle = grad
+      cctx.fillRect(0, 0, 64, 8)
+      return new THREE.CanvasTexture(cnv)
+    })()
+    const windshieldMat = new THREE.MeshBasicMaterial({ color: 0x9fc4ff, transparent: true, opacity: 0.045, alphaMap: tintAlpha, depthWrite: false })
+    const windshield = new THREE.Mesh(new THREE.PlaneGeometry(6.4, 3.6), windshieldMat)
     windshield.position.set(0, 0.05, -1.05)
     cab.add(windshield)
 
@@ -1156,11 +1390,13 @@ export class Game {
 
   private updateHeadlight() {
     const night = this.dayNight.nightFactor
+    // The tunnel counts as night for every lamp the train owns.
+    const dark = Math.max(night, this.tunnelF)
     // Cab light breathes with the dark: ember by day, warm pool at night.
-    this.cabLight.intensity = 0.25 + night * 1.3
+    this.cabLight.intensity = 0.25 + night * 1.3 + this.tunnelF * 0.9
     // Fully off (and skipped by the renderer) in daylight — an intensity-0
     // spot still costs per-fragment work in every standard material.
-    this.headlight.visible = night > 0.01
+    this.headlight.visible = dark > 0.01
     if (!this.headlight.visible) return
     const t = this.train.progressFraction
     this.track.pointAt(t, this.headlightPos)
@@ -1169,7 +1405,7 @@ export class Game {
     this.headlight.position.set(this.headlightPos.x, y + 2.2, this.headlightPos.z)
     this.headlight.target.position.copy(this.headlightPos).addScaledVector(this.headlightDir, 60).setY(y + 0.3)
     this.headlight.target.updateMatrixWorld()
-    this.headlight.intensity = night * 260
+    this.headlight.intensity = Math.max(night, this.tunnelF) * 260
   }
 
   /** Adds points for a stop grade (with perfect-streak bonus), persists the best, and returns what was gained. */
@@ -1323,14 +1559,19 @@ export class Game {
   }
 
   private onResize() {
-    const w = window.innerWidth
-    const h = window.innerHeight
+    // The VISUAL viewport when the platform reports one: on iOS the layout
+    // viewport can disagree with what is actually visible (collapsing
+    // toolbars), and sizing to the wrong one leaves letterbox bands.
+    const vv = window.visualViewport
+    const w = Math.round(vv?.width ?? window.innerWidth)
+    const h = Math.round(vv?.height ?? window.innerHeight)
     // Backgrounded rotations can report 0×0 for a beat — sizing the drawing
     // buffer to zero blanks the canvas until the next real resize.
     if (w === 0 || h === 0) return
     this.camera.aspect = w / h
     this.camera.updateProjectionMatrix()
     this.renderer.setSize(w, h)
+    this.windshield?.resize()
     // The animation loop won't pick up the new size on its own if it isn't
     // running (start screen / paused) — repaint once so a rotate mid-pause
     // doesn't leave a stale frame at the old dimensions.
@@ -1376,7 +1617,54 @@ export class Game {
    * re-run per physics step.
    */
   private step(dt: number) {
+    // H3: the front director only runs while the sky is on AUTO and the
+    // world is actually moving (a paused menu shouldn't ambush anyone).
+    if (this.started && this.weatherAuto) {
+      this.frontTimer -= dt
+      if (this.frontTimer <= 0) this.advanceFront()
+    }
+
+    // H4: how deep inside the tunnel the cab is right now. Everything that
+    // follows (lighting, fog, precipitation, audio, headlight) reads this.
+    const trackLen = this.track.getLength()
+    this.tunnelF = this.track.tunnelAmountAt(this.train.progressFraction + CAB_OFFSET / trackLen)
+    const inTunnel = this.tunnelF > 0.5
+    if (inTunnel !== this.wasInTunnel) {
+      this.wasInTunnel = inTunnel
+      if (inTunnel) perfMark('tunnel')
+      // The portal is an EVENT: pressure whoosh + thump, in both directions.
+      audio.tunnelWhoosh(inTunnel, this.train.speed01)
+    }
+    // Deep inside, fog ends at ~260 — everything beyond is invisible, so
+    // stop paying for it: pull the far plane in and the frustum culls the
+    // city, skyline and clouds wholesale (free thermal headroom exactly
+    // where a phone wants it). Restored well before the portal shows the
+    // world again (tunnelF 0.6 ≈ depth 1.6 of 20).
+    const wantFar = this.tunnelF > 0.6 ? 900 : 9000
+    if (this.camera.far !== wantFar) {
+      this.camera.far = wantFar
+      this.camera.updateProjectionMatrix()
+    }
+
     this.dayNight.update(dt * this.timeScale, this.camera.position)
+
+    // The tunnel overrides the sky's word on light and fog: the lining is
+    // close, dark and warm-lit, whatever the weather is doing overhead.
+    if (this.tunnelF > 0.001) {
+      const f = this.tunnelF
+      this.dayNight.sunLight.intensity *= 1 - 0.97 * f
+      this.dayNight.moonLight.intensity *= 1 - 0.97 * f
+      this.dayNight.ambient.intensity = this.dayNight.ambient.intensity * (1 - 0.78 * f) + 0.15 * f
+      if (this.scene.fog instanceof THREE.Fog) {
+        this.scene.fog.color.lerp(TUNNEL_FOG, f)
+        this.scene.fog.near = THREE.MathUtils.lerp(this.scene.fog.near, 22, f)
+        this.scene.fog.far = THREE.MathUtils.lerp(this.scene.fog.far, 260, f)
+      }
+    }
+    if (Math.abs(this.tunnelF - this.lastTunnelAudioF) > 0.04 || (this.tunnelF === 0) !== (this.lastTunnelAudioF === 0)) {
+      this.lastTunnelAudioF = this.tunnelF
+      audio.setTunnel(this.tunnelF)
+    }
     // Every window-lit material shares this: windows pop on one by one
     // through dusk as it rises from 0 to 1.
     WINDOW_DUSK_UNIFORM.value = this.dayNight.nightFactor
@@ -1422,8 +1710,41 @@ export class Game {
       this.dayNight.nightFactor,
     )
     this.applyPrecipitation()
+    // The railhead dries on its own clock, not the weather's.
+    if (this.wetLingerSeconds > 0 && this.weather !== 'rain' && this.weather !== 'storm') {
+      this.wetLingerSeconds -= dt
+      if (this.wetLingerSeconds <= 0) {
+        this.wetLingerSeconds = 0
+        this.applyRailCondition()
+      }
+    }
     this.precipitation.update(dt, this.camera.position, this.dayNight.nightFactor)
+    this.windshield.update(dt, this.wsIntensity, this.wsSnow, this.train.speed01, this.cameraMode === 'cab')
     this.updateHeadlight()
+
+    // H5: the sea is audible along the bay arc — loudest standing at a
+    // coastal platform, a whisper at line speed under the motor.
+    let bay = 0
+    const tt = THREE.MathUtils.euclideanModulo(this.train.progressFraction, 1)
+    if (tt > BAY_T0 - 0.012 && tt < BAY_T1 + 0.012) {
+      const edge = Math.min(tt - (BAY_T0 - 0.012), BAY_T1 + 0.012 - tt)
+      bay = THREE.MathUtils.clamp(edge / 0.02, 0, 1)
+    }
+    const shore = bay * (0.25 + 0.75 * (1 - this.train.speed01)) * (1 - this.tunnelF)
+    if (Math.abs(shore - this.lastShoreAudioLevel) > 0.05 || (shore === 0) !== (this.lastShoreAudioLevel === 0)) {
+      this.lastShoreAudioLevel = shore
+      audio.setShore(shore)
+    }
+
+    // Atmosphere discovery: one gentle nudge, ~20 s into the first session
+    // that hasn't found the panel yet. The pulsing clock does the rest.
+    if (!this.atmoSeen && !this.atmoTipShown && this.started) {
+      this.atmoTipTimer += dt
+      if (this.atmoTipTimer > 22) {
+        this.atmoTipShown = true
+        this.ui.showHint('El cielo es tuyo', 'Toca el reloj de arriba para abrir «Atmósfera»: hora del día, estación del año y clima — el mundo cambia al instante.')
+      }
+    }
     // Positional platform murmur: nearest station (ahead or just passed)
     // wins; louder for landmark hubs, panned toward the platform side.
     const distAhead = this.train.distanceToTarget

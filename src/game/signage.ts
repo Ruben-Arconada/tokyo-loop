@@ -576,12 +576,16 @@ export function makeGroundTexture(): THREE.CanvasTexture {
   canvas.width = size
   canvas.height = size
   const ctx = canvas.getContext('2d')!
-  ctx.fillStyle = '#2b302a'
+  // ~0.42 luma base (was ~0.18): the old near-black felt meant every season
+  // had to overdrive its vertex colors ×1.8–2.7 to read at all, crushing the
+  // texture's own detail. A lighter base carries the detail through and the
+  // seasonal gains come down to civilized values (see Seasons.ts 'terrain').
+  ctx.fillStyle = '#6d7361'
   ctx.fillRect(0, 0, size, size)
 
   // Large soft blotches in near-identical tones — reads as patchy earth,
   // asphalt and scrub from a distance without any recognizable pattern.
-  const tones = ['#2d332c', '#292e28', '#2f342e', '#2c312e', '#31372d', '#2a2f2b']
+  const tones = ['#71776a', '#666c5e', '#747a6c', '#6b7168', '#787e69', '#687062']
   for (let i = 0; i < 260; i++) {
     const x = Math.random() * size
     const y = Math.random() * size

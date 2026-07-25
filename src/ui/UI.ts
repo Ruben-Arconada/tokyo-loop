@@ -16,6 +16,12 @@ export interface UICallbacks {
   /** Season / weather chosen from the HUD pickers. */
   onSeasonSet: (season: Season) => void
   onWeatherSet: (weather: Weather) => void
+  /** The AUTO chip in the weather section: fronts roll through on their own. */
+  onWeatherAutoSet: (auto: boolean) => void
+  /** HUD mute switch. */
+  onMuteToggle: (muted: boolean) => void
+  /** First time the player opens the Atmosphere panel — stops the discovery pulse for good. */
+  onAtmoOpened: () => void
   /** How tight the timetable is. */
   onScheduleLevelSet: (level: ScheduleLevel) => void
   /** Which eye the player looks through: cab, outside, or standing on the platform. */
@@ -61,6 +67,9 @@ export class UI {
   private atmoGlyphEl!: HTMLSpanElement
   private perfChip!: HTMLDivElement
   private camChip!: HTMLButtonElement
+  private muteChip!: HTMLButtonElement
+  private railChip!: HTMLDivElement
+  private lastRailText = ''
   private cctvEl!: HTMLDivElement
   private lastCctvStation = ''
   private occFill!: HTMLDivElement
@@ -181,6 +190,8 @@ export class UI {
       <button class="cam-chip" aria-label="Cambiar vista">
         <span class="cam-icon">🚉</span><span class="cam-label">Cabina</span>
       </button>
+      <button class="mute-chip" aria-label="Silenciar sonido" aria-pressed="false">🔊</button>
+      <div class="rail-chip hidden" role="status" aria-live="polite"><span class="rail-icon">☔</span><span class="rail-text">Carril mojado</span></div>
       <div class="perf-chip hidden"><span class="perf-dot"></span><span class="perf-fps">--</span><small>fps</small></div>
       <div class="occupancy-chip">
         <div class="occupancy-bar"><div class="occupancy-fill"></div></div>
@@ -212,6 +223,13 @@ export class UI {
     this.lineDiagram = this.hud.querySelector('.line-diagram')!
     this.perfChip = this.hud.querySelector('.perf-chip')!
     this.camChip = this.hud.querySelector('.cam-chip')!
+    this.muteChip = this.hud.querySelector('.mute-chip')!
+    this.railChip = this.hud.querySelector('.rail-chip')!
+    this.muteChip.addEventListener('click', () => {
+      const muted = this.muteChip.getAttribute('aria-pressed') !== 'true'
+      this.setMuted(muted)
+      this.cb.onMuteToggle(muted)
+    })
     this.cctvEl = this.hud.querySelector('.cctv')!
     this.occFill = this.hud.querySelector('.occupancy-fill')!
     this.occLabel = this.hud.querySelector('.occupancy-label')!
@@ -269,8 +287,10 @@ export class UI {
           <section class="atmo-section">
             <h3>Clima</h3>
             <div class="atmo-grid atmo-grid-weather">
+              <button class="atmo-auto" data-weather-auto><span class="atmo-icon">🔄</span><span class="atmo-weather-label">Auto</span></button>
               ${WEATHERS.map((w) => `<button data-weather="${w.id}"><span class="atmo-icon">${w.icon}</span><span class="atmo-weather-label">${w.label}</span></button>`).join('')}
             </div>
+            <p class="atmo-auto-hint hidden">El cielo va por libre: los frentes llegan y pasan solos.</p>
             <p class="atmo-phase"></p>
           </section>
         </div>
@@ -291,6 +311,7 @@ export class UI {
     el.querySelectorAll<HTMLButtonElement>('[data-weather]').forEach((btn) => {
       btn.addEventListener('click', () => this.cb.onWeatherSet(btn.dataset.weather as Weather))
     })
+    el.querySelector('[data-weather-auto]')!.addEventListener('click', () => this.cb.onWeatherAutoSet(true))
     return el
   }
 
@@ -298,6 +319,50 @@ export class UI {
     this.atmoOpen = force ?? !this.atmoOpen
     this.atmoOverlay.classList.toggle('hidden', !this.atmoOpen)
     this.atmoChip.setAttribute('aria-expanded', String(this.atmoOpen))
+    if (this.atmoOpen && this.atmoChip.classList.contains('pulse')) {
+      this.atmoChip.classList.remove('pulse')
+      this.cb.onAtmoOpened()
+    }
+  }
+
+  /** Gentle glow on the clock chip until the player discovers the Atmosphere panel. */
+  setAtmoPulse(on: boolean) {
+    this.atmoChip.classList.toggle('pulse', on)
+  }
+
+  /** Reflects (and persists via the callback) the mute switch. */
+  setMuted(muted: boolean) {
+    this.muteChip.textContent = muted ? '🔇' : '🔊'
+    this.muteChip.setAttribute('aria-pressed', String(muted))
+    this.muteChip.setAttribute('aria-label', muted ? 'Activar sonido' : 'Silenciar sonido')
+    this.muteChip.classList.toggle('muted', muted)
+  }
+
+  /** Marks the AUTO weather chip; individual weathers stay tappable (tapping one leaves auto). */
+  setWeatherAuto(auto: boolean) {
+    this.atmoOverlay.querySelector('[data-weather-auto]')!.classList.toggle('active', auto)
+    this.atmoOverlay.querySelector('.atmo-auto-hint')!.classList.toggle('hidden', !auto)
+  }
+
+  /**
+   * The adhesion warning (H1). Not a toast — it stays up as long as the rail
+   * is wet, because "the rail is still wet" is exactly the thing a driver
+   * forgets three stations after the rain started.
+   */
+  setRailCondition(cond: 'dry' | 'wet' | 'snow', advisoryKmh: number) {
+    // The advisory speed leads the sentence: it is the one actionable datum,
+    // and a narrow portrait truncates from the END (Lena, round 1).
+    const text = cond === 'dry' ? '' : cond === 'wet'
+      ? `≤${advisoryKmh} km/h · carril mojado, frena antes`
+      : `≤${advisoryKmh} km/h · carril helado, frena mucho antes`
+    if (text === this.lastRailText) return
+    this.lastRailText = text
+    this.railChip.classList.toggle('hidden', !text)
+    this.railChip.classList.toggle('snow', cond === 'snow')
+    if (text) {
+      ;(this.railChip.querySelector('.rail-icon') as HTMLElement).textContent = cond === 'snow' ? '❄️' : '☔'
+      ;(this.railChip.querySelector('.rail-text') as HTMLElement).textContent = text
+    }
   }
 
   /** Reflects the applied season/weather on the HUD chip and marks the active options. */
@@ -701,6 +766,11 @@ export class UI {
     }
     const points = gained > 0 ? `  +${gained}` : ''
     this.flashToast(`${station.nameEn} — ${messages[result.grade]}${points}`, result.grade)
+  }
+
+  /** The H3 front director narrating the sky: rain starting/stopping only. */
+  showWeatherToast(text: string) {
+    this.flashToast(text, 'ok')
   }
 
   /** Door-work bonus feedback — same toast rail as stop grades, always positive. */

@@ -137,6 +137,13 @@ export class DayNightCycle {
   overcast = 0
   /** Storms throw lightning on their own schedule while this is set. */
   stormy = false
+  /**
+   * 1 when the world is snow-covered (winter). Snow bounces most of the
+   * light back up, so an overcast winter noon is BRIGHTER than an overcast
+   * summer one — without this, the winter whites sat in murk the moment a
+   * cloud lid closed (the "invierno apagado bajo nublado" bug).
+   */
+  snowAlbedo = 0
   /** 0..1 sky flash for the current frame — sheet lightning, not a bolt sprite: the whole overcast lid lights up, which is what a storm looks like from inside a train. */
   flash = 0
   /** Fired at each strike with (secondsUntilThunder, strength) — sound travels, so a distant flash gets its clap seconds later. */
@@ -315,7 +322,10 @@ export class DayNightCycle {
     if (o > 0.001) {
       // How bright the flat gray lid should be right now, from the sun's
       // unmodified strength: luminous pearl at noon, charcoal at night.
-      const dayLevel = THREE.MathUtils.clamp(kf.sunIntensity / 1.85, 0, 1) * 0.72 + 0.05
+      // Snow on the ground bounces light back INTO the cloud lid — a snowy
+      // overcast day is famously bright — so the albedo lifts the gray a
+      // step and keeps winter from reading as dusk under cloud.
+      const dayLevel = (THREE.MathUtils.clamp(kf.sunIntensity / 1.85, 0, 1) * 0.72 + 0.05) * (1 + 0.16 * this.snowAlbedo)
       overcastTint(kf.skyTop, o, dayLevel * 0.82)
       overcastTint(kf.skyMid, o, dayLevel * 0.94)
       overcastTint(kf.skyBottom, o, dayLevel)
@@ -323,8 +333,9 @@ export class DayNightCycle {
       overcastTint(kf.sunColor, o * 0.7, dayLevel)
       kf.sunIntensity *= 1 - 0.62 * o
       // Diffuse skylight actually RISES a touch under cloud relative to the
-      // lost direct sun — this is what keeps an overcast noon bright.
-      kf.ambientIntensity *= 1 + 0.22 * o * THREE.MathUtils.clamp(kf.sunIntensity, 0, 1)
+      // lost direct sun — this is what keeps an overcast noon bright. Snow
+      // multiplies the effect: ground and lid bounce the light between them.
+      kf.ambientIntensity *= 1 + (0.22 + 0.34 * this.snowAlbedo) * o * THREE.MathUtils.clamp(kf.sunIntensity, 0, 1)
       kf.fogNear *= 1 - 0.52 * o
       kf.fogFar *= 1 - 0.38 * o
     }

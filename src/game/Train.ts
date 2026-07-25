@@ -22,6 +22,28 @@ const BRAKE_DECEL_KMH_S = [1.0, 1.6, 2.2, 2.8, 3.4, 4.0, 4.6] // B1..B7
 const EMERGENCY_DECEL_KMH_S = 6.0
 const COAST_DRAG_KMH_S = 0.15
 export const MAX_SPEED_KMH = 95
+
+// ——— Adhesion (H1) ———
+// Wet or icy rail does not weaken the brakes — it caps how much deceleration
+// the wheel/rail contact can transmit before sliding. So low notches are
+// untouched (they never exceeded the adhesion limit anyway) and the high
+// service notches all flatten onto the cap, which is exactly how a real
+// railhead behaves. EB gets its own, higher cap: sanding and magnetic help,
+// but physics still collects. Dry caps are Infinity ⇒ min(table, cap) is the
+// table itself, bit for bit — the agreed criterion that dry braking must not
+// move by a single meter.
+export type RailCondition = 'dry' | 'wet' | 'snow'
+const SERVICE_BRAKE_CAP_KMH_S: Record<RailCondition, number> = { dry: Infinity, wet: 2.6, snow: 2.0 }
+const EMERGENCY_BRAKE_CAP_KMH_S: Record<RailCondition, number> = { dry: Infinity, wet: 4.6, snow: 3.6 }
+/** The same contact patch limits TRACTION: P4-P5 spin down to this on a bad railhead (panel round 1, Aiko + Haruto). */
+const TRACTION_CAP_KMH_S: Record<RailCondition, number> = { dry: Infinity, wet: 2.2, snow: 1.6 }
+/**
+ * Advisory approach speed per condition, shown in the HUD warning. Chosen by
+ * simulation so that full service (B5) from the 250 m board still stops
+ * inside the platform zone: 250+26 units needs ≤66 km/h on wet rail and
+ * ≤57 km/h on snow at these caps.
+ */
+export const RAIL_ADVISORY_KMH: Record<RailCondition, number> = { dry: 0, wet: 65, snow: 55 }
 // Grade resistance with the agreed arcade factor 0.25: the visual ~16% hill
 // behaves like a physical ~4% — g·3.6·0.25 ≈ 8.8 (km/h)/s per unit of
 // tangent slope. Climbing bleeds momentum, descending feeds it.
@@ -79,6 +101,8 @@ export class Train {
   progressFraction = 0
   speedKmh = 0
   notch = 0
+  /** Rail adhesion state — set by the game from season+weather. 'dry' leaves every table untouched. */
+  railCondition: RailCondition = 'dry'
   currentStationIndex = 0
   targetStationIndex = 1
   state: TrainRunState = 'running'
@@ -201,11 +225,13 @@ export class Train {
       return
     }
 
-    // Running: integrate speed from the current controller notch.
+    // Running: integrate speed from the current controller notch. Braking is
+    // clamped to the railhead's adhesion cap (see the H1 note up top) — on
+    // dry rail the caps are Infinity and this is exactly the old table.
     let accelKmhS = -COAST_DRAG_KMH_S
-    if (this.notch === MIN_NOTCH) accelKmhS = -EMERGENCY_DECEL_KMH_S
-    else if (this.notch < 0) accelKmhS = -BRAKE_DECEL_KMH_S[Math.abs(this.notch) - 1]
-    else if (this.notch > 0) accelKmhS = POWER_ACCEL_KMH_S[this.notch - 1]
+    if (this.notch === MIN_NOTCH) accelKmhS = -Math.min(EMERGENCY_DECEL_KMH_S, EMERGENCY_BRAKE_CAP_KMH_S[this.railCondition])
+    else if (this.notch < 0) accelKmhS = -Math.min(BRAKE_DECEL_KMH_S[Math.abs(this.notch) - 1], SERVICE_BRAKE_CAP_KMH_S[this.railCondition])
+    else if (this.notch > 0) accelKmhS = Math.min(POWER_ACCEL_KMH_S[this.notch - 1], TRACTION_CAP_KMH_S[this.railCondition])
 
     // The Komagome grade pushes back (or shoves along) at the arcade factor.
     accelKmhS -= this.track.gradeYAt(this.progressFraction) * GRADE_ACCEL_KMH_S

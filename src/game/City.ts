@@ -185,7 +185,12 @@ export class City {
         const tangent = this.track.tangentAt(t)
         const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize()
         const side = b % 2 === 0 ? 1 : -1
-        const offset = 34 + Math.random() * 70
+        // Bay-district blocks stay closer to the line on the SEAWARD side:
+        // past ~80 that way is beach and water now (Scenery.buildCoast), and
+        // a tower standing in the surf would be the first thing every eye
+        // found. Seaward = the side pointing away from the loop's center.
+        const seaward = station.theme.district === 'bay' && (normal.x * point.x + normal.z * point.z) * side > 0
+        const offset = seaward ? 30 + Math.random() * 40 : 34 + Math.random() * 70
         // Height comes from the ZONE first (this is the structural contrast
         // that reads at any hour), with landmark stations getting an extra
         // flourish within their own tier's range rather than overriding it.
@@ -653,18 +658,9 @@ export class City {
         group.add(screen)
         break
       }
-      case 'shinagawa': {
-        const bay = new THREE.Mesh(
-          new THREE.PlaneGeometry(200, 200),
-          new THREE.MeshStandardMaterial({ color: 0x1f5a78, roughness: 0.2, metalness: 0.3 }),
-        )
-        bay.rotation.x = -Math.PI / 2
-        // Water surface stays just above the ground plane despite the
-        // wrapper's -0.58 burial offset.
-        bay.position.set(90, 0.18, 0)
-        group.add(bay)
-        break
-      }
+      // Shinagawa's old 200×200 water plane is gone: the whole bay arc now
+      // has a real coastline (Scenery.buildCoast) and two seas at two
+      // heights would z-fight where they overlapped.
     }
   }
 

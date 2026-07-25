@@ -110,6 +110,19 @@ canvas.game-canvas {
 }
 
 /* ---------- HUD ---------- */
+.windshield-fx {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  display: none;
+  /* No z-index on purpose: the canvas is inserted in the DOM right after
+     the GL canvas, so document order already stacks it over the world and
+     under HUD/lever/overlays. An explicit z-index:1 here beat the HUD's
+     z-index:auto regardless of DOM order — Lena's round-1 catch. */
+}
+
 .hud {
   position: absolute;
   inset: 0;
@@ -608,8 +621,10 @@ canvas.game-canvas {
    before the color even registers, same as a real emergency stop. */
 .controller-eb {
   position: absolute;
-  left: calc(var(--safe-left) + var(--space-2));
-  bottom: calc(var(--safe-bottom) + var(--space-2));
+  /* +3px beyond the safe areas: on notched phones in landscape the ring of
+     the button visually rubbed the sensor housing (RC gate item). */
+  left: calc(var(--safe-left) + var(--space-2) + 3px);
+  bottom: calc(var(--safe-bottom) + var(--space-2) + 3px);
   pointer-events: auto;
   width: 48px;
   height: 48px;
@@ -822,13 +837,73 @@ canvas.game-canvas {
 .cam-chip:active { transform: scale(0.96); }
 .cam-icon { font-size: 15px; line-height: 1; }
 
+/* Mute switch: same glass as its column mates, small square target. */
+.mute-chip {
+  position: absolute;
+  left: calc(var(--safe-left) + var(--space-3));
+  bottom: calc(var(--safe-bottom) + 196px);
+  width: 34px;
+  height: 30px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  background: var(--chip-bg);
+  border: var(--chip-border);
+  box-shadow: var(--chip-shadow);
+  backdrop-filter: var(--chip-blur);
+  border-radius: var(--radius-md);
+  font-size: 14px;
+  pointer-events: auto;
+  cursor: pointer;
+  transition: transform 0.1s ease;
+}
+.mute-chip:active { transform: scale(0.94); }
+.mute-chip.muted { border-color: rgba(255, 92, 92, 0.55); }
+/* 34x30 visual, ≥44px effective touch target (invisible halo). */
+.mute-chip::after { content: ''; position: absolute; inset: -7px; }
+
+/* Adhesion warning (H1): parked under the timetable chip, up for as long as
+   the railhead stays wet. Amber for rain, ice-blue for snow. */
+.rail-chip {
+  position: absolute;
+  top: calc(var(--safe-top) + 112px);
+  right: calc(var(--safe-right) + var(--space-2));
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  background: var(--chip-bg);
+  border: 1px solid rgba(255, 206, 74, 0.6);
+  box-shadow: var(--chip-shadow);
+  backdrop-filter: var(--chip-blur);
+  border-radius: var(--radius-md);
+  padding: 2px var(--space-2);
+  font-size: var(--text-label);
+  font-weight: 600;
+  color: var(--color-warn);
+  pointer-events: none;
+}
+.rail-chip.hidden { display: none; }
+.rail-chip.snow { border-color: rgba(159, 216, 255, 0.65); color: #9fd8ff; }
+.rail-icon { font-size: 13px; line-height: 1; }
+
+/* Discovery pulse on the clock chip until the Atmosphere panel is found. */
+@keyframes atmo-pulse {
+  0%, 100% { box-shadow: var(--chip-shadow); }
+  50% { box-shadow: 0 0 14px 2px rgba(255, 206, 74, 0.55); }
+}
+.hud-clock.pulse { animation: atmo-pulse 2.4s ease-in-out infinite; }
+
+/* AUTO weather chip + its one-line explanation. */
+.atmo-auto-hint { font-size: var(--text-micro); color: var(--text-muted); margin: var(--space-1) 0 0; }
+.atmo-auto-hint.hidden { display: none; }
+
 /* ---------- Performance counter ---------- */
 /* Sits just above the score chip while a recording runs. Monospaced and
    tabular so the number doesn't jitter its own width 60 times a second. */
 .perf-chip {
   position: absolute;
   left: calc(var(--safe-left) + var(--space-3));
-  bottom: calc(var(--safe-bottom) + 196px);
+  bottom: calc(var(--safe-bottom) + 232px);
   display: flex;
   align-items: baseline;
   gap: 5px;
@@ -1036,4 +1111,7 @@ canvas.game-canvas {
   .hud-station-now small, .hud-station-next small { display: none; }
   .hud-station-now-name, .hud-station-next-name { font-size: 11px; max-width: 22vw; }
   .atmo-card { padding: var(--space-5) var(--space-4); }
+  /* The adhesion warning shrinks instead of colliding with the pills row. */
+  .rail-chip { max-width: 62vw; font-size: var(--text-micro); }
+  .rail-text { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 }

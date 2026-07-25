@@ -1,7 +1,7 @@
 import * as THREE from 'three'
 import { RoundedBoxGeometry } from 'three/examples/jsm/geometries/RoundedBoxGeometry.js'
 import type { Track } from './Track'
-import { groundHeightAt, HILL_STATION_ID, mountainRoadPath } from './Track'
+import { groundHeightAt, HILL_STATION_ID, mountainRoadPath, trenchPortalOffset, terrainRelief, BASE_GROUND_Y } from './Track'
 import type { DayNightCycle } from './DayNightCycle'
 import { STATIONS, type ZoneTier } from '../data/stations'
 import { makeCloudTexture, makeNeonSignTexture, makeWindowGridTexture, makeRoofTileTexture, applyProgressiveWindows } from './signage'
@@ -101,6 +101,9 @@ export class Scenery {
   private fujiSnowWinter!: THREE.Mesh
   private cloudsMesh!: THREE.InstancedMesh
   private weatherLook: Weather = 'clear'
+  /** Sea surface texture, scrolled slowly in update() so the bay is never a still photograph. */
+  private seaTexture: THREE.CanvasTexture | null = null
+  private foamMat: THREE.MeshBasicMaterial | null = null
   /** True while the twin red lamps are lit (train nearby) — Game reads flips to drive the kan-kan bell. */
   crossingBellActive = false
   crossingBlinkPhase = false
@@ -121,6 +124,8 @@ export class Scenery {
     this.buildUtilityPoles()
     this.buildNeonSigns()
     this.buildCrossings()
+    this.buildTunnel()
+    this.buildCoast()
     this.buildClouds()
   }
 
@@ -130,7 +135,9 @@ export class Scenery {
    * soft rainbow illumination after dark. The bay district's own landmark.
    */
   private buildRainbowBridge() {
-    const base = this.outwardFrom('takanawa', 620)
+    // 620 → 950: with the Kamakura coast in (shoreline ~116 out), both ends
+    // of the span now fade out over open water instead of hanging over sand.
+    const base = this.outwardFrom('takanawa', 950)
     const g = new THREE.Group()
     g.position.copy(base)
     g.position.y = -0.58 // tower feet buried under the ground plane
@@ -154,6 +161,14 @@ export class Scenery {
     const deck = new THREE.Mesh(new THREE.BoxGeometry(span * 2.1, 5, 24), this.bridgeGlowMat)
     deck.position.y = 46
     g.add(deck)
+    // Anchorages: the deck dives into a concrete block at each end instead
+    // of stopping dead in mid-air (it read as a broken structure once the
+    // coast put real water under it — Yui, round 1).
+    for (const ax of [-span * 1.05, span * 1.05]) {
+      const anchor = new THREE.Mesh(new THREE.BoxGeometry(34, 54, 30), towerMat)
+      anchor.position.set(ax, 26, 0)
+      g.add(anchor)
+    }
     // Main cables: catenary polylines between tower tops, sagging to deck mid-span.
     const cablePts: number[] = []
     const SEG = 14
@@ -246,16 +261,27 @@ export class Scenery {
       let x = 0
       let z = 0
       const clearance = 6 + Math.hypot(w, d) / 2
+      let y = h / 2 - 2
       for (let attempt = 0; attempt < 6; attempt++) {
         const t = (outer ? i / outerCount : (i - outerCount) / innerCount) + Math.random() * 0.004
+        const tt = ((t % 1) + 1) % 1
         const p = this.track.pointAt(t)
         dir.set(p.x, 0, p.z).normalize()
-        const off = (outer ? 1 : -1) * (260 + Math.random() * (outer ? 950 : 700))
+        // Outward towers on the bay arc would stand IN the sea — push them
+        // across the water instead: the industrial far shore of the bay.
+        const bayArc = outer && tt > 0.76 && tt < 0.96
+        const off = bayArc
+          ? 3000 + Math.random() * 700
+          : (outer ? 1 : -1) * (260 + Math.random() * (outer ? 950 : 700))
         x = p.x + dir.x * off + (Math.random() - 0.5) * 200
         z = p.z + dir.z * off + (Math.random() - 0.5) * 200
+        // Terrain 2.0: the far plain rolls, so far towers ride the same
+        // relief the ground plane does (the bay's far shore stays flat —
+        // the plane's relief is masked there too).
+        y = h / 2 - 2 + (bayArc ? 0 : terrainRelief(x, z, off))
         if (!this.isNearRoad(x, z, clearance)) break
       }
-      dummy.position.set(x, h / 2 - 2, z)
+      dummy.position.set(x, y, z)
       dummy.scale.set(w, h, d)
       dummy.rotation.set(0, Math.random() * Math.PI, 0)
       dummy.updateMatrix()
@@ -303,7 +329,9 @@ export class Scenery {
           .addScaledVector(side, alongJitter)
         const h = 200 + Math.random() * 230
         const r = 420 + Math.random() * 380
-        dummy.position.set(base.x, h * 0.5 - 0.5, base.z)
+        // Buried 15 deep: the plain now rolls ±14 (terrain 2.0), and a
+        // floating mountain skirt is worse than losing a few meters of cone.
+        dummy.position.set(base.x, h * 0.5 - 15, base.z)
         dummy.scale.set(r, h, r)
         dummy.rotation.set(0, Math.random() * Math.PI, 0)
         dummy.updateMatrix()
@@ -1118,6 +1146,10 @@ export class Scenery {
       const tangent = this.track.tangentAt(t)
       const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize()
       const base = p.clone().addScaledVector(normal, offset)
+      // Where the track dives into the trench the poles stay UP on the
+      // street (the wires visibly crossing over the cutting is exactly what
+      // a Tokyo rail trench looks like from above).
+      base.y = Math.max(base.y, -0.02)
       dummy.position.set(base.x, base.y + (poleH - 0.58) / 2, base.z)
       dummy.rotation.set(0, Math.atan2(tangent.x, tangent.z), 0)
       dummy.updateMatrix()
@@ -1259,7 +1291,9 @@ export class Scenery {
     for (const s of samples) {
       // A clear 10cm over the terrain: a few centimetres proud lost the
       // z-buffer duel against the ground plane at distance and vanished.
-      pts.push(new THREE.Vector3(s.x, groundHeightAt(s.trackY, s.off) + 0.1, s.z))
+      // terrainRelief keeps the far end of the road glued to the rolling
+      // plain (zero anywhere near the tracks by construction).
+      pts.push(new THREE.Vector3(s.x, groundHeightAt(s.trackY, s.off) + terrainRelief(s.x, s.z, s.off) + 0.1, s.z))
       this.roadSamples.push({ x: s.x, z: s.z })
     }
 
@@ -1358,7 +1392,7 @@ export class Scenery {
     const mTint = new THREE.Color()
     specs.forEach((m, i) => {
       const base = end.clone().addScaledVector(endDir, m.fwd).addScaledVector(perp, m.side)
-      mDummy.position.set(base.x, m.h * 0.5 - 0.5, base.z)
+      mDummy.position.set(base.x, m.h * 0.5 - 15, base.z)
       mDummy.scale.set(m.r, m.h, m.r)
       mDummy.rotation.set(0, Math.random() * Math.PI, 0)
       mDummy.updateMatrix()
@@ -1638,6 +1672,10 @@ export class Scenery {
         let t = marker - d / len
         // Keep clear of the level-crossing corridor (nudge the board earlier).
         if (Math.abs(((t - crossT) % 1 + 1.5) % 1 - 0.5) * len < 14) t -= 18 / len
+        // A board inside the tunnel would stand on the street ABOVE the
+        // tracks (groundHeightAt clamps to the plain) — drop it instead,
+        // same rule as boards that don't fit a short stretch.
+        if (this.track.trenchDepthAt(t) > 0.5) continue
         const p = this.track.pointAt(t)
         const tangent = this.track.tangentAt(t)
         const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize()
@@ -1742,6 +1780,458 @@ export class Scenery {
       g.add(lampR)
       this.scene.add(g)
     }
+  }
+
+  /**
+   * The Shibuya tunnel (H4): where the trench (Track's negative hill) dips
+   * below grade, a concrete lining box takes over — walls, ceiling, sodium
+   * lights — emerging above ground at both ends as portal hoods, the way a
+   * real urban rail portal does. The approaches get low retaining walls so
+   * the dive reads as a cutting, not a glitch. Everything here is static:
+   * three ribbon meshes, one instanced light row, a handful of portal boxes.
+   */
+  private buildTunnel() {
+    const center = this.track.trenchCenterFraction
+    const portalOff = trenchPortalOffset()
+    const len = this.track.getLength()
+    const t0 = center - portalOff
+    const t1 = center + portalOff
+    const spanUnits = (t1 - t0) * len
+    const RINGS = Math.max(24, Math.ceil(spanUnits / 6))
+
+    // Concrete: matte panels with seams and water-stain grime, a whisper of
+    // self-illumination so the interior never collapses to pure black
+    // between the sodium lamps.
+    const concreteTex = (() => {
+      const canvas = document.createElement('canvas')
+      canvas.width = 256
+      canvas.height = 128
+      const ctx = canvas.getContext('2d')!
+      ctx.fillStyle = '#7e8287'
+      ctx.fillRect(0, 0, 256, 128)
+      // Panel seams every 64px, a thin dark joint with a lit top edge.
+      for (let x = 0; x < 256; x += 64) {
+        ctx.fillStyle = 'rgba(20,22,25,0.55)'
+        ctx.fillRect(x, 0, 3, 128)
+        ctx.fillStyle = 'rgba(255,255,255,0.10)'
+        ctx.fillRect(x + 3, 0, 2, 128)
+      }
+      ctx.fillStyle = 'rgba(20,22,25,0.4)'
+      ctx.fillRect(0, 60, 256, 2)
+      // Sodium wash: a warm gradient along the lamp edge of the panel (v=1
+      // maps to the ceiling side), so the 'sodium' promise shows on the
+      // walls themselves without a single real light.
+      const sodium = ctx.createLinearGradient(0, 128, 0, 46)
+      sodium.addColorStop(0, 'rgba(255,166,80,0.30)')
+      sodium.addColorStop(1, 'rgba(255,166,80,0)')
+      ctx.fillStyle = sodium
+      ctx.fillRect(0, 0, 256, 128)
+      // Water stains bleeding down from the joints.
+      for (let i = 0; i < 34; i++) {
+        const x = Math.random() * 256
+        const w = 3 + Math.random() * 10
+        const h = 24 + Math.random() * 80
+        const grad = ctx.createLinearGradient(0, 0, 0, h)
+        grad.addColorStop(0, 'rgba(38,40,36,0.34)')
+        grad.addColorStop(1, 'rgba(38,40,36,0)')
+        ctx.save()
+        ctx.translate(x, 0)
+        ctx.fillStyle = grad
+        ctx.fillRect(-w / 2, 0, w, h)
+        ctx.restore()
+      }
+      // Speckle.
+      for (let i = 0; i < 500; i++) {
+        const shade = Math.random() < 0.5 ? 0 : 255
+        ctx.fillStyle = `rgba(${shade},${shade},${shade},${(0.03 + Math.random() * 0.05).toFixed(3)})`
+        ctx.fillRect(Math.random() * 256, Math.random() * 128, 1.5, 1.5)
+      }
+      const tex = new THREE.CanvasTexture(canvas)
+      tex.wrapS = tex.wrapT = THREE.RepeatWrapping
+      tex.colorSpace = THREE.SRGBColorSpace
+      return tex
+    })()
+    const concrete = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      map: concreteTex,
+      roughness: 0.92,
+      emissive: 0x2b2823,
+      emissiveIntensity: 0.34,
+      side: THREE.DoubleSide,
+    })
+
+    const WALL_X = 6.0
+    const CLEAR_H = 6.9
+    const wallL: number[] = []
+    const wallR: number[] = []
+    const ceil: number[] = []
+    const stripUvs: number[] = []
+    const p = new THREE.Vector3()
+    const tangent = new THREE.Vector3()
+    for (let i = 0; i <= RINGS; i++) {
+      const t = t0 + ((t1 - t0) * i) / RINGS
+      this.track.pointAt(t, p)
+      this.track.tangentAt(t, tangent)
+      const nx = -tangent.z
+      const nz = tangent.x
+      const inv = 1 / Math.hypot(nx, nz)
+      const floorY = p.y - 0.5
+      const topY = p.y + CLEAR_H
+      // Left wall: bottom then top.
+      wallL.push(p.x + nx * inv * WALL_X, floorY, p.z + nz * inv * WALL_X, p.x + nx * inv * WALL_X, topY, p.z + nz * inv * WALL_X)
+      wallR.push(p.x - nx * inv * WALL_X, floorY, p.z - nz * inv * WALL_X, p.x - nx * inv * WALL_X, topY, p.z - nz * inv * WALL_X)
+      ceil.push(p.x + nx * inv * (WALL_X + 0.4), topY, p.z + nz * inv * (WALL_X + 0.4), p.x - nx * inv * (WALL_X + 0.4), topY, p.z - nz * inv * (WALL_X + 0.4))
+      // One texture tile per ~14 units of bore; v spans the panel height.
+      const u = (i * (spanUnits / RINGS)) / 14
+      stripUvs.push(u, 0, u, 1)
+    }
+    const strip = (positions: number[]) => {
+      const idx: number[] = []
+      for (let i = 0; i < RINGS; i++) {
+        const a = i * 2, b = i * 2 + 1, c = (i + 1) * 2, d = (i + 1) * 2 + 1
+        idx.push(a, b, c, b, d, c)
+      }
+      const geo = new THREE.BufferGeometry()
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+      geo.setAttribute('uv', new THREE.Float32BufferAttribute(stripUvs, 2))
+      geo.setIndex(idx)
+      geo.computeVertexNormals()
+      const mesh = new THREE.Mesh(geo, concrete)
+      // No castShadow: the tunnel's darkness comes from the per-frame light
+      // override in Game (cheaper and weather-proof), so paying the shadow
+      // pass for 400 units of lining would buy nothing (Marco's budget).
+      mesh.receiveShadow = true
+      this.scene.add(mesh)
+      return mesh
+    }
+    strip(wallL)
+    strip(wallR)
+    strip(ceil)
+
+    // Sodium lamps along the ceiling: MeshBasicMaterial ignores lighting, so
+    // they stay lit inside without costing a single real light source.
+    const LAMP_SPACING = 13
+    const lampCount = Math.floor(spanUnits / LAMP_SPACING)
+    const lampMat = new THREE.MeshBasicMaterial({ color: 0xffb060 }) // true sodium orange, not cream (round 1)
+    const lamps = new THREE.InstancedMesh(new THREE.BoxGeometry(0.32, 0.1, 0.95), lampMat, Math.max(1, lampCount))
+    const dummy = new THREE.Object3D()
+    for (let i = 0; i < lampCount; i++) {
+      const t = t0 + ((i + 0.5) / lampCount) * (t1 - t0)
+      this.track.pointAt(t, p)
+      this.track.tangentAt(t, tangent)
+      const nx = -tangent.z
+      const nz = tangent.x
+      const inv = 1 / Math.hypot(nx, nz)
+      const side = i % 2 === 0 ? 2.4 : -2.4 // staggered rows, like a real bore
+      dummy.position.set(p.x + nx * inv * side, p.y + CLEAR_H - 0.12, p.z + nz * inv * side)
+      dummy.rotation.set(0, Math.atan2(tangent.x, tangent.z), 0)
+      dummy.updateMatrix()
+      lamps.setMatrixAt(i, dummy.matrix)
+    }
+    lamps.count = lampCount
+    lamps.instanceMatrix.needsUpdate = true
+    this.scene.add(lamps)
+
+    // Portals: header beam over the opening, flanking pillars, splayed wing
+    // walls, and a small 隧道 name plate — the concrete face that makes the
+    // hole in the ground read as infrastructure and not as a missing tile.
+    // Same material story as the lining: bare hormigón with joints and
+    // grime, not smooth plastic (Yui, round 1). Box UVs give each face a
+    // full texture tile — reads as shuttering panels.
+    const portalMat = new THREE.MeshStandardMaterial({ color: 0xb9bdc2, map: concreteTex, roughness: 0.85 })
+    // Every concrete box of both portals rides ONE InstancedMesh (a unit
+    // cube scaled per instance): 10 boxes, 1 draw call.
+    const portalBoxes = new THREE.InstancedMesh(new THREE.BoxGeometry(1, 1, 1), portalMat, 10)
+    let pbI = 0
+    const portalDummy = new THREE.Object3D()
+    const signTex = (() => {
+      const canvas = document.createElement('canvas')
+      canvas.width = 256
+      canvas.height = 64
+      const ctx = canvas.getContext('2d')!
+      ctx.fillStyle = '#3a3f45'
+      ctx.fillRect(0, 0, 256, 64)
+      ctx.fillStyle = '#e8e6da'
+      ctx.font = '700 40px "Hiragino Sans", sans-serif'
+      ctx.textAlign = 'center'
+      ctx.fillText('渋谷隧道', 128, 46)
+      const tex = new THREE.CanvasTexture(canvas)
+      tex.colorSpace = THREE.SRGBColorSpace
+      return tex
+    })()
+    const signMat = new THREE.MeshStandardMaterial({ map: signTex, emissive: 0xffffff, emissiveMap: signTex, emissiveIntensity: 0.12, roughness: 0.7 })
+    for (const tPortal of [t0, t1]) {
+      this.track.pointAt(tPortal, p)
+      this.track.tangentAt(tPortal, tangent)
+      const g = new THREE.Group()
+      g.position.set(p.x, p.y, p.z)
+      // Face down the track, opening toward the approaching train.
+      const facing = tPortal === t0 ? 1 : -1
+      g.rotation.y = Math.atan2(tangent.x * facing, tangent.z * facing)
+      g.updateMatrixWorld(true)
+      const putBox = (lx: number, ly: number, lz: number, sx: number, sy: number, sz: number, ry = 0) => {
+        portalDummy.position.set(lx, ly, lz).applyMatrix4(g.matrixWorld)
+        portalDummy.quaternion.copy(g.quaternion)
+        if (ry) portalDummy.quaternion.multiply(new THREE.Quaternion().setFromAxisAngle(UP, ry))
+        portalDummy.scale.set(sx, sy, sz)
+        portalDummy.updateMatrix()
+        portalBoxes.setMatrixAt(pbI++, portalDummy.matrix)
+      }
+      putBox(0, CLEAR_H + 1.0, 0, 15.2, 2.2, 1.4) // header beam
+      for (const sx of [-1, 1]) {
+        putBox(sx * (WALL_X + 0.8), (CLEAR_H + 2.2) / 2 - 0.5, 0, 1.6, CLEAR_H + 2.2, 1.4) // pillar
+        putBox(sx * (WALL_X + 4.2), 1.2, 2.6, 7.5, 3.4, 0.8, sx * 0.5) // wing wall
+      }
+      const plate = new THREE.Mesh(new THREE.PlaneGeometry(4.6, 1.15), signMat)
+      plate.position.set(0, CLEAR_H + 1.0, 0.74)
+      g.add(plate)
+      this.scene.add(g)
+    }
+    portalBoxes.count = pbI
+    portalBoxes.instanceMatrix.needsUpdate = true
+    this.scene.add(portalBoxes)
+
+    // The cutting's retaining walls: short concrete panels flanking the
+    // approach on both sides of both portals, leaning gently into the fill.
+    const APPROACH_UNITS = 46
+    const PANEL = 7
+    const panels = new THREE.InstancedMesh(new THREE.BoxGeometry(0.5, 3.0, PANEL + 0.3), portalMat, Math.ceil((APPROACH_UNITS / PANEL) * 4) + 4)
+    panels.receiveShadow = true
+    let pi = 0
+    for (const [from, dir] of [
+      [t0 - APPROACH_UNITS / len, 1],
+      [t1, 1],
+    ] as const) {
+      for (let d = 0; d < APPROACH_UNITS; d += PANEL) {
+        const t = from + (d * dir) / len
+        this.track.pointAt(t, p)
+        this.track.tangentAt(t, tangent)
+        const nx = -tangent.z
+        const nz = tangent.x
+        const inv = 1 / Math.hypot(nx, nz)
+        for (const side of [1, -1]) {
+          if (pi >= panels.instanceMatrix.count) break
+          dummy.position.set(p.x + nx * inv * side * 7.3, p.y + 0.9, p.z + nz * inv * side * 7.3)
+          dummy.rotation.set(0, Math.atan2(tangent.x, tangent.z), 0)
+          dummy.rotateZ(-side * 0.06)
+          dummy.updateMatrix()
+          panels.setMatrixAt(pi++, dummy.matrix)
+        }
+      }
+    }
+    panels.count = pi
+    panels.instanceMatrix.needsUpdate = true
+    this.scene.add(panels)
+  }
+
+  /**
+   * The Kamakura coast (H5): along the bay arc the plain gives way to a real
+   * shoreline — sand, a sea that runs out into the fog, foam at the
+   * waterline, wind-bent coastal pines, an Enoshima-like island with its
+   * lighthouse. The sea sits a hair ABOVE the ground plane and the sand
+   * ribbon overlaps both, so no seam can ever open between the three.
+   */
+  private buildCoast() {
+    const T0 = 0.775
+    const T1 = 0.955
+    const CHUNKS = 4
+    const SAMPLES = 96
+    // Close enough that the water is a real presence from the cab (the eye
+    // sits barely 3.6 units up, so a far shoreline collapses the sea into a
+    // sliver at the horizon), far enough to keep the beach out of the
+    // trackside corridor.
+    const shoreAt = (t: number) => 95 + 18 * Math.sin(t * 197.3) + 9 * Math.sin(t * 463.7 + 2.0)
+
+    const p = new THREE.Vector3()
+    const out = new THREE.Vector2()
+    // Per-chunk vertex lists: chunk c covers samples [c*24 .. (c+1)*24].
+    const sandPos: number[][] = Array.from({ length: CHUNKS }, () => [])
+    const sandUv: number[][] = Array.from({ length: CHUNKS }, () => [])
+    const seaPos: number[][] = Array.from({ length: CHUNKS }, () => [])
+    const seaUv: number[][] = Array.from({ length: CHUNKS }, () => [])
+    const foamPos: number[][] = Array.from({ length: CHUNKS }, () => [])
+    const perChunk = SAMPLES / CHUNKS
+    for (let c = 0; c < CHUNKS; c++) {
+      for (let k = 0; k <= perChunk; k++) {
+        const i = c * perChunk + k
+        const t = T0 + ((T1 - T0) * i) / SAMPLES
+        this.track.pointAt(t, p)
+        out.set(p.x, p.z).normalize()
+        const S = shoreAt(t)
+        const v = i / SAMPLES
+        // Sand: from inland edge (just above the plain) down under the water.
+        sandPos[c].push(
+          p.x + out.x * (S - 42), -0.41, p.z + out.y * (S - 42),
+          p.x + out.x * (S + 8), -0.5, p.z + out.y * (S + 8),
+        )
+        sandUv[c].push(0, v * 40, 1, v * 40)
+        // Sea: flat sheet from the waterline out into the fog.
+        seaPos[c].push(
+          p.x + out.x * (S + 2), -0.455, p.z + out.y * (S + 2),
+          p.x + out.x * (S + 2600), -0.455, p.z + out.y * (S + 2600),
+        )
+        seaUv[c].push(0, v * 26, 9, v * 26)
+        foamPos[c].push(
+          p.x + out.x * (S - 2), -0.447, p.z + out.y * (S - 2),
+          p.x + out.x * (S + 7), -0.449, p.z + out.y * (S + 7),
+        )
+      }
+    }
+    const stripIndices = (() => {
+      const idx: number[] = []
+      for (let i = 0; i < perChunk; i++) {
+        const a = i * 2, b = i * 2 + 1, c = (i + 1) * 2, d = (i + 1) * 2 + 1
+        // Winding chosen so the surface faces the sky (see the embankment note).
+        idx.push(a, c, b, b, c, d)
+      }
+      return idx
+    })()
+
+    const ribbon = (positions: number[], uvs: number[] | null, mat: THREE.Material) => {
+      const geo = new THREE.BufferGeometry()
+      geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
+      if (uvs) geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2))
+      geo.setIndex(stripIndices)
+      geo.computeVertexNormals()
+      const mesh = new THREE.Mesh(geo, mat)
+      mesh.receiveShadow = true
+      this.scene.add(mesh)
+      return mesh
+    }
+
+    this.seaTexture = makeSeaTexture()
+    const seaMat = new THREE.MeshStandardMaterial({
+      color: 0xffffff,
+      map: this.seaTexture,
+      // Low metalness on purpose: at the grazing angle the cab sees the bay,
+      // a metallic surface reflected mostly environment map and the water
+      // washed out to sky-gray. Matte-ish keeps the teal.
+      roughness: 0.5,
+      metalness: 0.06,
+    })
+    this.foamMat = new THREE.MeshBasicMaterial({ color: 0xf4f8fa, transparent: true, opacity: 0.42, depthWrite: false })
+    const sandMat = new THREE.MeshStandardMaterial({ color: 0xe4d4a6, roughness: 1, vertexColors: true })
+    for (let c = 0; c < CHUNKS; c++) {
+      // Sand carries vertex colors registered as terrain, so winter frosts
+      // the beach along with the fields, not a summer postcard strip.
+      const sandGeo = new THREE.BufferGeometry()
+      sandGeo.setAttribute('position', new THREE.Float32BufferAttribute(sandPos[c], 3))
+      sandGeo.setAttribute('uv', new THREE.Float32BufferAttribute(sandUv[c], 2))
+      const sandColors = new Float32Array((sandPos[c].length / 3) * 3).fill(1)
+      sandGeo.setAttribute('color', new THREE.BufferAttribute(sandColors, 3))
+      sandGeo.setIndex(stripIndices)
+      sandGeo.computeVertexNormals()
+      const sand = new THREE.Mesh(sandGeo, sandMat)
+      sand.receiveShadow = true
+      this.scene.add(sand)
+      this.seasonalPools.push(registerPool('terrain', sandGeo.getAttribute('color') as THREE.BufferAttribute))
+      ribbon(seaPos[c], seaUv[c], seaMat)
+      ribbon(foamPos[c], null, this.foamMat)
+    }
+
+    // ——— Enoshima on the horizon: a wooded hump and its little lighthouse.
+    const islandT = 0.865
+    this.track.pointAt(islandT, p)
+    out.set(p.x, p.z).normalize()
+    const islandBase = new THREE.Vector3(p.x + out.x * (shoreAt(islandT) + 820), -0.45, p.z + out.y * (shoreAt(islandT) + 820))
+    const island = new THREE.Mesh(
+      new THREE.SphereGeometry(260, 14, 10),
+      new THREE.MeshStandardMaterial({ color: 0x2e4433, roughness: 1, flatShading: true }),
+    )
+    island.scale.set(1, 0.32, 0.8)
+    island.position.copy(islandBase)
+    this.scene.add(island)
+    const lighthouse = new THREE.Mesh(
+      new THREE.CylinderGeometry(4, 6, 42, 8),
+      new THREE.MeshStandardMaterial({ color: 0xe8ecf0, roughness: 0.6 }),
+    )
+    lighthouse.position.set(islandBase.x, 82, islandBase.z)
+    this.scene.add(lighthouse)
+
+    // ——— Rocks at the waterline: dark, half-drowned.
+    const rockMat = new THREE.MeshStandardMaterial({ color: 0x3d4148, roughness: 1, flatShading: true })
+    const rocks = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1, 0), rockMat, 14)
+    const dummy = new THREE.Object3D()
+    for (let i = 0; i < 14; i++) {
+      const t = T0 + 0.015 + Math.random() * (T1 - T0 - 0.03)
+      this.track.pointAt(t, p)
+      out.set(p.x, p.z).normalize()
+      const S = shoreAt(t)
+      const off = S + (Math.random() - 0.3) * 16
+      dummy.position.set(p.x + out.x * off, -0.5 + Math.random() * 0.5, p.z + out.y * off)
+      dummy.scale.set(2 + Math.random() * 4, 1.2 + Math.random() * 2.4, 2 + Math.random() * 3.5)
+      dummy.rotation.set(0, Math.random() * Math.PI, 0)
+      dummy.updateMatrix()
+      rocks.setMatrixAt(i, dummy.matrix)
+    }
+    rocks.instanceMatrix.needsUpdate = true
+    this.scene.add(rocks)
+
+    // ——— Sailboats: white sails scattered over the near water. Nothing
+    // says "this is the sea" faster, and seven quads cost nothing.
+    const sailMat = new THREE.MeshStandardMaterial({ color: 0xf4f6f8, roughness: 0.7, side: THREE.DoubleSide })
+    const hullMat = new THREE.MeshStandardMaterial({ color: 0x39404a, roughness: 0.8 })
+    const sails = new THREE.InstancedMesh(makeSailGeometry(), sailMat, 7)
+    const hulls = new THREE.InstancedMesh(new THREE.BoxGeometry(0.9, 0.5, 3.4), hullMat, 7)
+    for (let i = 0; i < 7; i++) {
+      const t = T0 + 0.02 + Math.random() * (T1 - T0 - 0.04)
+      this.track.pointAt(t, p)
+      out.set(p.x, p.z).normalize()
+      const off = shoreAt(t) + 90 + Math.random() * 420
+      const x = p.x + out.x * off
+      const z = p.z + out.y * off
+      const scale = 1.6 + Math.random() * 1.6
+      dummy.position.set(x, -0.45, z)
+      dummy.rotation.set(0, Math.random() * Math.PI * 2, 0)
+      dummy.scale.setScalar(scale)
+      dummy.updateMatrix()
+      sails.setMatrixAt(i, dummy.matrix)
+      hulls.setMatrixAt(i, dummy.matrix)
+    }
+    sails.instanceMatrix.needsUpdate = true
+    hulls.instanceMatrix.needsUpdate = true
+    this.scene.add(sails, hulls)
+
+    // ——— Coastal pines: the Shonan signature — leaning inland, shaped by
+    // the sea wind, strung loosely along the top of the beach.
+    const PINES = 44
+    const trunkMat = new THREE.MeshStandardMaterial({ color: 0x4a3527, roughness: 0.95 })
+    const trunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.22, 0.34, 3.4, 5), trunkMat, PINES)
+    const pineMat = new THREE.MeshStandardMaterial({ color: 0x2e4a2e, roughness: 0.95 })
+    const crowns = new THREE.InstancedMesh(new THREE.ConeGeometry(2.0, 3.6, 7), pineMat, PINES)
+    crowns.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(PINES * 3), 3)
+    trunks.castShadow = crowns.castShadow = true
+    const tint = new THREE.Color()
+    for (let i = 0; i < PINES; i++) {
+      const t = T0 + ((i + 0.5) / PINES) * (T1 - T0) + (Math.random() - 0.5) * 0.004
+      this.track.pointAt(t, p)
+      out.set(p.x, p.z).normalize()
+      const off = shoreAt(t) - 28 - Math.random() * 18
+      const x = p.x + out.x * off
+      const z = p.z + out.y * off
+      const scale = 0.85 + Math.random() * 0.75
+      const lean = 0.14 + Math.random() * 0.2 // tops pushed inland by the onshore wind
+      // Lean axis: tilt around the shoreline direction, away from the sea.
+      const yaw = Math.atan2(out.x, out.y)
+      dummy.position.set(x, BASE_GROUND_Y + 1.6 * scale, z)
+      dummy.rotation.set(0, yaw, 0)
+      // Negative: the sea wind pushes the APEX inland (風衝樹形) — the
+      // positive sign leaned the trunks toward the water (Haruto, round 1).
+      dummy.rotateX(-lean)
+      dummy.scale.setScalar(scale)
+      dummy.updateMatrix()
+      trunks.setMatrixAt(i, dummy.matrix)
+      dummy.position.set(x - out.x * lean * 4.4 * scale, BASE_GROUND_Y + (3.4 + 1.7) * scale, z - out.y * lean * 4.4 * scale)
+      dummy.updateMatrix()
+      crowns.setMatrixAt(i, dummy.matrix)
+      tint.setHSL(0.33 + Math.random() * 0.05, 0.34, 0.19 + Math.random() * 0.09)
+      crowns.setColorAt(i, tint)
+    }
+    trunks.instanceMatrix.needsUpdate = true
+    crowns.instanceMatrix.needsUpdate = true
+    if (crowns.instanceColor) crowns.instanceColor.needsUpdate = true
+    this.scene.add(trunks, crowns)
+    this.seasonalPools.push(registerPool('pine', crowns.instanceColor!))
   }
 
   private buildClouds() {
@@ -1895,6 +2385,14 @@ export class Scenery {
     if (o > 0.001) tint.lerp(overcastTintTarget, (raining && !snowing ? 0.85 : 0.7) * o)
     this.cloudMat.uniforms.opacity.value = (0.85 - night * 0.55) * (1 + (raining ? 0.3 : 0.18) * o)
     this.cloudMat.uniforms.uTime.value = this.time
+
+    // The sea breathes: streak texture creeping shoreward, foam pulsing on
+    // the ~9-second rhythm of real surf. Two uniform-ish writes per frame.
+    if (this.seaTexture) {
+      this.seaTexture.offset.y = (this.time * 0.006) % 1
+      this.seaTexture.offset.x = Math.sin(this.time * 0.05) * 0.02
+    }
+    if (this.foamMat) this.foamMat.opacity = 0.3 + 0.18 * (0.5 + 0.5 * Math.sin(this.time * 0.7))
   }
 
   /**
@@ -1910,6 +2408,59 @@ export class Scenery {
     this.fujiSnowWinter.visible = season === 'winter'
   }
 }
+
+/** A little sloop: triangular main + a hint of jib, one BufferGeometry. */
+function makeSailGeometry(): THREE.BufferGeometry {
+  const g = new THREE.BufferGeometry()
+  const v = new Float32Array([
+    // main sail
+    0, 0.4, -0.2, 0, 5.2, -0.2, 0, 0.4, 2.1,
+    // jib, slightly forward
+    0.06, 0.4, -0.4, 0.06, 3.6, -0.35, 0.06, 0.4, -1.9,
+  ])
+  g.setAttribute('position', new THREE.BufferAttribute(v, 3))
+  g.computeVertexNormals()
+  return g
+}
+
+/**
+ * The sea surface: deep teal with faint wave streaks running shore-parallel,
+ * scrolled slowly by Scenery.update(). Streaks, not ripples — from a train
+ * the bay reads as long horizontal bands of light, and a tiled ripple
+ * pattern would moiré at the grazing angle the cab sees it from.
+ */
+function makeSeaTexture(): THREE.CanvasTexture {
+  const size = 256
+  const canvas = document.createElement('canvas')
+  canvas.width = size
+  canvas.height = size
+  const ctx = canvas.getContext('2d')!
+  const base = ctx.createLinearGradient(0, 0, 0, size)
+  base.addColorStop(0, '#175066')
+  base.addColorStop(1, '#1b5a72')
+  ctx.fillStyle = base
+  ctx.fillRect(0, 0, size, size)
+  // Wave streaks: soft bright bands with darker troughs between them.
+  for (let i = 0; i < 46; i++) {
+    const y = Math.random() * size
+    const w = 30 + Math.random() * 110
+    const x = Math.random() * size
+    const bright = Math.random() < 0.6
+    ctx.fillStyle = bright ? 'rgba(180,220,235,0.10)' : 'rgba(8,24,34,0.14)'
+    ctx.fillRect(x - w / 2, y, w, 1.5 + Math.random() * 2)
+  }
+  // A scatter of sun glints.
+  for (let i = 0; i < 90; i++) {
+    ctx.fillStyle = `rgba(210,235,245,${(0.04 + Math.random() * 0.08).toFixed(3)})`
+    ctx.fillRect(Math.random() * size, Math.random() * size, 1 + Math.random() * 2, 1)
+  }
+  const tex = new THREE.CanvasTexture(canvas)
+  tex.wrapS = tex.wrapT = THREE.RepeatWrapping
+  tex.colorSpace = THREE.SRGBColorSpace
+  return tex
+}
+
+const UP = new THREE.Vector3(0, 1, 0)
 
 // Fixed palette used by update() every frame — hoisted so the per-frame path
 // allocates nothing.

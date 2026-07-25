@@ -98,14 +98,15 @@ export function seasonalColor(kind: FoliageKind, season: Season, i: number, r: n
       break
     case 'terrain':
       // Vertex colors may exceed 1: overdrive lifts each season through the
-      // dark ground texture it multiplies against — without it, autumn gold
-      // and winter frost both drowned in olive (the panel's #1 complaint).
-      // The ground texture sits at ~0.3 luma, so the gains must be large to
-      // read: winter has to reach snow-white THROUGH it (0.9·2.7·0.3 ≈ 0.7).
-      if (season === 'spring') out.lerp(FRESH_GREEN, 0.15).multiplyScalar(1.08)
-      else if (season === 'summer') out.lerp(DEEP_GREEN, 0.22).multiplyScalar(1.05)
-      else if (season === 'autumn') out.lerp(STRAW, 0.55).multiplyScalar(1.85)
-      else out.lerp(FROST_GROUND, 0.75).multiplyScalar(2.7)
+      // ground texture it multiplies against — without it, autumn gold and
+      // winter frost both drowned in olive (the panel's #1 complaint).
+      // Retuned for the ~0.42-luma texture (was ~0.18, gains 1.85/2.7): the
+      // lighter base carries its own detail now, so winter reaches
+      // snow-white at 0.9·1.9·0.42 ≈ 0.72 without crushing the texture.
+      if (season === 'spring') out.lerp(FRESH_GREEN, 0.15).multiplyScalar(0.98)
+      else if (season === 'summer') out.lerp(DEEP_GREEN, 0.22).multiplyScalar(0.95)
+      else if (season === 'autumn') out.lerp(STRAW, 0.55).multiplyScalar(1.4)
+      else out.lerp(FROST_GROUND, 0.75).multiplyScalar(1.9)
       break
     case 'mountain':
       if (season === 'summer') out.lerp(DEEP_PINE, 0.3)

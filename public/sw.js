@@ -2,7 +2,7 @@
 // Strategy: network-first for navigations (so deploys land immediately),
 // stale-while-revalidate for same-origin assets (hashed by Vite, so a cached
 // asset is always the right version for the page that requested it).
-const CACHE = 'tokyo-loop-v2'
+const CACHE = 'tokyo-loop-v3'
 
 // Precached at install time so the app is truly offline-capable right after
 // the FIRST visit — previously install() only called skipWaiting() and left

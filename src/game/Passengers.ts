@@ -130,28 +130,64 @@ interface Variant {
   stature: number
   /** Elderly forward lean, radians-ish factor for the side pose. */
   hunch?: number
+  /**
+   * Canopy color of the FURLED umbrella this commuter carries on wet days.
+   * Furled on purpose: the platform has a roof, and nobody in Japan opens
+   * an umbrella under the canopy — you carry it rolled until the street.
+   * Absent = this archetype just gets wet (the backpack kids always do).
+   */
+  umbrella?: string
 }
 
 const VARIANTS: Variant[] = [
   // salaryman — navy suit, briefcase
-  { skin: '#f0c8a8', hair: '#26221f', hairStyle: 'short', top: '#2c3444', topShade: '#232a38', collar: '#f2f2ec', bottom: '#2c3444', bottomStyle: 'pants', bag: 'briefcase', bagColor: '#4a3527', build: 1.0, stature: 1.0 },
+  { skin: '#f0c8a8', hair: '#26221f', hairStyle: 'short', top: '#2c3444', topShade: '#232a38', collar: '#f2f2ec', bottom: '#2c3444', bottomStyle: 'pants', bag: 'briefcase', bagColor: '#4a3527', build: 1.0, stature: 1.0, umbrella: '#1d2738' },
   // office worker — gray blazer, tote
-  { skin: '#f2cbab', hair: '#3b2d24', hairStyle: 'bob', top: '#6b7280', topShade: '#59616e', collar: '#e8e6df', bottom: '#4b5563', bottomStyle: 'skirt', legWear: '#3a3a42', bag: 'tote', bagColor: '#8a4a4a', build: 0.9, stature: 0.94 },
+  { skin: '#f2cbab', hair: '#3b2d24', hairStyle: 'bob', top: '#6b7280', topShade: '#59616e', collar: '#e8e6df', bottom: '#4b5563', bottomStyle: 'skirt', legWear: '#3a3a42', bag: 'tote', bagColor: '#8a4a4a', build: 0.9, stature: 0.94, umbrella: '#7a3040' },
   // high-school girl — sailor uniform, satchel
-  { skin: '#f2cbab', hair: '#2a2018', hairStyle: 'ponytail', top: '#f5f5f0', topShade: '#e2e2da', collar: '#27324a', bottom: '#27324a', bottomStyle: 'skirt', legWear: '#2b2b33', bag: 'satchel', bagColor: '#6d4a2f', build: 0.85, stature: 0.88 },
+  { skin: '#f2cbab', hair: '#2a2018', hairStyle: 'ponytail', top: '#f5f5f0', topShade: '#e2e2da', collar: '#27324a', bottom: '#27324a', bottomStyle: 'skirt', legWear: '#2b2b33', bag: 'satchel', bagColor: '#6d4a2f', build: 0.85, stature: 0.88, umbrella: '#cfd8e2' },
   // high-school boy — white shirt, backpack
   { skin: '#edc4a0', hair: '#1e1a16', hairStyle: 'short', top: '#f2f2ec', topShade: '#dddbd2', bottom: '#2b2f3a', bottomStyle: 'pants', bag: 'backpack', bagColor: '#3f5a63', build: 0.9, stature: 0.9 },
   // elderly man — earth-tone vest, gentle stoop
-  { skin: '#e8bc9a', hair: '#b9b4ac', hairStyle: 'gray', top: '#5d4f3f', topShade: '#4c4034', collar: '#cfc8b8', bottom: '#57544c', bottomStyle: 'pants', bag: 'none', build: 0.95, stature: 0.9, hunch: 1 },
+  { skin: '#e8bc9a', hair: '#b9b4ac', hairStyle: 'gray', top: '#5d4f3f', topShade: '#4c4034', collar: '#cfc8b8', bottom: '#57544c', bottomStyle: 'pants', bag: 'none', build: 0.95, stature: 0.9, hunch: 1, umbrella: '#3b4034' },
   // youth — warm hoodie
   { skin: '#edc4a0', hair: '#3a2b20', hairStyle: 'short', top: '#b3432e', topShade: '#93392a', bottom: '#33383f', bottomStyle: 'pants', bag: 'none', build: 1.0, stature: 0.97 },
   // woman in a long coat — bun, tote
-  { skin: '#f2cbab', hair: '#443128', hairStyle: 'bun', top: '#7d5a68', topShade: '#6b4c59', longCoat: true, bottom: '#3f3a44', bottomStyle: 'pants', bag: 'tote', bagColor: '#8a6a42', build: 0.92, stature: 0.96 },
+  { skin: '#f2cbab', hair: '#443128', hairStyle: 'bun', top: '#7d5a68', topShade: '#6b4c59', longCoat: true, bottom: '#3f3a44', bottomStyle: 'pants', bag: 'tote', bagColor: '#8a6a42', build: 0.92, stature: 0.96, umbrella: '#5a4a66' },
   // traveler — cap and backpack
-  { skin: '#eec6a6', hair: '#57422e', hairStyle: 'cap', capColor: '#3c6e51', top: '#d9d3c6', topShade: '#c7c1b3', bottom: '#56606a', bottomStyle: 'pants', bag: 'backpack', bagColor: '#a34d3f', build: 1.05, stature: 1.0 },
+  { skin: '#eec6a6', hair: '#57422e', hairStyle: 'cap', capColor: '#3c6e51', top: '#d9d3c6', topShade: '#c7c1b3', bottom: '#56606a', bottomStyle: 'pants', bag: 'backpack', bagColor: '#a34d3f', build: 1.05, stature: 1.0, umbrella: '#274a3f' },
 ]
 
 const SHOE = '#1c1a18'
+
+/**
+ * A furled umbrella hanging from a hand at (hx, hy): shaft, wrapped canopy
+ * tapering to the ferrule, and a little J-handle above the grip. Small
+ * enough to read at sprite scale, colored enough to read as "rainy day".
+ */
+function drawFurledUmbrella(ctx: CanvasRenderingContext2D, color: string, hx: number, hy: number) {
+  ctx.strokeStyle = '#2a2c30'
+  ctx.lineWidth = 2
+  ctx.beginPath()
+  ctx.moveTo(hx, hy - 7)
+  ctx.lineTo(hx, hy + 34)
+  ctx.stroke()
+  // J-handle above the grip.
+  ctx.beginPath()
+  ctx.arc(hx - 3, hy - 7, 3, 0, Math.PI, true)
+  ctx.stroke()
+  // Wrapped canopy: a slim teardrop down the shaft.
+  ctx.fillStyle = color
+  ctx.beginPath()
+  ctx.moveTo(hx - 3.2, hy + 4)
+  ctx.quadraticCurveTo(hx - 2.2, hy + 22, hx, hy + 30)
+  ctx.quadraticCurveTo(hx + 2.2, hy + 22, hx + 3.2, hy + 4)
+  ctx.quadraticCurveTo(hx, hy + 1, hx - 3.2, hy + 4)
+  ctx.fill()
+  // Ferrule tip.
+  ctx.fillStyle = '#8f9399'
+  ctx.fillRect(hx - 1, hy + 30, 2, 4)
+}
 
 function rr(ctx: CanvasRenderingContext2D, x: number, y: number, w: number, h: number, r: number) {
   ctx.beginPath()
@@ -214,7 +250,7 @@ function drawHead(ctx: CanvasRenderingContext2D, v: Variant, cx: number, cy: num
 }
 
 /** Front-facing standing pose. `alt` adds a lazy weight shift so a crowd never stands in lockstep. */
-function drawFront(ctx: CanvasRenderingContext2D, v: Variant, alt: number) {
+function drawFront(ctx: CanvasRenderingContext2D, v: Variant, alt: number, wet = false) {
   const feet = 182
   const H = 156 * v.stature
   const headR = 16
@@ -305,11 +341,17 @@ function drawFront(ctx: CanvasRenderingContext2D, v: Variant, alt: number) {
     ctx.stroke()
   }
 
+  // Rainy days put a furled umbrella in the free hand (bags keep their side).
+  if (wet && v.umbrella) {
+    const freeSide = v.bag === 'briefcase' || v.bag === 'satchel' ? -1 : 1
+    drawFurledUmbrella(ctx, v.umbrella, cx + freeSide * (torsoW / 2 + armW / 2 + 1), shoulderY + armLen + 5)
+  }
+
   drawHead(ctx, v, cx, headCy, headR, 0)
 }
 
 /** Profile walking pose facing +x. `wf` 0..3 = contact, pass, contact (other leg), pass. */
-function drawSide(ctx: CanvasRenderingContext2D, v: Variant, wf: number) {
+function drawSide(ctx: CanvasRenderingContext2D, v: Variant, wf: number, wet = false) {
   const feet = 182
   const H = 156 * v.stature
   const headR = 16
@@ -398,6 +440,11 @@ function drawSide(ctx: CanvasRenderingContext2D, v: Variant, wf: number) {
   } else if (v.bag === 'satchel') {
     ctx.fillStyle = v.bagColor!
     rr(ctx, cx - torsoW / 2 - 4, hipY - 12, 14, 12, 2.5)
+  }
+  // The umbrella swings with the near arm, tip trailing.
+  if (wet && v.umbrella) {
+    const armLen2 = hipY - shoulderY - 8
+    drawFurledUmbrella(ctx, v.umbrella, cx + Math.sin(armNear) * armLen2 + 5, shoulderY + 4 + Math.cos(armNear) * armLen2)
   }
   drawHead(ctx, v, cx + 2 + hunch * 4, headCy + hunch * 3, headR, 1)
 }
@@ -490,7 +537,7 @@ function drawAttendant(ctx: CanvasRenderingContext2D, pose: number) {
   rr(ctx, hx - 2.5, hy - headR * 0.95, 5, 3.5, 1)
 }
 
-function makePassengerSheet(): THREE.CanvasTexture {
+function makePassengerSheet(wet = false): THREE.CanvasTexture {
   const canvas = document.createElement('canvas')
   canvas.width = SPRITE_COLS * CELL_W
   canvas.height = SPRITE_ROWS * CELL_H
@@ -503,8 +550,8 @@ function makePassengerSheet(): THREE.CanvasTexture {
         drawAttendant(ctx, col)
       } else {
         const v = VARIANTS[row]
-        if (col < 2) drawFront(ctx, v, col)
-        else drawSide(ctx, v, col - 2)
+        if (col < 2) drawFront(ctx, v, col, wet)
+        else drawSide(ctx, v, col - 2, wet)
       }
       ctx.restore()
     }
@@ -544,10 +591,15 @@ export class Passengers {
   private densityAccum = DENSITY_REFRESH_SECONDS // primed: first update() paints the crowd
   private readonly tmpV3 = new THREE.Vector3()
   private readonly tmpDir = new THREE.Vector3()
+  /** Dry sheet built at startup; the rainy-day one (furled umbrellas) bakes lazily on the first wet frame. */
+  private sheetDry: THREE.CanvasTexture
+  private sheetWet: THREE.CanvasTexture | null = null
+  private wet = false
 
   constructor(scene: THREE.Scene, track: Track, camera: THREE.Camera) {
     this.camera = camera
-    this.uniforms.uMap.value = makePassengerSheet()
+    this.sheetDry = makePassengerSheet()
+    this.uniforms.uMap.value = this.sheetDry
 
     for (let s = 0; s < N; s++) {
       const marker = track.markerFor(s)
@@ -743,6 +795,23 @@ export class Passengers {
     scene.add(shadows)
 
     this.refreshAmbient()
+  }
+
+  /**
+   * Weather wardrobe: on wet days most commuters carry a furled umbrella.
+   * One texture swap for every platform on the loop — the wet sheet is baked
+   * once on first use and cached, so flipping weather costs nothing after.
+   */
+  setWet(wet: boolean) {
+    if (wet === this.wet) return
+    this.wet = wet
+    if (wet && !this.sheetWet) this.sheetWet = makePassengerSheet(true)
+    this.uniforms.uMap.value = wet ? this.sheetWet! : this.sheetDry
+  }
+
+  /** Bakes the wet sheet ahead of time (idle callback after start), so a mid-drive weather front never pays for the canvas bake + texture upload. */
+  prebakeWet() {
+    if (!this.sheetWet) this.sheetWet = makePassengerSheet(true)
   }
 
   /** Writes a slot's local-platform position into the world-space offset attribute. */
