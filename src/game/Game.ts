@@ -257,6 +257,7 @@ export class Game {
    */
   private applyAtmosphere() {
     this.scenery.setSeason(this.season)
+    this.scenery.setWeather(this.weather)
     this.city.setSeason(this.season)
     for (const pool of this.terrainPools) applySeasonToPool(pool, this.season)
     // The rail corridor joins the winter: ballast whites over (overdriven

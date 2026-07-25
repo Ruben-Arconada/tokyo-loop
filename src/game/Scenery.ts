@@ -5,7 +5,7 @@ import { groundHeightAt, HILL_STATION_ID, mountainRoadPath } from './Track'
 import type { DayNightCycle } from './DayNightCycle'
 import { STATIONS, type ZoneTier } from '../data/stations'
 import { makeCloudTexture, makeNeonSignTexture, makeWindowGridTexture, makeRoofTileTexture, applyProgressiveWindows } from './signage'
-import { registerPool, applySeasonToPool, type Season, type SeasonalPool } from './Seasons'
+import { registerPool, applySeasonToPool, type Season, type SeasonalPool, type Weather } from './Seasons'
 
 const N = STATIONS.length
 
@@ -28,10 +28,17 @@ const PETALS_PER_CLUSTER = 40
 // right/up axes, so all clouds face the cab from anywhere on the loop in a
 // single draw call.
 const CLOUD_VERTEX = /* glsl */ `
+uniform float uTime;
 varying vec2 vUv;
 void main() {
   vUv = uv;
   vec3 center = instanceMatrix[3].xyz;
+  // Perpetual slow drift: the whole ring of clouds orbits the loop center
+  // (~30 min per lap), so the sky is never the same picture twice.
+  float a = uTime * 0.0035;
+  float ca = cos(a);
+  float sa = sin(a);
+  center.xz = mat2(ca, -sa, sa, ca) * center.xz;
   float sx = length(instanceMatrix[0].xyz);
   float sy = length(instanceMatrix[1].xyz);
   vec3 camRight = vec3(viewMatrix[0][0], viewMatrix[1][0], viewMatrix[2][0]);
@@ -92,6 +99,8 @@ export class Scenery {
   /** Winter drops Fuji's snowline: two prebuilt caps, one visible at a time. */
   private fujiSnowRegular!: THREE.Mesh
   private fujiSnowWinter!: THREE.Mesh
+  private cloudsMesh!: THREE.InstancedMesh
+  private weatherLook: Weather = 'clear'
   /** True while the twin red lamps are lit (train nearby) — Game reads flips to drive the kan-kan bell. */
   crossingBellActive = false
   crossingBlinkPhase = false
@@ -1742,32 +1751,57 @@ export class Scenery {
         map: { value: tex },
         tint: { value: new THREE.Color(0xffffff) },
         opacity: { value: 0.85 },
+        uTime: { value: 0 },
       },
       vertexShader: CLOUD_VERTEX,
       fragmentShader: CLOUD_FRAGMENT,
       transparent: true,
       depthWrite: false,
     })
-    const clouds = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), this.cloudMat, CLOUD_COUNT)
+    this.cloudsMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), this.cloudMat, CLOUD_COUNT)
+    this.cloudsMesh.frustumCulled = false
+    // Drawn after the stars (which sit at the camera's own position and so
+    // sort "nearest"): otherwise star points paint straight over cloud
+    // bodies at dawn/dusk, reading as speckly noise on the clouds.
+    this.cloudsMesh.renderOrder = 2
+    this.scene.add(this.cloudsMesh)
+    this.seedClouds()
+  }
+
+  /**
+   * (Re)places the cloud ring for the current weather — fresh shapes every
+   * time the weather changes, so the sky is never "always the same clouds"
+   * (Rubén's note). Clear: sparse fair-weather puffs, high and far. Cloudy:
+   * fuller and lower. Rain/snow: a heavy lid — big, low, stretched slabs.
+   */
+  private seedClouds() {
+    const heavy = this.weatherLook === 'rain'
+    const mid = this.weatherLook === 'cloudy'
     const dummy = new THREE.Object3D()
     for (let i = 0; i < CLOUD_COUNT; i++) {
       const angle = (i / CLOUD_COUNT) * Math.PI * 2 + Math.random() * 0.4
       // Kept far out, with width capped relative to distance, so no single
       // transparent quad ever eats a huge slice of mobile fill rate.
-      const radius = 1500 + Math.random() * 2400
-      const w = Math.min(320 + Math.random() * 480, radius * 0.28)
-      dummy.position.set(Math.cos(angle) * radius, 300 + Math.random() * 380, Math.sin(angle) * radius)
-      dummy.scale.set(w, w * 0.42, 1)
+      const radius = heavy ? 1100 + Math.random() * 1900 : mid ? 1300 + Math.random() * 2100 : 1500 + Math.random() * 2400
+      const w = Math.min(
+        heavy ? 520 + Math.random() * 520 : mid ? 400 + Math.random() * 500 : 320 + Math.random() * 480,
+        radius * (heavy ? 0.4 : 0.28),
+      )
+      const y = heavy ? 200 + Math.random() * 220 : mid ? 250 + Math.random() * 300 : 300 + Math.random() * 380
+      dummy.position.set(Math.cos(angle) * radius, y, Math.sin(angle) * radius)
+      // Storm slabs flatten out; fair-weather puffs stay rounder.
+      dummy.scale.set(w, w * (heavy ? 0.3 : 0.42), 1)
       dummy.updateMatrix()
-      clouds.setMatrixAt(i, dummy.matrix)
+      this.cloudsMesh.setMatrixAt(i, dummy.matrix)
     }
-    clouds.instanceMatrix.needsUpdate = true
-    clouds.frustumCulled = false
-    // Drawn after the stars (which sit at the camera's own position and so
-    // sort "nearest"): otherwise star points paint straight over cloud
-    // bodies at dawn/dusk, reading as speckly noise on the clouds.
-    clouds.renderOrder = 2
-    this.scene.add(clouds)
+    this.cloudsMesh.instanceMatrix.needsUpdate = true
+  }
+
+  /** The sky dresses for the weather: reseeds the cloud ring and drives the storm-vs-snow tint in update(). */
+  setWeather(weather: Weather) {
+    if (weather === this.weatherLook) return
+    this.weatherLook = weather
+    this.seedClouds()
   }
 
   /**
@@ -1844,13 +1878,20 @@ export class Scenery {
       attr.needsUpdate = true
     }
 
-    // Clouds: white by day, dusk-tinted, near-invisible dark at night —
-    // and heavier, grayer, more opaque as the overcast closes in.
+    // Clouds: white by day, dusk-tinted, near-invisible dark at night — and
+    // dressed for the weather as the overcast closes in: RAIN brings true
+    // dark nimbus (Rubén: "tiene que haber nubes oscuras en lluvia"), while
+    // a snowfall keeps the light ash lid that reads as snow-laden, and
+    // plain cloudy sits in between.
     const o = dayNight.overcast
+    const raining = this.weatherLook === 'rain'
+    const snowing = raining && this.season === 'winter'
+    const overcastTintTarget = snowing ? OVERCAST_CLOUD : raining ? STORM_CLOUD : MID_CLOUD
     const tint = this.cloudMat.uniforms.tint.value as THREE.Color
     tint.copy(horizon).lerp(WHITE, 0.55).multiplyScalar(1 - night * 0.82)
-    if (o > 0.001) tint.lerp(OVERCAST_CLOUD, 0.7 * o)
-    this.cloudMat.uniforms.opacity.value = (0.85 - night * 0.55) * (1 + 0.18 * o)
+    if (o > 0.001) tint.lerp(overcastTintTarget, (raining && !snowing ? 0.85 : 0.7) * o)
+    this.cloudMat.uniforms.opacity.value = (0.85 - night * 0.55) * (1 + (raining ? 0.3 : 0.18) * o)
+    this.cloudMat.uniforms.uTime.value = this.time
   }
 
   /**
@@ -1876,6 +1917,10 @@ const SKYTREE_STEEL = new THREE.Color(0xb8c4cc)
 const SKYTREE_IKI = new THREE.Color(0x9fd8ff)
 const SKYTREE_MIYABI = new THREE.Color(0xc9a0e8)
 const WHITE = new THREE.Color(0xffffff)
-// Light ash-gray: snow/rain clouds over a pearl sky read as weather, not
-// soot (the first pick, a charcoal 0x5d6670, looked like smoke plumes).
+// Three overcast wardrobes: light ash for snowfall (a charcoal snow sky
+// read as smoke plumes — panel ronda 1), a middle gray for plain cloudy,
+// and a genuinely dark nimbus for rain (director's note: rain clouds must
+// be DARK, and never the same clouds as fair weather).
 const OVERCAST_CLOUD = new THREE.Color(0x99a1ab)
+const MID_CLOUD = new THREE.Color(0x848d98)
+const STORM_CLOUD = new THREE.Color(0x424a55)
