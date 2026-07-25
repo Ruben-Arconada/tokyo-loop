@@ -58,6 +58,8 @@ export class UI {
   private atmoGlyphEl!: HTMLSpanElement
   private perfChip!: HTMLDivElement
   private camChip!: HTMLButtonElement
+  private cctvEl!: HTMLDivElement
+  private lastCctvStation = ''
   private occFill!: HTMLDivElement
   private occLabel!: HTMLElement
   private lastOccText = ''
@@ -161,6 +163,14 @@ export class UI {
         </div>
         <div class="notch-readout">N</div>
       </div>
+      <div class="cctv hidden" aria-hidden="true">
+        <span class="cctv-corner tl"></span><span class="cctv-corner tr"></span>
+        <div class="cctv-banner">
+          <span class="cctv-rec"><i></i>REC</span>
+          <span>CAM 01 · <b class="cctv-station">—</b></span>
+          <span class="cctv-time">--:--</span>
+        </div>
+      </div>
       <button class="cam-chip" aria-label="Cambiar vista">
         <span class="cam-icon">🚉</span><span class="cam-label">Cabina</span>
       </button>
@@ -193,6 +203,7 @@ export class UI {
     this.lineDiagram = this.hud.querySelector('.line-diagram')!
     this.perfChip = this.hud.querySelector('.perf-chip')!
     this.camChip = this.hud.querySelector('.cam-chip')!
+    this.cctvEl = this.hud.querySelector('.cctv')!
     this.occFill = this.hud.querySelector('.occupancy-fill')!
     this.occLabel = this.hud.querySelector('.occupancy-label')!
     // One tap cycles: the three views are few enough that a picker would be
@@ -479,6 +490,17 @@ export class UI {
     this.flashToast(`${station.nameEn} sin parada${detail}${penalty > 0 ? `  −${penalty}` : ''}`, 'overshot')
   }
 
+  /** The station-camera dressing: shown only while looking through it. */
+  setCctv(on: boolean) {
+    this.cctvEl.classList.toggle('hidden', !on)
+  }
+
+  setCctvLabel(station: string) {
+    if (station === this.lastCctvStation) return
+    this.lastCctvStation = station
+    ;(this.cctvEl.querySelector('.cctv-station') as HTMLElement).textContent = station.toUpperCase()
+  }
+
   setCameraMode(mode: CameraMode) {
     this.cameraMode = mode
     const m = CAMERA_MODES.find((x) => x.id === mode)!
@@ -543,8 +565,13 @@ export class UI {
   updateClock(timeOfDay: number, phaseLabel: string) {
     const h = Math.floor(timeOfDay)
     const m = Math.floor((timeOfDay - h) * 60)
-    this.clockEl.textContent = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+    const stamp = `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}`
+    this.clockEl.textContent = stamp
     this.phaseEl.textContent = phaseLabel
+    // The timecode only matters while the station camera is up.
+    if (!this.cctvEl.classList.contains('hidden')) {
+      ;(this.cctvEl.querySelector('.cctv-time') as HTMLElement).textContent = stamp
+    }
   }
 
   updateTrain(opts: {

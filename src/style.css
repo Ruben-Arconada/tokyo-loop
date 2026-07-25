@@ -680,6 +680,63 @@ canvas.game-canvas {
   font-variant-numeric: tabular-nums;
 }
 
+/* ---------- Station camera dressing ---------- */
+/* Pure CSS on purpose: the game is already fighting a thermal budget, and a
+   post-process pass to say "this is CCTV" would cost a great deal more than
+   four corner brackets and a timecode. */
+.cctv {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  font-family: ui-monospace, 'SF Mono', 'Roboto Mono', monospace;
+  font-size: 11px;
+  letter-spacing: 0.08em;
+  color: rgba(233, 240, 233, 0.82);
+  text-shadow: 0 1px 3px rgba(0, 0, 0, 0.85);
+  /* The soft darkening a cheap wide lens gives at the edges. */
+  background: radial-gradient(ellipse at center, transparent 52%, rgba(0, 0, 0, 0.42) 100%);
+}
+.cctv.hidden { display: none; }
+.cctv-corner {
+  position: absolute;
+  width: 24px;
+  height: 24px;
+  border: 2px solid rgba(233, 240, 233, 0.5);
+}
+.cctv-corner.tl { top: calc(var(--safe-top) + 86px); left: calc(var(--safe-left) + 14px); border-right: 0; border-bottom: 0; }
+.cctv-corner.tr { top: calc(var(--safe-top) + 86px); right: calc(var(--safe-right) + 14px); border-left: 0; border-bottom: 0; }
+/* One banner instead of four scattered readouts: the HUD already owns every
+   corner, and a timecode hidden behind the brake scale is not a timecode. */
+.cctv-banner {
+  position: absolute;
+  top: calc(var(--safe-top) + 92px);
+  left: 50%;
+  transform: translateX(-50%);
+  display: flex;
+  align-items: center;
+  gap: var(--space-4);
+  padding: 3px var(--space-3);
+  background: rgba(0, 0, 0, 0.35);
+  border-radius: var(--radius-sm);
+  white-space: nowrap;
+}
+.cctv-rec {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  font-weight: 700;
+}
+.cctv-rec i {
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: #ff4d4d;
+  animation: cctv-blink 1.4s steps(1, end) infinite;
+}
+@keyframes cctv-blink { 0%, 55% { opacity: 1; } 56%, 100% { opacity: 0.15; } }
+.cctv-banner b { font-weight: 700; letter-spacing: 0.12em; }
+.cctv-time { font-variant-numeric: tabular-nums; }
+
 /* ---------- Camera view chip ---------- */
 /* Bottom-left column, above the score: thumb-reachable and clear of the
    lever, the door button and the E-brake. */

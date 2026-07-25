@@ -70,8 +70,6 @@ const DOOR_OPEN_INSTANT_POINTS = 30
 const DOOR_OPEN_QUICK_POINTS = 15
 const DOOR_CLOSE_SHARP_POINTS = 30
 /** Boarding takes longer in the rush hours: base + crowd-scaled extra. */
-/** Eye height on the platform slab (City's PLATFORM_TOP + a person). */
-const PLATFORM_EYE_Y = 1.2 + 1.62
 /** Platform edge offset from the track centreline (City's TRACK_CLEARANCE). */
 const PLATFORM_INNER = 3
 /** Height of the driver's eye above the rail head. */
@@ -84,6 +82,17 @@ const EXT_PITCH_MIN = 0.18
 const EXT_PITCH_MAX = 0.95
 /** How far past a platform the train must get before the platform camera hands over. */
 const PLATFORM_HANDOVER_UNITS = 150
+/** Where the station's own camera hangs: high, at the back, under the canopy. */
+const CCTV_HEIGHT = 5.15
+const CCTV_LATERAL = 12.2
+const CCTV_BACK = 22
+/** Pan/tilt limits from its mount — enough to follow the platform, never enough to lose it. */
+const CCTV_YAW_LIMIT = 0.62
+const CCTV_PITCH_MIN = -0.28
+const CCTV_PITCH_MAX = 0.2
+/** Security lenses are wide; the game's normal view is not. */
+const CCTV_FOV = 84
+const NORMAL_FOV = 68
 const BOARDING_BASE_SECONDS = 5.5
 const BOARDING_CROWD_SECONDS = 5.5
 /** A skipped station can sting, but it must never wipe a good run. */
@@ -143,6 +152,9 @@ export class Game {
   private extPitch = 0.42
   /** Which platform the standing camera is on — it lags the train's target on purpose. */
   private platformStation = 0
+  /** Pan/tilt of the platform camera, relative to its mounted aim. */
+  private platYaw = 0
+  private platPitch = 0
   private leverPivot!: THREE.Object3D
   private destinationMat!: THREE.MeshBasicMaterial
   private lastDestinationIdx = -1
@@ -502,6 +514,12 @@ export class Game {
       // Free all the way round the sides; the elevation is what gets fenced.
       this.extYaw -= dx * 0.005
       this.extPitch = THREE.MathUtils.clamp(this.extPitch + dy * 0.004, EXT_PITCH_MIN, EXT_PITCH_MAX)
+      if (!this.running) this.renderOnce()
+      return
+    }
+    if (this.cameraMode === 'platform') {
+      this.platYaw = THREE.MathUtils.clamp(this.platYaw - dx * 0.0035, -CCTV_YAW_LIMIT, CCTV_YAW_LIMIT)
+      this.platPitch = THREE.MathUtils.clamp(this.platPitch - dy * 0.003, CCTV_PITCH_MIN, CCTV_PITCH_MAX)
       if (!this.running) this.renderOnce()
       return
     }
@@ -1148,7 +1166,15 @@ export class Game {
       this.lookYaw = 0
       this.lookPitch = 0
     }
-    if (mode === 'platform') this.platformStation = this.train.targetStationIndex
+    if (mode === 'platform') {
+      this.platformStation = this.train.targetStationIndex
+      this.platYaw = 0
+      this.platPitch = 0
+    }
+    // A security lens is wide; everything else keeps the game's own framing.
+    this.camera.fov = mode === 'platform' ? CCTV_FOV : NORMAL_FOV
+    this.camera.updateProjectionMatrix()
+    this.ui.setCctv(mode === 'platform')
     this.updateCameraFromTrain()
     if (!this.running) this.renderOnce()
   }
@@ -1221,20 +1247,30 @@ export class Game {
     const pTangent = this.track.tangentAt(marker.tFraction).normalize()
     const pNormal = new THREE.Vector3(pTangent.z, 0, -pTangent.x).normalize()
     const pSide = STATIONS[this.platformStation].doorSide === 'left' ? 1 : -1
-    // Standing well back from the edge and looking ALONG the platform: that
-    // frames the queues, the doorway in front of you and the train's flank
-    // running away toward the cab, instead of a wall of car two metres off.
+
+    // Mounted high at the back of the platform under the canopy, looking down
+    // its length — where a station's own camera hangs, and the angle that
+    // frames the doorways, the queues and the train's flank all at once.
     const eye = pPoint
       .clone()
-      .addScaledVector(pNormal, pSide * (PLATFORM_INNER + 4.6))
-      .addScaledVector(pTangent, -16)
-      .add(new THREE.Vector3(0, PLATFORM_EYE_Y, 0))
-    const focus = pPoint
+      .addScaledVector(pNormal, pSide * CCTV_LATERAL)
+      .addScaledVector(pTangent, -CCTV_BACK)
+      .add(new THREE.Vector3(0, CCTV_HEIGHT, 0))
+    // Pan and tilt from that fixed mount. A security camera swivels; it does
+    // not walk, and it does not lose the platform: both axes are fenced so it
+    // can never end up staring at the sky or away down the line.
+    const aim = pPoint
       .clone()
-      .addScaledVector(pNormal, pSide * (PLATFORM_INNER + 1.4))
-      .addScaledVector(pTangent, 12)
-      .add(new THREE.Vector3(0, 1.75, 0))
-    const m = new THREE.Matrix4().lookAt(eye, focus, worldUp)
+      .addScaledVector(pNormal, pSide * (PLATFORM_INNER + 1.6))
+      .addScaledVector(pTangent, CCTV_BACK * 0.55)
+      .add(new THREE.Vector3(0, 1.6, 0))
+    const baseDir = aim.sub(eye)
+    const baseYaw = Math.atan2(baseDir.x, baseDir.z)
+    const basePitch = Math.asin(THREE.MathUtils.clamp(baseDir.y / baseDir.length(), -1, 1))
+    const yaw = baseYaw + this.platYaw * pSide
+    const pitch = basePitch + this.platPitch
+    const dir = new THREE.Vector3(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch))
+    const m = new THREE.Matrix4().lookAt(eye, eye.clone().add(dir), worldUp)
     this.camera.position.copy(eye)
     this.camera.quaternion.setFromRotationMatrix(m)
   }
@@ -1363,6 +1399,7 @@ export class Game {
     this.updateCameraFromTrain()
     this.updateLever()
     this.ui.updateClock(this.dayNight.timeOfDay, this.dayNight.phaseLabel)
+    if (this.cameraMode === 'platform') this.ui.setCctvLabel(STATIONS[this.platformStation].nameEn)
     this.ui.updateAtmoPhase(this.season, this.weather, this.dayNight.timeOfDay)
     // Progress along the current segment for the HUD's reference bar.
     const currentT = this.track.markerFor(this.train.currentStationIndex).tFraction
