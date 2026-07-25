@@ -5,6 +5,7 @@ import { Train, notchLabel, MIN_NOTCH, MAX_NOTCH, OPEN_INSTANT_SECONDS, OPEN_QUI
 import { City, crowdDensityForHour } from './City'
 import { Passengers } from './Passengers'
 import { Precipitation } from './Precipitation'
+import { PerfLog } from './PerfLog'
 import { registerPool, applySeasonToPool, overcastTarget, precipProfile, type Season, type Weather, type SeasonalPool } from './Seasons'
 import { Scenery } from './Scenery'
 import { DayNightCycle } from './DayNightCycle'
@@ -87,7 +88,7 @@ export class Game {
   private destinationMat!: THREE.MeshBasicMaterial
   private lastDestinationIdx = -1
   private lastCrossingPhase = false
-  private perfEl: HTMLDivElement | null = null
+  private perf = new PerfLog()
   private score = 0
   private perfectStreak = 0
   private bestScore = Number(localStorage.getItem(BEST_SCORE_KEY) ?? 0)
@@ -166,6 +167,12 @@ export class Game {
         this.applyAtmosphere()
         if (!this.running) this.renderOnce()
       },
+      onPerfToggle: () => this.togglePerfRecording(),
+      onPerfExport: () => (this.perf.frames > 0 ? this.perf.export() : PerfLog.stored()),
+      onPerfClear: () => {
+        PerfLog.clearStored()
+        this.pushPerfState()
+      },
       onWeatherSet: (w) => {
         this.weather = w
         localStorage.setItem(WEATHER_KEY, w)
@@ -182,7 +189,7 @@ export class Game {
 
     window.addEventListener('resize', () => this.onResize())
     window.addEventListener('keydown', (e) => {
-      if (e.code === 'KeyP') this.togglePerfOverlay(mount)
+      if (e.code === 'KeyP') this.togglePerfRecording()
       if (e.code === 'KeyD') this.handleDoorButton()
     })
     // The render loop freezes on its own when the tab hides, but audio does
@@ -190,6 +197,7 @@ export class Game {
     document.addEventListener('visibilitychange', () => {
       audio.setBackgrounded(document.hidden)
     })
+    this.pushPerfState()
     this.onResize()
     this.updateCameraFromTrain()
     // No animation loop yet: the start screen is a single static render, not
@@ -198,24 +206,40 @@ export class Game {
     this.renderOnce()
   }
 
-  /** Hidden dev overlay (press "P") — FPS + draw calls/triangles, so the mobile perf budget can be spot-checked without shipping a permanent HUD element. */
-  private togglePerfOverlay(mount: HTMLElement) {
-    if (this.perfEl) {
-      this.perfEl.remove()
-      this.perfEl = null
-      return
+  /**
+   * Starts/stops a frame-time recording. Everything the log can't ask for
+   * later — device, screen, renderer, what the weather was — is captured at
+   * the moment it starts, because a frame-time number without the context it
+   * was measured in is unfalsifiable.
+   */
+  private togglePerfRecording() {
+    if (this.perf.recording) {
+      this.perf.stop()
+    } else {
+      const gl = this.renderer.getContext()
+      const dbg = gl.getExtension('WEBGL_debug_renderer_info')
+      this.perf.start({
+        ua: navigator.userAgent,
+        gpu: dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : 'n/d',
+        dpr: window.devicePixelRatio,
+        cap: this.renderer.getPixelRatio(),
+        vw: window.innerWidth,
+        vh: window.innerHeight,
+        // A PWA on the home screen and the same page in a Safari tab are not
+        // the same runtime, and they don't perform the same.
+        pwa: window.matchMedia('(display-mode: standalone)').matches || (navigator as any).standalone === true,
+        season: this.season,
+        weather: this.weather,
+        hour: Math.round(this.dayNight.timeOfDay * 10) / 10,
+        timeScale: this.timeScale,
+        shadows: this.renderer.shadowMap.enabled,
+      })
     }
-    this.perfEl = document.createElement('div')
-    this.perfEl.style.cssText =
-      'position:absolute;left:8px;bottom:8px;padding:6px 10px;background:rgba(0,0,0,0.7);color:#7bffb0;font:11px ui-monospace,monospace;border-radius:6px;pointer-events:none;z-index:30;white-space:pre;'
-    mount.appendChild(this.perfEl)
+    this.pushPerfState()
   }
 
-  private updatePerfOverlay(dt: number) {
-    if (!this.perfEl) return
-    const fps = dt > 0 ? 1 / dt : 0
-    const info = this.renderer.info
-    this.perfEl.textContent = `FPS ${fps.toFixed(0)}  draws ${info.render.calls}  tris ${info.render.triangles}`
+  private pushPerfState() {
+    this.ui.setPerfState(this.perf.recording, this.perf.headline, this.perf.frames > 0 || PerfLog.hasStored())
   }
 
   private start() {
@@ -231,6 +255,8 @@ export class Game {
   /** Menu open/close: a real pause, not just a frozen simulation — the render loop itself stops. */
   private setPaused(p: boolean) {
     if (this.started) this.setRunning(!p)
+    // The menu is where the recording is read, so refresh its numbers as it opens.
+    if (p) this.pushPerfState()
   }
 
   /**
@@ -923,7 +949,10 @@ export class Game {
   }
 
   private tick() {
-    const frameDt = Math.min(this.clock.getDelta(), MAX_FRAME_DT)
+    // The raw interval is what the player felt; the clamped one is what the
+    // simulation is allowed to swallow. The recorder wants the former.
+    const rawDt = this.clock.getDelta()
+    const frameDt = Math.min(rawDt, MAX_FRAME_DT)
     // Train physics (position/speed integration, stop detection, scoring)
     // runs in FIXED steps via an accumulator — decoupled from the render
     // frame rate, so the exact same lever input produces the exact same
@@ -937,7 +966,18 @@ export class Game {
     }
     this.step(frameDt)
     this.renderer.render(this.scene, this.camera)
-    this.updatePerfOverlay(frameDt)
+    // Sampled AFTER the draw: renderer.info resets per render, so these are
+    // the counts for the frame that was just put on screen.
+    const info = this.renderer.info.render
+    this.perf.record({
+      frameMs: rawDt * 1000,
+      draws: info.calls,
+      tris: info.triangles,
+      speedKmh: this.train.speedKmh,
+      progress: this.train.progressFraction,
+      stationIdx: this.train.targetStationIndex,
+    })
+    this.ui.updatePerfChip(this.perf.fpsNow, this.perf.recording)
   }
 
   /**

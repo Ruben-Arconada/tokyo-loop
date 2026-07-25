@@ -14,6 +14,10 @@ export interface UICallbacks {
   /** Season / weather chosen from the HUD pickers. */
   onSeasonSet: (season: Season) => void
   onWeatherSet: (weather: Weather) => void
+  /** Frame-time recording: start/stop, hand over the log, throw it away. */
+  onPerfToggle: () => void
+  onPerfExport: () => string
+  onPerfClear: () => void
 }
 
 /** What the door button offers right now — mirrors the train's door state. */
@@ -47,6 +51,11 @@ export class UI {
   private paused = false
   private atmoChip!: HTMLButtonElement
   private atmoGlyphEl!: HTMLSpanElement
+  private perfChip!: HTMLDivElement
+  private perfMenuBtn!: HTMLButtonElement
+  private perfHeadlineEl!: HTMLParagraphElement
+  private perfActionsEl!: HTMLDivElement
+  private lastFpsText = ''
   /** Cached so the per-frame phase refresh stays a string compare, not a DOM write. */
   private lastPhaseText = ''
   private lastAtmoWinter: boolean | null = null
@@ -142,6 +151,7 @@ export class UI {
         </div>
         <div class="notch-readout">N</div>
       </div>
+      <div class="perf-chip hidden"><span class="perf-dot"></span><span class="perf-fps">--</span><small>fps</small></div>
       <div class="score-chip">
         <span class="score-value">0</span>
         <small class="score-best">MEJOR 0</small>
@@ -164,6 +174,7 @@ export class UI {
     this.scoreValueEl = this.hud.querySelector('.score-value')!
     this.scoreBestEl = this.hud.querySelector('.score-best')!
     this.lineDiagram = this.hud.querySelector('.line-diagram')!
+    this.perfChip = this.hud.querySelector('.perf-chip')!
 
     for (let i = 0; i < STATIONS.length; i++) {
       const dot = document.createElement('div')
@@ -332,6 +343,15 @@ export class UI {
           </div>
         </div>
         <button class="btn-atmo">Atmósfera — hora, estación y clima</button>
+        <div class="perf-block">
+          <span class="perf-title">Rendimiento</span>
+          <button class="btn-perf">Medir rendimiento</button>
+          <p class="perf-headline">Sin datos todavía.</p>
+          <div class="perf-actions hidden">
+            <button class="btn-perf-copy">Copiar log</button>
+            <button class="btn-perf-clear">Borrar</button>
+          </div>
+        </div>
         <button class="btn-credits">Sobre el equipo</button>
         <button class="btn-close">Cerrar</button>
       </div>
@@ -345,6 +365,14 @@ export class UI {
     })
     el.querySelector('.btn-close')!.addEventListener('click', () => this.toggleMenu())
     el.querySelector('.btn-credits')!.addEventListener('click', () => this.showCredits())
+    this.perfMenuBtn = el.querySelector('.btn-perf')!
+    this.perfHeadlineEl = el.querySelector('.perf-headline')!
+    this.perfActionsEl = el.querySelector('.perf-actions')!
+    this.perfMenuBtn.addEventListener('click', () => this.cb.onPerfToggle())
+    // Clipboard writes must happen inside the gesture, so the export runs here
+    // rather than being pushed in from the game loop.
+    el.querySelector('.btn-perf-copy')!.addEventListener('click', () => this.copyPerfLog())
+    el.querySelector('.btn-perf-clear')!.addEventListener('click', () => this.cb.onPerfClear())
     el.querySelectorAll('.time-scale-buttons button').forEach((btn) => {
       btn.addEventListener('click', () => {
         el.querySelectorAll('.time-scale-buttons button').forEach((b) => b.classList.remove('active'))
@@ -371,6 +399,48 @@ export class UI {
     `
     el.querySelector('.btn-close')!.addEventListener('click', () => el.remove())
     this.mount.appendChild(el)
+  }
+
+  /** Live frame counter. Only touches the DOM when the rounded number changes. */
+  updatePerfChip(fps: number, recording: boolean) {
+    this.perfChip.classList.toggle('hidden', !recording)
+    if (!recording) return
+    const text = String(Math.round(fps))
+    if (text === this.lastFpsText) return
+    this.lastFpsText = text
+    ;(this.perfChip.querySelector('.perf-fps') as HTMLElement).textContent = text
+  }
+
+  setPerfState(recording: boolean, headline: string, hasData: boolean) {
+    this.perfMenuBtn.textContent = recording ? '⏹ Detener medición' : '⏺ Medir rendimiento'
+    this.perfMenuBtn.classList.toggle('recording', recording)
+    this.perfHeadlineEl.textContent = headline
+    this.perfActionsEl.classList.toggle('hidden', !hasData || recording)
+  }
+
+  /**
+   * Hands the log over. Clipboard first (one tap, then paste it in the chat);
+   * if the platform refuses — and iOS will, outside a trusted gesture or over
+   * plain http — fall back to a selected textarea, which always works.
+   */
+  private async copyPerfLog() {
+    const payload = this.cb.onPerfExport()
+    if (!payload) return
+    try {
+      await navigator.clipboard.writeText(payload)
+      this.flashToast(`Log copiado (${Math.round(payload.length / 1024)} KB) — pégamelo en el chat`, 'good')
+    } catch {
+      // One dump at a time — tapping copy twice must not stack textareas.
+      this.menuOverlay.querySelector('.perf-dump')?.remove()
+      const ta = document.createElement('textarea')
+      ta.className = 'perf-dump'
+      ta.value = payload
+      ta.readOnly = true
+      this.menuOverlay.querySelector('.perf-block')!.appendChild(ta)
+      ta.focus()
+      ta.select()
+      this.flashToast('Copia el texto seleccionado a mano', 'ok')
+    }
   }
 
   private toggleMenu() {

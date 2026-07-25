@@ -451,7 +451,12 @@ canvas.game-canvas {
   opacity: 0;
   transition: opacity 0.25s, transform 0.25s;
   pointer-events: none;
-  white-space: nowrap;
+  /* Above the overlays (z-index 20): the copy-log confirmation is fired from
+     INSIDE the pause menu, and a confirmation you can't see is no
+     confirmation. Wraps rather than overflowing a 375px screen. */
+  z-index: 30;
+  max-width: min(90vw, 420px);
+  text-align: center;
 }
 .toast.show { opacity: 1; transform: translateX(-50%) translateY(0); }
 .toast.grade-perfect { border-color: var(--color-warn); color: var(--color-warn); }
@@ -634,6 +639,96 @@ canvas.game-canvas {
 .team-list { list-style: none; padding: 0; margin: 0 0 var(--space-4); }
 .team-list li { padding: var(--space-3) 0; border-bottom: 1px solid rgba(255, 255, 255, 0.1); font-size: var(--text-body); }
 .team-list li span { color: var(--text-secondary); }
+
+/* ---------- Performance counter ---------- */
+/* Sits just above the score chip while a recording runs. Monospaced and
+   tabular so the number doesn't jitter its own width 60 times a second. */
+.perf-chip {
+  position: absolute;
+  left: calc(var(--safe-left) + var(--space-3));
+  bottom: calc(var(--safe-bottom) + 122px);
+  display: flex;
+  align-items: baseline;
+  gap: 5px;
+  background: var(--chip-bg);
+  border: 1px solid rgba(255, 92, 92, 0.5);
+  box-shadow: var(--chip-shadow);
+  backdrop-filter: var(--chip-blur);
+  border-radius: var(--radius-md);
+  padding: 3px var(--space-2);
+  font-family: ui-monospace, 'SF Mono', 'Roboto Mono', monospace;
+  font-variant-numeric: tabular-nums;
+  font-size: var(--text-label);
+  font-weight: 700;
+  pointer-events: none;
+}
+.perf-chip.hidden { display: none; }
+.perf-chip small { font-size: var(--text-micro); font-weight: 400; color: var(--text-muted); }
+/* The blinking dot is the honest part: it says RECORDING, not just "fps". */
+.perf-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #ff5c5c;
+  align-self: center;
+  animation: perf-blink 1.6s ease-in-out infinite;
+}
+@keyframes perf-blink { 0%, 100% { opacity: 1; } 50% { opacity: 0.25; } }
+
+.perf-block { margin-top: var(--space-4); text-align: left; }
+.perf-title {
+  display: block;
+  font-size: var(--text-micro);
+  letter-spacing: 0.1em;
+  text-transform: uppercase;
+  color: var(--text-muted);
+  font-weight: 600;
+  margin-bottom: var(--space-2);
+}
+.btn-perf {
+  width: 100%;
+  padding: var(--space-3);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.25);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-body);
+  cursor: pointer;
+}
+.btn-perf.recording { background: rgba(255, 92, 92, 0.22); border-color: rgba(255, 92, 92, 0.7); }
+.perf-headline {
+  margin: var(--space-2) 0 0;
+  font-size: var(--text-label);
+  line-height: 1.5;
+  color: var(--text-secondary);
+  font-variant-numeric: tabular-nums;
+}
+.perf-actions { display: flex; gap: var(--space-2); margin-top: var(--space-2); }
+.perf-actions.hidden { display: none; }
+.perf-actions button {
+  flex: 1;
+  padding: var(--space-2);
+  border-radius: var(--radius-md);
+  background: rgba(255, 255, 255, 0.08);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-label);
+  cursor: pointer;
+}
+/* Last-resort hand-off when the clipboard API is unavailable. */
+.perf-dump {
+  width: 100%;
+  height: 90px;
+  margin-top: var(--space-2);
+  font-family: ui-monospace, monospace;
+  font-size: 10px;
+  background: rgba(0, 0, 0, 0.5);
+  color: var(--text-secondary);
+  border: 1px solid rgba(255, 255, 255, 0.2);
+  border-radius: var(--radius-sm);
+}
 
 /* ---------- Atmosphere panel ---------- */
 /* Lighter backdrop than the other overlays on purpose: this sheet is a

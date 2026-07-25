@@ -244,6 +244,47 @@ hoja centrada con las tres secciones y todas las opciones visibles a la vez.
   cambia (comparación de strings).
 - También se llega desde el menú de pausa («Atmósfera»), que se cierra al abrirlo.
 
+### Telemetría de rendimiento (`src/game/PerfLog.ts`)
+
+Grabadora de tiempos de frame para sesiones en dispositivo real. **No mide
+«fps medios»**: una vuelta que promedia 59 fps pero suelta tres frames de 80 ms
+en el bosquecillo de Komagome se siente a tirones, y 45 fps estables se sienten
+suaves. Por eso guarda la DISTRIBUCIÓN, DÓNDE pasó cada tirón y CÓMO evoluciona
+minuto a minuto (que es lo que delata a un móvil estrangulándose por calor).
+
+- Coste por frame: unos cuantos incrementos enteros sobre arrays preasignados.
+  Sin allocations, sin DOM, sin timers — el medidor no puede ser el motivo de que
+  un frame vaya lento.
+- Percentiles desde un **histograma** de 0,5 ms (no se guarda el array de
+  frames). `p05` delata el techo de refresco: 16,7 ms = 60 Hz, 8,3 ms = 120 Hz.
+- Se mide el intervalo **crudo** del bucle de render, no el `dt` clampado que usa
+  la simulación: el tirón que el acumulador de física se traga es justo el que el
+  jugador vio.
+- **Un «frame» de más de 1 s no es un frame**, es el bucle suspendido (menú de
+  pausa, app en segundo plano). Se excluye de las estadísticas y se cuenta como
+  `gaps` — si no, una pausa de 30 s se convierte en el p99.
+- Se persiste en `localStorage` cada 5 s: si iOS mata la pestaña a mitad de
+  vuelta, el log sobrevive y el menú lo ofrece marcado «(sesión anterior)».
+
+Formato de exportación (JSON compacto, ~13 KB por vuelta completa de 7 min):
+
+```
+ctx      { ua, gpu, dpr, cap, vw, vh, pwa, season, weather, hour, timeScale, shadows }
+summary  { seconds, frames, meanFps, p05, p50, p95, p99, maxMs, over17, over33, over50, maxDraws, maxTris, gaps }
+bins[]   [tSec, frames, meanMs, maxMs, draws, kTris, kmh, progress‰]   ← uno por segundo
+hitches[][tSec, ms, progress‰, station, draws, kTris]                  ← frames ≥50 ms, peores primero
+```
+
+`progress‰` es la posición en el anillo ×1000, así que un tirón se localiza en el
+mapa: cruzar ese número con `docs/vista-cenital-tokyo-loop.jpg` o con los markers
+de `Track` dice qué se estaba dibujando.
+
+En el HUD: chip con el contador y punto rojo parpadeante mientras graba (encima
+del marcador). En el menú de pausa: iniciar/detener, titular con el resumen, y
+«Copiar log» (portapapeles dentro del gesto; si la plataforma lo rechaza, cae a
+un textarea seleccionado). La tecla **P** hace el mismo toggle en escritorio —
+sustituye al overlay de perf ad-hoc que había antes.
+
 ### Arnés de test (ampliado)
 
 `window.__audio` existe también en DEV: el singleton de audio no tenía ningún
