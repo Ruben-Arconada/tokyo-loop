@@ -128,6 +128,17 @@ const CCTV_PITCH_MAX = 0.2
 /** Security lenses are wide; the game's normal view is not. */
 const CCTV_FOV = 84
 const NORMAL_FOV = 68
+/** Shared read-only up vector for camera solves — never mutated. */
+const WORLD_UP = new THREE.Vector3(0, 1, 0)
+/**
+ * How far ahead of the cab the tunnel looks when deciding to restore the
+ * far plane (world units). Restored this early the whole ring is drawing
+ * again ~3.5 s before the portal at line speed — while the cab is still
+ * fully enclosed and the fog still ends at 260, so the world fades back in
+ * through the opening fog instead of popping into place at the exit
+ * (Rubén saw the pop leaving at 95 km/h).
+ */
+const FAR_RESTORE_LOOKAHEAD = 110
 const BOARDING_BASE_SECONDS = 5.5
 const BOARDING_CROWD_SECONDS = 5.5
 /** A skipped station can sting, but it must never wipe a good run. */
@@ -1535,24 +1546,37 @@ export class Game {
     if (!this.running) this.renderOnce()
   }
 
+  // Scratch space for the per-frame camera solve — this runs every rendered
+  // frame in all three views, so it must not feed the GC (Marco, round 2:
+  // the old body allocated ~10 temporaries per frame).
+  private readonly camPoint = new THREE.Vector3()
+  private readonly camTangent = new THREE.Vector3()
+  private readonly camNormal = new THREE.Vector3()
+  private readonly camEye = new THREE.Vector3()
+  private readonly camAim = new THREE.Vector3()
+  private readonly camMat = new THREE.Matrix4()
+  private readonly camQuatBase = new THREE.Quaternion()
+  private readonly camQuatLook = new THREE.Quaternion()
+  private readonly camEuler = new THREE.Euler()
+
   private updateCameraFromTrain() {
     // The consist is centred on progressFraction, so the driver's eye sits a
     // half-train ahead of it — which also means a perfect stop now leaves the
     // cab at the platform's leading end, the way a real one does.
     const len = this.track.getLength()
     const t = this.train.progressFraction
-    const worldUp = new THREE.Vector3(0, 1, 0)
 
     if (this.cameraMode === 'cab') {
       const tCab = THREE.MathUtils.euclideanModulo(t + CAB_OFFSET / len, 1)
-      const point = this.track.pointAt(tCab)
-      const tangent = this.track.tangentAt(tCab).normalize()
+      const point = this.track.pointAt(tCab, this.camPoint)
+      const tangent = this.track.tangentAt(tCab, this.camTangent)
       // Dead on the centreline: offset to one side, the track ran off-centre
       // in the windscreen and the whole view read as crooked.
-      const eye = point.clone().add(new THREE.Vector3(0, CAB_EYE_Y, 0))
-      const m = new THREE.Matrix4().lookAt(eye, eye.clone().add(tangent), worldUp)
-      const baseQuat = new THREE.Quaternion().setFromRotationMatrix(m)
-      const lookQuat = new THREE.Quaternion().setFromEuler(new THREE.Euler(this.lookPitch, this.lookYaw, 0, 'YXZ'))
+      const eye = this.camEye.copy(point)
+      eye.y += CAB_EYE_Y
+      this.camMat.lookAt(eye, this.camAim.copy(eye).add(tangent), WORLD_UP)
+      const baseQuat = this.camQuatBase.setFromRotationMatrix(this.camMat)
+      const lookQuat = this.camQuatLook.setFromEuler(this.camEuler.set(this.lookPitch, this.lookYaw, 0, 'YXZ'))
       // The rig takes the BASE transform only — that is what keeps the cab
       // still while the head turns.
       this.cabRig.position.copy(eye)
@@ -1569,21 +1593,22 @@ export class Game {
       // never drops to train height (which put you inside the bodywork and
       // lost the train entirely) and never rises to a map view. Distance is
       // fixed, so the train cannot leave the frame.
-      const point = this.track.pointAt(t)
-      const tangent = this.track.tangentAt(t).normalize()
-      const normal = new THREE.Vector3(tangent.z, 0, -tangent.x).normalize()
+      const point = this.track.pointAt(t, this.camPoint)
+      const tangent = this.track.tangentAt(t, this.camTangent)
+      const normal = this.camNormal.set(tangent.z, 0, -tangent.x).normalize()
       const yaw = this.extYaw + (side > 0 ? 0 : Math.PI)
       const dist = EXT_DISTANCE * Math.cos(this.extPitch)
       const height = EXT_DISTANCE * Math.sin(this.extPitch)
-      const focus = point.clone().add(new THREE.Vector3(0, EXT_FOCUS_Y, 0))
-      const eye = focus
-        .clone()
+      const focus = this.camAim.copy(point)
+      focus.y += EXT_FOCUS_Y
+      const eye = this.camEye
+        .copy(focus)
         .addScaledVector(normal, Math.cos(yaw) * dist)
         .addScaledVector(tangent, Math.sin(yaw) * dist)
-        .add(new THREE.Vector3(0, height, 0))
-      const m = new THREE.Matrix4().lookAt(eye, focus, worldUp)
+      eye.y += height
+      this.camMat.lookAt(eye, focus, WORLD_UP)
       this.camera.position.copy(eye)
-      this.camera.quaternion.setFromRotationMatrix(m)
+      this.camera.quaternion.setFromRotationMatrix(this.camMat)
       return
     }
 
@@ -1599,36 +1624,39 @@ export class Game {
       if (behind > PLATFORM_HANDOVER_UNITS && behind < len * 0.5) this.platformStation = this.train.targetStationIndex
     }
     const marker = this.track.markerFor(this.platformStation)
-    const pPoint = this.track.pointAt(marker.tFraction)
-    const pTangent = this.track.tangentAt(marker.tFraction).normalize()
-    const pNormal = new THREE.Vector3(pTangent.z, 0, -pTangent.x).normalize()
+    const pPoint = this.track.pointAt(marker.tFraction, this.camPoint)
+    const pTangent = this.track.tangentAt(marker.tFraction, this.camTangent)
+    const pNormal = this.camNormal.set(pTangent.z, 0, -pTangent.x).normalize()
     const pSide = STATIONS[this.platformStation].doorSide === 'left' ? 1 : -1
 
     // Mounted high at the back of the platform under the canopy, looking down
     // its length — where a station's own camera hangs, and the angle that
     // frames the doorways, the queues and the train's flank all at once.
-    const eye = pPoint
-      .clone()
+    const eye = this.camEye
+      .copy(pPoint)
       .addScaledVector(pNormal, pSide * CCTV_LATERAL)
       .addScaledVector(pTangent, -CCTV_BACK)
-      .add(new THREE.Vector3(0, CCTV_HEIGHT, 0))
+    eye.y += CCTV_HEIGHT
     // Pan and tilt from that fixed mount. A security camera swivels; it does
     // not walk, and it does not lose the platform: both axes are fenced so it
     // can never end up staring at the sky or away down the line.
-    const aim = pPoint
-      .clone()
+    const aim = this.camAim
+      .copy(pPoint)
       .addScaledVector(pNormal, pSide * (PLATFORM_INNER + 1.6))
       .addScaledVector(pTangent, CCTV_BACK * 0.55)
-      .add(new THREE.Vector3(0, 1.6, 0))
+    aim.y += 1.6
+    // `aim` is fully consumed as the base direction before being reused below.
     const baseDir = aim.sub(eye)
     const baseYaw = Math.atan2(baseDir.x, baseDir.z)
     const basePitch = Math.asin(THREE.MathUtils.clamp(baseDir.y / baseDir.length(), -1, 1))
     const yaw = baseYaw + this.platYaw * pSide
     const pitch = basePitch + this.platPitch
-    const dir = new THREE.Vector3(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch))
-    const m = new THREE.Matrix4().lookAt(eye, eye.clone().add(dir), worldUp)
+    const target = this.camAim
+      .set(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch))
+      .add(eye)
+    this.camMat.lookAt(eye, target, WORLD_UP)
     this.camera.position.copy(eye)
-    this.camera.quaternion.setFromRotationMatrix(m)
+    this.camera.quaternion.setFromRotationMatrix(this.camMat)
   }
 
   private onResize() {
@@ -1711,9 +1739,16 @@ export class Game {
     // Deep inside, fog ends at ~260 — everything beyond is invisible, so
     // stop paying for it: pull the far plane in and the frustum culls the
     // city, skyline and clouds wholesale (free thermal headroom exactly
-    // where a phone wants it). Restored well before the portal shows the
-    // world again (tunnelF 0.6 ≈ depth 1.6 of 20).
-    const wantFar = this.tunnelF > 0.6 ? 900 : 9000
+    // where a phone wants it). The restore is the delicate half: snapping
+    // 900→9000 at the cab's own crossing happened with the fog already half
+    // open, and the whole ring popped into view in one frame at the exit.
+    // Now the far plane only stays pulled in while the track WELL AHEAD is
+    // also deep inside — leaving, it restores with the cab still enclosed
+    // (fog closed at 260) and the world is simply there, behind fog, when
+    // the portal arrives. Entering, the ahead point is always deeper, so
+    // culling still starts at the cab's own crossing, buried in the lining.
+    const aheadF = this.track.tunnelAmountAt(this.train.progressFraction + (CAB_OFFSET + FAR_RESTORE_LOOKAHEAD) / trackLen)
+    const wantFar = this.tunnelF > 0.6 && aheadF > 0.6 ? 900 : 9000
     if (this.camera.far !== wantFar) {
       this.camera.far = wantFar
       this.camera.updateProjectionMatrix()

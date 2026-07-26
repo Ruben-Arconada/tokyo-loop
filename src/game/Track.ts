@@ -47,9 +47,20 @@ export class Track {
     return target
   }
 
+  // Scratch for tangentAt's finite difference — THREE.Curve.getTangentAt
+  // allocates two Vector3 internally per call, and this runs several times
+  // per rendered frame (camera solve, headlight, consist).
+  private readonly tangentScratch = new THREE.Vector3()
+
   tangentAt(tFraction: number, target = new THREE.Vector3()): THREE.Vector3 {
     const t = THREE.MathUtils.euclideanModulo(tFraction, 1)
-    this.curve.getTangentAt(t, target)
+    // Same central difference getTangentAt does, but with pooled vectors —
+    // and wrapping at the seam instead of clamping, which is the right move
+    // on a closed loop anyway.
+    const delta = 0.0001
+    this.curve.getPointAt(THREE.MathUtils.euclideanModulo(t + delta, 1), target)
+    target.sub(this.curve.getPointAt(THREE.MathUtils.euclideanModulo(t - delta, 1), this.tangentScratch))
+    target.normalize()
     // The flat spline's tangent has y=0; the grade is the analytic profile's
     // slope converted from per-loop-fraction to per-arc-unit.
     target.y = (hillGrade(t, this.hillCenter) - trenchGrade(t, this.trenchCenter)) / this.length

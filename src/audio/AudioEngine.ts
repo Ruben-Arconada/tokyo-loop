@@ -469,7 +469,12 @@ export class AudioEngine {
       const swell = 0.55 + 0.45 * (0.5 + 0.5 * Math.sin(t * 0.48) * Math.sin(t * 0.31 + 1.2))
       const rainDuck = 1 - 0.6 * Math.min(1, this.rainLevel)
       this.shoreGain.gain.setTargetAtTime(this.shoreLevel * 0.055 * swell * open * duck * rainDuck, t, 0.9)
-      this.shoreFilter?.frequency.setTargetAtTime(340 + swell * 860, t, 0.8)
+      // Squared crest: the retreating wave sinks to a distant ~320 Hz rumble
+      // and the foam's "shhh" blooms only on the crest itself — linear left
+      // the trough at ~800 Hz, close enough to traffic to blur the swell
+      // (Diego, round 2).
+      const crest = (swell - 0.55) / 0.45
+      this.shoreFilter?.frequency.setTargetAtTime(320 + crest * crest * 880, t, 0.8)
     }
   }
 

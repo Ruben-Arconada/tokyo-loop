@@ -54,8 +54,10 @@ export class WindshieldFX {
     this.ctx = this.canvas.getContext('2d')!
     this.dropSprite = makeDropSprite()
     this.flakeSprite = makeFlakeSprite()
+    // No listener of its own: Game.onResize() calls resize() — it is the one
+    // place that also hears visualViewport changes, which plain window
+    // resize misses on iOS toolbar collapse.
     this.resize()
-    window.addEventListener('resize', () => this.resize())
   }
 
   resize() {

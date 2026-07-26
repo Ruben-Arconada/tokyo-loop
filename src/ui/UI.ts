@@ -72,6 +72,7 @@ export class UI {
   private camChip!: HTMLButtonElement
   private muteChip!: HTMLButtonElement
   private railChip!: HTMLDivElement
+  private srAnnouncer!: HTMLDivElement
   private lastRailText = ''
   private cctvEl!: HTMLDivElement
   private lastCctvStation = ''
@@ -197,7 +198,8 @@ export class UI {
         <span class="cam-icon">🚉</span><span class="cam-label">Cabina</span>
       </button>
       <button class="mute-chip" aria-label="Silenciar sonido" aria-pressed="false">🔊</button>
-      <div class="rail-chip hidden" role="status" aria-live="polite"><span class="rail-icon">☔</span><span class="rail-text">Carril mojado</span></div>
+      <div class="rail-chip hidden"><span class="rail-icon">☔</span><span class="rail-text">Carril mojado</span></div>
+      <div class="sr-announcer" role="status" aria-live="polite"></div>
       <div class="perf-chip hidden"><span class="perf-dot"></span><span class="perf-fps">--</span><small>fps</small></div>
       <div class="occupancy-chip">
         <div class="occupancy-bar"><div class="occupancy-fill"></div></div>
@@ -231,6 +233,7 @@ export class UI {
     this.camChip = this.hud.querySelector('.cam-chip')!
     this.muteChip = this.hud.querySelector('.mute-chip')!
     this.railChip = this.hud.querySelector('.rail-chip')!
+    this.srAnnouncer = this.hud.querySelector('.sr-announcer')!
     this.muteChip.addEventListener('click', () => {
       const muted = this.muteChip.getAttribute('aria-pressed') !== 'true'
       this.setMuted(muted)
@@ -413,7 +416,22 @@ export class UI {
     if (text) {
       ;(this.railChip.querySelector('.rail-icon') as HTMLElement).textContent = cond === 'snow' ? '❄️' : '☔'
       ;(this.railChip.querySelector('.rail-text') as HTMLElement).textContent = text
+      this.announce(text)
     }
+  }
+
+  /**
+   * Speaks through the one live region that exists from page load. A live
+   * region revealed from display:none in the same frame as its text enters
+   * the accessibility tree already filled — there is no CHANGE to announce,
+   * so VoiceOver said nothing the first time the rail chip appeared (Lena,
+   * round 2). Clearing first also forces re-announcement of repeat text.
+   */
+  private announce(msg: string) {
+    this.srAnnouncer.textContent = ''
+    window.setTimeout(() => {
+      this.srAnnouncer.textContent = msg
+    }, 80)
   }
 
   /** Reflects the applied season/weather on the HUD chip and marks the active options. */

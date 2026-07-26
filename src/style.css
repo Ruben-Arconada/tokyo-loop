@@ -915,6 +915,19 @@ canvas.game-canvas {
 .rail-chip.snow { border-color: rgba(159, 216, 255, 0.65); color: #9fd8ff; }
 .rail-icon { font-size: 13px; line-height: 1; }
 
+/* Screen-reader-only live region: rendered (so it stays in the a11y tree,
+   unlike display:none) but clipped to a 1px point off-flow. */
+.sr-announcer {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  margin: -1px;
+  padding: 0;
+  overflow: hidden;
+  clip-path: inset(50%);
+  white-space: nowrap;
+}
+
 /* Discovery pulse on the clock chip until the Atmosphere panel is found. */
 @keyframes atmo-pulse {
   0%, 100% { box-shadow: var(--chip-shadow); }
