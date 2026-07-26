@@ -190,7 +190,12 @@ export class City {
         // a tower standing in the surf would be the first thing every eye
         // found. Seaward = the side pointing away from the loop's center.
         const seaward = station.theme.district === 'bay' && (normal.x * point.x + normal.z * point.z) * side > 0
-        const offset = seaward ? 30 + Math.random() * 40 : 34 + Math.random() * 70
+        let offset = seaward ? 30 + Math.random() * 40 : 34 + Math.random() * 70
+        // Over the Shibuya trench the ground plane has a HOLE out to ±26
+        // measured from the CHORD, and the track bows 16.61 units off that
+        // chord: a corner reaching 15.6 needs offset − 16.61 − 15.6 > 26,
+        // so the front row steps back to 59 there.
+        if (this.track.trenchDepthAt(t) > 0.25) offset = Math.max(offset, 59)
         // Height comes from the ZONE first (this is the structural contrast
         // that reads at any hour), with landmark stations getting an extra
         // flourish within their own tier's range rather than overriding it.

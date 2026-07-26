@@ -1,6 +1,6 @@
 import * as THREE from 'three'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
-import { Track, TrackOffsetCurve, CatenaryCurve, HILL_PEAK, EMBANKMENT, embankmentSurface, terrainRelief } from './Track'
+import { Track, TrackOffsetCurve, CatenaryCurve, HILL_PEAK, EMBANKMENT, embankmentSurface, terrainRelief, trenchPortalOffset } from './Track'
 import { Train, notchLabel, MIN_NOTCH, MAX_NOTCH, MAX_SPEED_KMH, SPEED_SCALE, OPEN_INSTANT_SECONDS, OPEN_QUICK_SECONDS, CLOSE_WINDOW_SECONDS, CLOSE_HURRY_SECONDS, RAIL_ADVISORY_KMH, type DoorActionInfo, type RailCondition } from './Train'
 import { WindshieldFX } from './WindshieldFX'
 import { City } from './City'
@@ -250,6 +250,9 @@ export class Game {
     this.renderer.getContext().disable(this.renderer.getContext().DITHER)
     this.renderer.shadowMap.enabled = true
     this.renderer.shadowMap.type = THREE.PCFSoftShadowMap
+    // Only the ground plane uses clipping (the hole over the Shibuya
+    // trench); every other material is untouched by this flag.
+    this.renderer.localClippingEnabled = true
     this.renderer.outputColorSpace = THREE.SRGBColorSpace
     this.renderer.toneMapping = THREE.ACESFilmicToneMapping
     this.renderer.toneMappingExposure = 1.05
@@ -1048,10 +1051,45 @@ export class Game {
     groundGeo.setAttribute('color', new THREE.BufferAttribute(gColors, 3))
     groundGeo.computeVertexNormals() // the displaced hills need real normals to shade
     this.terrainPools.push(registerPool('terrain', groundGeo.getAttribute('color') as THREE.BufferAttribute))
-    const ground = new THREE.Mesh(
-      groundGeo,
-      new THREE.MeshStandardMaterial({ color: 0xffffff, map: groundTex, roughness: 1, vertexColors: true }),
-    )
+    // ——— The hole over the Shibuya trench ———
+    // The plane is one seamless sheet at -0.5, so without this it slices
+    // straight across the cutting: diving toward the portal, the cab's eye
+    // crossed y=-0.5 and visibly passed THROUGH the ground (Rubén's device
+    // report). Four clipping planes with clipIntersection form the corridor
+    // prism, and only fragments inside ALL four (the corridor) are dropped —
+    // a clean rectangular opening that reads as the open cut it is. The
+    // corridor is a chord approximation of the curved window: the track
+    // deviates from the chord by up to 16.61 units over this arc (measured
+    // numerically against the real CatmullRom — NOT the ~12 first guessed),
+    // so ±26 of lateral margin covers the bore (±6.4 → reaches 23.0 from
+    // the chord) everywhere along it. Anything placed at street level near
+    // this window must clear the hole measured FROM THE CHORD: pines/scrub
+    // resample under off<44, City blocks clamp to ≥59 (off − 16.61 − reach
+    // must beat 26). If the ground ever gains castShadow, it also needs
+    // clipShadows=true or its shadow won't have the hole.
+    const groundMat = new THREE.MeshStandardMaterial({ color: 0xffffff, map: groundTex, roughness: 1, vertexColors: true })
+    {
+      const holeHalfWidth = 26
+      const capMargin = 6
+      const tCenter = this.track.trenchCenterFraction
+      const portalOff = trenchPortalOffset()
+      const pA = this.track.pointAt(tCenter - portalOff)
+      const pB = this.track.pointAt(tCenter + portalOff)
+      const chord = new THREE.Vector3(pB.x - pA.x, 0, pB.z - pA.z).normalize()
+      const lateral = new THREE.Vector3(-chord.z, 0, chord.x)
+      const mid = new THREE.Vector3((pA.x + pB.x) / 2, 0, (pA.z + pB.z) / 2)
+      // Outward normals: a fragment inside the corridor sits BEHIND all four
+      // planes, which with clipIntersection=true is exactly what gets cut.
+      const planes = [
+        new THREE.Plane().setFromNormalAndCoplanarPoint(chord.clone().negate(), pA.clone().addScaledVector(chord, -capMargin)),
+        new THREE.Plane().setFromNormalAndCoplanarPoint(chord.clone(), pB.clone().addScaledVector(chord, capMargin)),
+        new THREE.Plane().setFromNormalAndCoplanarPoint(lateral.clone(), mid.clone().addScaledVector(lateral, holeHalfWidth)),
+        new THREE.Plane().setFromNormalAndCoplanarPoint(lateral.clone().negate(), mid.clone().addScaledVector(lateral, -holeHalfWidth)),
+      ]
+      groundMat.clippingPlanes = planes
+      groundMat.clipIntersection = true
+    }
+    const ground = new THREE.Mesh(groundGeo, groundMat)
     ground.rotation.x = -Math.PI / 2
     ground.position.y = -0.5
     ground.receiveShadow = true

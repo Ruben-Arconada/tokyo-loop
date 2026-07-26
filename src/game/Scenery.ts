@@ -649,6 +649,10 @@ export class Scenery {
         side = Math.random() < 0.5 ? 1 : -1
         off = 14 + Math.random() * 55
         pos = p.clone().addScaledVector(normal, side * off)
+        // The hole is centred on the CHORD, not the track: with the curve
+        // 16.61 units off the chord, a plant at track-offset 30 could still
+        // sit inside the ±26 opening. 44 − 16.61 = 27.4 > 26 clears it.
+        if (this.track.trenchDepthAt(t) > 0.25 && off < 44) continue // over the trench hole
         if (!this.isNearRoad(pos.x, pos.z, 6.5)) break
       }
       const scale = 0.7 + Math.random() * 0.9
@@ -696,6 +700,7 @@ export class Scenery {
         // Bias density toward the track: sqrt pushes samples inward.
         off = 12 + Math.sqrt(Math.random()) * 55
         pos = p.clone().addScaledVector(normal, side * off)
+        if (this.track.trenchDepthAt(t) > 0.25 && off < 44) continue // over the trench hole (chord-measured, see Game.ts)
         if (!this.isNearRoad(pos.x, pos.z, 5.5)) break
       }
       dummy.position.set(pos.x, groundHeightAt(p.y, side * off) + 0.1, pos.z)
@@ -1145,10 +1150,13 @@ export class Scenery {
       const p = this.track.pointAt(t)
       const tangent = this.track.tangentAt(t)
       const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize()
-      const base = p.clone().addScaledVector(normal, offset)
-      // Where the track dives into the trench the poles stay UP on the
-      // street (the wires visibly crossing over the cutting is exactly what
-      // a Tokyo rail trench looks like from above).
+      // Where the track dives into the trench the pole line jogs OUTWARD
+      // around the cutting (the ground plane has a hole there now — a pole
+      // planted at -9 would float over the open cut) and stays up at street
+      // level: the wires visibly skirting the trench is exactly what a
+      // Tokyo rail cutting looks like from above.
+      const inCut = this.track.trenchDepthAt(t) > 0.25
+      const base = p.clone().addScaledVector(normal, inCut ? -32 : offset)
       base.y = Math.max(base.y, -0.02)
       dummy.position.set(base.x, base.y + (poleH - 0.58) / 2, base.z)
       dummy.rotation.set(0, Math.atan2(tangent.x, tangent.z), 0)
@@ -1232,6 +1240,8 @@ export class Scenery {
         const design = Math.floor(Math.random() * NEON_SIGNS.length)
         if (counters[design] + 2 > perDesign) continue
         const t = marker.tFraction + (Math.random() - 0.3) * 0.014
+        // A sign floating over the trench hole would hang in mid-air.
+        if (this.track.trenchDepthAt(t) > 0.25) continue
         const p = this.track.pointAt(t)
         const tangent = this.track.tangentAt(t)
         const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize()
