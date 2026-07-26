@@ -228,6 +228,9 @@ canvas.game-canvas {
 .delay-chip.slipping { border-color: rgba(255, 206, 74, 0.6); color: var(--color-warn); }
 .delay-chip.late { border-color: rgba(255, 92, 92, 0.7); color: var(--color-brake); }
 
+.line-diagram::after { content: ''; position: absolute; inset: -12px 0; }
+.hud-stations { pointer-events: auto; cursor: pointer; }
+
 /* Teleport picker: two columns of station rows, thumb-sized. */
 .teleport-card { max-width: 400px; }
 .teleport-grid {

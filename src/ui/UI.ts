@@ -255,8 +255,11 @@ export class UI {
     }
 
     this.hud.querySelector('.hud-menu-btn')!.addEventListener('click', () => this.toggleMenu())
-    // The line diagram doubles as the teleport door: tap it, pick a station.
+    // The teleport door: the line diagram AND the station pills both open
+    // the picker — "arriba donde las estaciones" means the pills to a thumb,
+    // and the diagram alone was a 10px target nobody hits on a phone.
     this.lineDiagram.addEventListener('click', () => this.toggleTeleport(true))
+    this.hud.querySelector('.hud-stations')!.addEventListener('click', () => this.toggleTeleport(true))
     this.atmoChip = this.hud.querySelector('.hud-clock')!
     this.atmoGlyphEl = this.hud.querySelector('.hud-clock-atmo')!
     this.atmoChip.addEventListener('click', () => this.toggleAtmo())
