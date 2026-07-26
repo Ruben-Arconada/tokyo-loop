@@ -479,7 +479,7 @@ export class City {
         nameEn: station.nameEn,
         nameJa: station.nameJa,
         nameKana: station.nameKana,
-        code: `TL${String(s + 1).padStart(2, '0')}`,
+        code: `JL${String(s + 1).padStart(2, '0')}`,
         prevNameEn: prev.nameEn,
         nextNameEn: next.nameEn,
       })
@@ -546,7 +546,7 @@ export class City {
         }
         break
       }
-      case 'ueno': {
+      case 'nara': {
         for (let i = 0; i < 10; i++) {
           const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.7, 4), new THREE.MeshStandardMaterial({ color: 0x4a3527 }))
           const canopy = new THREE.Mesh(new THREE.SphereGeometry(3 + Math.random() * 2, 8, 6), new THREE.MeshStandardMaterial({ color: 0x5f8a4a, roughness: 1 }))
@@ -559,7 +559,7 @@ export class City {
         }
         break
       }
-      case 'ikebukuro': {
+      case 'fukuoka': {
         const tower = new THREE.Mesh(
           new THREE.CylinderGeometry(9, 12, 110, 16),
           new THREE.MeshStandardMaterial({ color: 0x5a6478, emissive: accent, emissiveIntensity: 0, roughness: 0.4, metalness: 0.3 }),
@@ -570,7 +570,7 @@ export class City {
         group.add(tower)
         break
       }
-      case 'shinjuku': {
+      case 'nagoya': {
         // Both flanks of the line, but never ON it: |x| >= 34 keeps every
         // tower (max half-width 12) well clear of the rail corridor, which
         // runs along local x≈0. The old spread (-60 + i*22) parked one
@@ -589,11 +589,10 @@ export class City {
         }
         break
       }
-      case 'harajuku': {
-        // Grand vermilion torii flanked by pines — the youth stretch's
-        // landmark payoff. (Deliberately Inari-red rather than Meiji Jingu's
-        // unpainted cypress: this is a generic gate, and the red reads from
-        // the cab.) Myōjin style: kasagi with upturned tips + shimaki + nuki.
+      case 'fushimi-inari': {
+        // Grand vermilion torii flanked by pines — Fushimi Inari's calling
+        // card, and the red that reads from a moving cab. Myōjin style:
+        // kasagi with upturned tips + shimaki + nuki.
         // The whole gate ensemble lives beside the line (centered at local
         // x=+24) — a torii straddling a working railway would be nonsense,
         // and its legs used to bracket the rails.
@@ -644,7 +643,7 @@ export class City {
         }
         break
       }
-      case 'shibuya': {
+      case 'dotonbori': {
         const screenGeo = new THREE.PlaneGeometry(20, 12)
         const screenMat = new THREE.ShaderMaterial({
           uniforms: { uTime: { value: 0 } },

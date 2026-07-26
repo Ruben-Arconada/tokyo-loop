@@ -8,10 +8,10 @@ export interface StationMarker {
 }
 
 /**
- * A stylized, non-circular closed loop standing in for the Yamanote Line's
- * silhouette (elongated north-south, as on the real map). Station spacing
- * around the loop mirrors the real relative inter-station distances, but the
- * absolute shape is an artistic approximation, not a geographic trace.
+ * A stylized, non-circular closed loop: the ring of the Japan Loop dream
+ * tour (elongated north-south, a silhouette inherited from the game's
+ * original circular-line layout). Station spacing keeps the original
+ * relative inter-station distances — every world anchor derives from them.
  */
 export class Track {
   readonly curve: THREE.CatmullRomCurve3
@@ -143,14 +143,15 @@ export class CatenaryCurve extends THREE.Curve<THREE.Vector3> {
 const LOOP_SCALE = 4
 
 // ── Relief ───────────────────────────────────────────────────────────────────
-// The quiet green/garden stretch on the north of the loop (Tabata → Komagome →
-// Sugamo) rises over a broad hill, so the ride isn't a monotonous flat circle.
-// The bump is a smooth raised cosine centred on Komagome's arc-length position;
+// The quiet green/garden stretch on the north of the loop (Uji → Kiyomizu →
+// Shirakawa-gō) rises over a broad hill — the temple climb — so the ride
+// isn't a monotonous flat circle.
+// The bump is a smooth raised cosine centred on Kiyomizu's arc-length position;
 // the trackside embankment (Game.ts) is generated from this same curve, so the
 // ground climbs with the rails and nothing floats. Everything that samples the
 // track — camera, rails, sleepers, catenary, platforms, passengers — already
 // reads the curve's y, so it follows the grade for free.
-export const HILL_STATION_ID = 'komagome'
+export const HILL_STATION_ID = 'kiyomizu'
 // 54 → 68 with LOOP_SCALE 4: the window is a loop FRACTION, so the bigger
 // world stretched the hill 33% longer — without this bump the grade would
 // have flattened from the approved ~16% to ~12%.
@@ -171,13 +172,13 @@ export const EMBANKMENT = {
 /** The flat city ground plane's height. */
 export const BASE_GROUND_Y = -0.5
 
-// ── The Shibuya trench and tunnel ───────────────────────────────────────────
-// The dense-city counterpart of the Komagome hill: on the long Shibuya→Ebisu
-// stretch the line dives into a cutting and runs under the city for a few
-// hundred units. Same analytic raised-cosine as the hill, sign flipped, so
-// the approaches cannot ring below (above) grade by construction and the
-// arcade grade physics work unchanged.
-export const TUNNEL_FROM_STATION_ID = 'shibuya'
+// ── The Dōtonbori trench and tunnel ─────────────────────────────────────────
+// The dense-city counterpart of the Kiyomizu hill: on the long
+// Dōtonbori→Otaru stretch the line dives into a cutting and runs under the
+// city for a few hundred units. Same analytic raised-cosine as the hill,
+// sign flipped, so the approaches cannot ring below (above) grade by
+// construction and the arcade grade physics work unchanged.
+export const TUNNEL_FROM_STATION_ID = 'dotonbori'
 export const TRENCH_DEPTH = 20 // world units below grade at the deepest point
 export const TRENCH_HALF_WIDTH = 0.0175 // loop fraction on each side of the center
 /**
@@ -284,11 +285,11 @@ export interface RoadSample {
 
 export function mountainRoadPath(track: Track): RoadSample[] {
   const center = hillCenterFraction()
-  // Window chosen to clear every left-side platform: Nippori and Nishi-Nippori
+  // Window chosen to clear every left-side platform: Kanazawa and Takayama
   // (markers ~center-0.086 / ~center-0.068) both have doorSide 'left' — the
   // road's side — and an earlier window ran the asphalt flush along both
   // platforms, its cut edge popping in mid-station. Starting past
-  // Nishi-Nippori's platform leaves only Tabata and Komagome in range, whose
+  // Takayama's platform leaves only Uji and Kiyomizu in range, whose
   // platforms sit on the RIGHT side of the tracks.
   const t0 = center - 0.0615
   const tVeer = center - 0.044

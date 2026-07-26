@@ -1,7 +1,15 @@
-// Real Yamanote Line stations, in loop order (sotomawari / clockwise direction).
-// Distances are approximate real-world inter-station distances in km, used only
-// to give the loop a stylized, non-uniform rhythm — this is an artistic
-// interpretation of the line, not a to-scale map of Tokyo.
+// The ring is a DREAM TOUR of Japan, not a real line: thirty stops, each an
+// allegory of a recognizable Japanese place, matched to what the world
+// actually shows there — the temple hill is Kiyomizu, the village of steep
+// old roofs right after it is Shirakawa-gō, the vermilion torii is Fushimi
+// Inari, the coast is Kamakura and Enoshima, the giant glowing billboard is
+// Dōtonbori, and the red-brick station among the towers is Tokyo itself.
+// Geography is deliberately impossible (Sapporo two stops from Kyoto): this
+// is the Japan of a postcard box, not of a map.
+//
+// The inter-station distances are UNCHANGED from the original layout: every
+// world anchor (the hill center, the trench window, the crossing, the coast
+// arc) derives from these cumulative distances, so they are load-bearing.
 
 /**
  * Structural zone tier — drives density/height/vegetation/signage contrast
@@ -29,13 +37,11 @@ export interface StationDef {
   theme: StationTheme
   blurb: string
   /**
-   * Which side the doors open, read out in announcements. Real JR platforms
-   * do have a fixed side per station, but we don't model two physical tracks
-   * side-by-side in this stylized single-loop world, so this is an assigned
-   * stylistic value rather than verified real-world platform data.
+   * Which side the doors open, read out in announcements. An assigned
+   * stylistic value — this stylized single-loop world has no second track.
    */
   doorSide: 'left' | 'right'
-  /** Real, commonly-known transfer lines — only filled in for landmark stations to avoid guessing at obscure ones. */
+  /** Flavor transfers at the landmark stops: real, commonly-known lines OF EACH PLACE, so the PA sells the allegory. */
   transferLines?: string[]
 }
 
@@ -50,37 +56,35 @@ const THEMES: Record<StationTheme['district'], StationTheme> = {
 
 export const STATIONS: StationDef[] = [
   { id: 'tokyo', nameEn: 'Tokyo', nameJa: '東京', nameKana: 'とうきょう', distanceToNextKm: 1.3, landmark: true, theme: THEMES.business, blurb: 'La fachada de ladrillo rojo y el corazón ferroviario de Japón.', doorSide: 'left', transferLines: ['Shinkansen', 'Chuo Line', 'Keihin-Tohoku Line', 'Tokaido Line', 'Marunouchi Subway Line'] },
-  { id: 'kanda', nameEn: 'Kanda', nameJa: '神田', nameKana: 'かんだ', distanceToNextKm: 1.2, landmark: false, theme: THEMES.business, blurb: 'Callejones de oficinistas bajo las vías elevadas.', doorSide: 'left' },
-  { id: 'akihabara', nameEn: 'Akihabara', nameJa: '秋葉原', nameKana: 'あきはばら', distanceToNextKm: 1.4, landmark: true, theme: THEMES.downtown, blurb: 'Neones, anime y electrónica hasta donde alcanza la vista.', doorSide: 'left', transferLines: ['Sobu Line', 'Hibiya Subway Line', 'Tsukuba Express'] },
-  { id: 'okachimachi', nameEn: 'Okachimachi', nameJa: '御徒町', nameKana: 'おかちまち', distanceToNextKm: 0.6, landmark: false, theme: THEMES.shitamachi, blurb: 'El bullicio del mercado de Ameyoko justo al lado.', doorSide: 'right' },
-  { id: 'ueno', nameEn: 'Ueno', nameJa: '上野', nameKana: 'うえの', distanceToNextKm: 1.1, landmark: true, theme: THEMES.green, blurb: 'La estación puerta al gran parque y sus cerezos.', doorSide: 'left', transferLines: ['Keihin-Tohoku Line', 'Joban Line', 'Ginza Subway Line', 'Hibiya Subway Line', 'Keisei Line'] },
-  { id: 'uguisudani', nameEn: 'Uguisudani', nameJa: '鶯谷', nameKana: 'うぐいすだに', distanceToNextKm: 1.4, landmark: false, theme: THEMES.shitamachi, blurb: 'Un rincón tranquilo entre templos.', doorSide: 'right' },
-  { id: 'nippori', nameEn: 'Nippori', nameJa: '日暮里', nameKana: 'にっぽり', distanceToNextKm: 0.7, landmark: false, theme: THEMES.shitamachi, blurb: 'Barrio textil de calles estrechas.', doorSide: 'left' },
-  { id: 'nishi-nippori', nameEn: 'Nishi-Nippori', nameJa: '西日暮里', nameKana: 'にしにっぽり', distanceToNextKm: 1.2, landmark: false, theme: THEMES.shitamachi, blurb: 'Vistas sobre un mar de tejados bajos.', doorSide: 'left' },
-  { id: 'tabata', nameEn: 'Tabata', nameJa: '田端', nameKana: 'たばた', distanceToNextKm: 1.4, landmark: false, theme: THEMES.shitamachi, blurb: 'Cruce silencioso de líneas hacia el norte.', doorSide: 'right' },
-  { id: 'komagome', nameEn: 'Komagome', nameJa: '駒込', nameKana: 'こまごめ', distanceToNextKm: 1.2, landmark: false, theme: THEMES.green, blurb: 'Cerca de jardines japoneses centenarios.', doorSide: 'right' },
-  { id: 'sugamo', nameEn: 'Sugamo', nameJa: '巣鴨', nameKana: 'すがも', distanceToNextKm: 1.9, landmark: false, theme: THEMES.shitamachi, blurb: 'La calle comercial favorita de las abuelas de Tokio.', doorSide: 'left' },
-  { id: 'otsuka', nameEn: 'Otsuka', nameJa: '大塚', nameKana: 'おおつか', distanceToNextKm: 1.8, landmark: false, theme: THEMES.shitamachi, blurb: 'Uno de los últimos tranvías de la ciudad cruza aquí.', doorSide: 'right' },
-  { id: 'ikebukuro', nameEn: 'Ikebukuro', nameJa: '池袋', nameKana: 'いけぶくろ', distanceToNextKm: 0.9, landmark: true, theme: THEMES.downtown, blurb: 'Rascacielos, grandes almacenes y la torre Sunshine.', doorSide: 'left', transferLines: ['Marunouchi Subway Line', 'Yurakucho Subway Line', 'Tobu Tojo Line', 'Seibu Ikebukuro Line'] },
-  { id: 'mejiro', nameEn: 'Mejiro', nameJa: '目白', nameKana: 'めじろ', distanceToNextKm: 1.6, landmark: false, theme: THEMES.green, blurb: 'Un respiro arbolado junto a un campus universitario.', doorSide: 'right' },
-  { id: 'takadanobaba', nameEn: 'Takadanobaba', nameJa: '高田馬場', nameKana: 'たかだのばば', distanceToNextKm: 1.1, landmark: false, theme: THEMES.youth, blurb: 'Estudiantes y sonidos de guitarra callejera.', doorSide: 'right' },
-  { id: 'shin-okubo', nameEn: 'Shin-Okubo', nameJa: '新大久保', nameKana: 'しんおおくぼ', distanceToNextKm: 0.9, landmark: false, theme: THEMES.youth, blurb: 'El barrio coreano más animado de Tokio.', doorSide: 'left' },
-  { id: 'shinjuku', nameEn: 'Shinjuku', nameJa: '新宿', nameKana: 'しんじゅく', distanceToNextKm: 1.4, landmark: true, theme: THEMES.downtown, blurb: 'El nudo de trenes más transitado del planeta.', doorSide: 'left', transferLines: ['Chuo Line', 'Sobu Line', 'Odakyu Line', 'Keio Line', 'Marunouchi Subway Line'] },
-  { id: 'yoyogi', nameEn: 'Yoyogi', nameJa: '代々木', nameKana: 'よよぎ', distanceToNextKm: 1.0, landmark: false, theme: THEMES.business, blurb: 'Entre el bullicio de Shinjuku y la calma del parque.', doorSide: 'right' },
-  { id: 'harajuku', nameEn: 'Harajuku', nameJa: '原宿', nameKana: 'はらじゅく', distanceToNextKm: 1.4, landmark: true, theme: THEMES.youth, blurb: 'Moda excéntrica junto a la puerta del santuario Meiji.', doorSide: 'left', transferLines: ['Chiyoda Subway Line'] },
-  { id: 'shibuya', nameEn: 'Shibuya', nameJa: '渋谷', nameKana: 'しぶや', distanceToNextKm: 2.1, landmark: true, theme: THEMES.youth, blurb: 'Pantallas gigantes y el cruce peatonal más famoso del mundo.', doorSide: 'left', transferLines: ['Tokyu Toyoko Line', 'Den-en-toshi Line', 'Keio Inokashira Line', 'Ginza Subway Line', 'Fukutoshin Subway Line'] },
-  { id: 'ebisu', nameEn: 'Ebisu', nameJa: '恵比寿', nameKana: 'えびす', distanceToNextKm: 1.2, landmark: false, theme: THEMES.business, blurb: 'Antigua fábrica de cerveza reconvertida en barrio elegante.', doorSide: 'right' },
-  { id: 'meguro', nameEn: 'Meguro', nameJa: '目黒', nameKana: 'めぐろ', distanceToNextKm: 1.6, landmark: false, theme: THEMES.green, blurb: 'Río de cerezos y calles en cuesta.', doorSide: 'right' },
-  { id: 'gotanda', nameEn: 'Gotanda', nameJa: '五反田', nameKana: 'ごたんだ', distanceToNextKm: 1.6, landmark: false, theme: THEMES.business, blurb: 'Oficinas silenciosas junto al río Meguro.', doorSide: 'left' },
-  { id: 'osaki', nameEn: 'Osaki', nameJa: '大崎', nameKana: 'おおさき', distanceToNextKm: 0.9, landmark: false, theme: THEMES.business, blurb: 'Torres de cristal donde antes hubo fábricas.', doorSide: 'left' },
-  { id: 'shinagawa', nameEn: 'Shinagawa', nameJa: '品川', nameKana: 'しながわ', distanceToNextKm: 1.6, landmark: true, theme: THEMES.bay, blurb: 'Puerta hacia la bahía y el Shinkansen.', doorSide: 'right', transferLines: ['Shinkansen', 'Keikyu Main Line', 'Tokaido Line', 'Yokosuka Line'] },
-  // "Takanawa Gateway" is a registered JR East trademark (reg. 6206454) —
-  // the plain district toponym is used instead, like the other 29 stops.
-  { id: 'takanawa', nameEn: 'Takanawa', nameJa: '高輪', nameKana: 'たかなわ', distanceToNextKm: 1.3, landmark: false, theme: THEMES.bay, blurb: 'La estación más joven de la línea, toda cristal y madera.', doorSide: 'right' },
-  { id: 'tamachi', nameEn: 'Tamachi', nameJa: '田町', nameKana: 'たまち', distanceToNextKm: 1.5, landmark: false, theme: THEMES.business, blurb: 'Oficinas frente a la bahía de Tokio.', doorSide: 'left' },
-  { id: 'hamamatsucho', nameEn: 'Hamamatsucho', nameJa: '浜松町', nameKana: 'はままつちょう', distanceToNextKm: 1.2, landmark: false, theme: THEMES.bay, blurb: 'La torre de Tokio se asoma entre los edificios.', doorSide: 'right' },
-  { id: 'shimbashi', nameEn: 'Shimbashi', nameJa: '新橋', nameKana: 'しんばし', distanceToNextKm: 1.1, landmark: false, theme: THEMES.business, blurb: 'El bar bajo las vías donde los oficinistas brindan al salir.', doorSide: 'left' },
-  { id: 'yurakucho', nameEn: 'Yurakucho', nameJa: '有楽町', nameKana: 'ゆうらくちょう', distanceToNextKm: 0.9, landmark: false, theme: THEMES.business, blurb: 'A un paso del Palacio Imperial y Ginza.', doorSide: 'right' },
+  { id: 'yokohama', nameEn: 'Yokohama', nameJa: '横浜', nameKana: 'よこはま', distanceToNextKm: 1.2, landmark: false, theme: THEMES.business, blurb: 'Torres frente al puerto y la noria del muelle.', doorSide: 'left' },
+  { id: 'susukino', nameEn: 'Susukino', nameJa: 'すすきの', nameKana: 'すすきの', distanceToNextKm: 1.4, landmark: true, theme: THEMES.downtown, blurb: 'El neón de Sapporo encendido bajo la nieve del norte.', doorSide: 'left', transferLines: ['Namboku Subway Line', 'Sapporo Streetcar'] },
+  { id: 'nishiki', nameEn: 'Nishiki', nameJa: '錦', nameKana: 'にしき', distanceToNextKm: 0.6, landmark: false, theme: THEMES.shitamachi, blurb: 'La cocina de Kioto: un mercado estrecho que huele a té y encurtidos.', doorSide: 'right' },
+  { id: 'nara', nameEn: 'Nara', nameJa: '奈良', nameKana: 'なら', distanceToNextKm: 1.1, landmark: true, theme: THEMES.green, blurb: 'Un gran parque donde los ciervos saludan entre templos.', doorSide: 'left', transferLines: ['Kintetsu Nara Line', 'Yamatoji Line'] },
+  { id: 'koyasan', nameEn: 'Koyasan', nameJa: '高野山', nameKana: 'こうやさん', distanceToNextKm: 1.4, landmark: false, theme: THEMES.shitamachi, blurb: 'Monasterios en silencio entre cedros centenarios.', doorSide: 'right' },
+  { id: 'kanazawa', nameEn: 'Kanazawa', nameJa: '金沢', nameKana: 'かなざわ', distanceToNextKm: 0.7, landmark: false, theme: THEMES.shitamachi, blurb: 'Callejas de casas de té y pan de oro.', doorSide: 'left' },
+  { id: 'takayama', nameEn: 'Takayama', nameJa: '高山', nameKana: 'たかやま', distanceToNextKm: 1.2, landmark: false, theme: THEMES.shitamachi, blurb: 'Un mar de tejados oscuros en un pueblo de montaña.', doorSide: 'left' },
+  { id: 'uji', nameEn: 'Uji', nameJa: '宇治', nameKana: 'うじ', distanceToNextKm: 1.4, landmark: false, theme: THEMES.shitamachi, blurb: 'Campos de té verde y un paso a nivel que canta.', doorSide: 'right' },
+  { id: 'kiyomizu', nameEn: 'Kiyomizu', nameJa: '清水', nameKana: 'きよみず', distanceToNextKm: 1.2, landmark: false, theme: THEMES.green, blurb: 'El templo de la colina: sakura y momiji sobre el andén.', doorSide: 'right' },
+  { id: 'shirakawa-go', nameEn: 'Shirakawa-go', nameJa: '白川郷', nameKana: 'しらかわごう', distanceToNextKm: 1.9, landmark: false, theme: THEMES.shitamachi, blurb: 'Las casas de tejado empinado que rezan juntas al valle.', doorSide: 'left' },
+  { id: 'arashiyama', nameEn: 'Arashiyama', nameJa: '嵐山', nameKana: 'あらしやま', distanceToNextKm: 1.8, landmark: false, theme: THEMES.shitamachi, blurb: 'El tranvía Randen, el bambú y el río.', doorSide: 'right' },
+  { id: 'fukuoka', nameEn: 'Fukuoka', nameJa: '福岡', nameKana: 'ふくおか', distanceToNextKm: 0.9, landmark: true, theme: THEMES.downtown, blurb: 'La torre junto a la playa y los puestos de ramen de la noche.', doorSide: 'left', transferLines: ['Kuko Subway Line', 'Nishitetsu Tenjin Line'] },
+  { id: 'karuizawa', nameEn: 'Karuizawa', nameJa: '軽井沢', nameKana: 'かるいざわ', distanceToNextKm: 1.6, landmark: false, theme: THEMES.green, blurb: 'Bosques frescos donde la ciudad va a respirar.', doorSide: 'right' },
+  { id: 'hiroshima', nameEn: 'Hiroshima', nameJa: '広島', nameKana: 'ひろしま', distanceToNextKm: 1.1, landmark: false, theme: THEMES.youth, blurb: 'Okonomiyaki y tranvías junto al delta.', doorSide: 'right' },
+  { id: 'chukagai', nameEn: 'Chukagai', nameJa: '中華街', nameKana: 'ちゅうかがい', distanceToNextKm: 0.9, landmark: false, theme: THEMES.youth, blurb: 'El barrio chino de Yokohama: farolillos y vapor de baozi.', doorSide: 'left' },
+  { id: 'nagoya', nameEn: 'Nagoya', nameJa: '名古屋', nameKana: 'なごや', distanceToNextKm: 1.4, landmark: true, theme: THEMES.downtown, blurb: 'Rascacielos sobre la estación y delfines dorados en el castillo.', doorSide: 'left', transferLines: ['Shinkansen', 'Meitetsu Line', 'Kintetsu Line', 'Higashiyama Subway Line'] },
+  { id: 'sendai', nameEn: 'Sendai', nameJa: '仙台', nameKana: 'せんだい', distanceToNextKm: 1.0, landmark: false, theme: THEMES.business, blurb: 'La ciudad de los árboles: avenidas enteras bajo zelkovas.', doorSide: 'right' },
+  { id: 'fushimi-inari', nameEn: 'Fushimi Inari', nameJa: '伏見稲荷', nameKana: 'ふしみいなり', distanceToNextKm: 1.4, landmark: true, theme: THEMES.youth, blurb: 'Mil torii bermellón subiendo la montaña del zorro.', doorSide: 'left', transferLines: ['Keihan Main Line', 'JR Nara Line'] },
+  { id: 'dotonbori', nameEn: 'Dotonbori', nameJa: '道頓堀', nameKana: 'どうとんぼり', distanceToNextKm: 2.1, landmark: true, theme: THEMES.youth, blurb: 'Pantallas gigantes sobre el canal — y el corredor se hunde bajo la ciudad.', doorSide: 'left', transferLines: ['Midosuji Subway Line', 'Sennichimae Subway Line', 'Nankai Line'] },
+  { id: 'otaru', nameEn: 'Otaru', nameJa: '小樽', nameKana: 'おたる', distanceToNextKm: 1.2, landmark: false, theme: THEMES.business, blurb: 'Almacenes de canal, lámparas de cristal y cerveza.', doorSide: 'right' },
+  { id: 'yoshino', nameEn: 'Yoshino', nameJa: '吉野', nameKana: 'よしの', distanceToNextKm: 1.6, landmark: false, theme: THEMES.green, blurb: 'La montaña que se cubre entera de cerezos.', doorSide: 'right' },
+  { id: 'shizuoka', nameEn: 'Shizuoka', nameJa: '静岡', nameKana: 'しずおか', distanceToNextKm: 1.6, landmark: false, theme: THEMES.business, blurb: 'Té en las laderas y el Fuji asomado sobre los tejados.', doorSide: 'left' },
+  { id: 'kawasaki', nameEn: 'Kawasaki', nameJa: '川崎', nameKana: 'かわさき', distanceToNextKm: 0.9, landmark: false, theme: THEMES.business, blurb: 'Fábricas convertidas en torres de cristal.', doorSide: 'left' },
+  { id: 'kamakura', nameEn: 'Kamakura', nameJa: '鎌倉', nameKana: 'かまくら', distanceToNextKm: 1.6, landmark: true, theme: THEMES.bay, blurb: 'El gran Buda a un paso y el mar al fondo del andén.', doorSide: 'right', transferLines: ['Enoden', 'Yokosuka Line', 'Shonan-Shinjuku Line'] },
+  { id: 'enoshima', nameEn: 'Enoshima', nameJa: '江の島', nameKana: 'えのしま', distanceToNextKm: 1.3, landmark: false, theme: THEMES.bay, blurb: 'La isla del faro al final del puente.', doorSide: 'right' },
+  { id: 'himeji', nameEn: 'Himeji', nameJa: '姫路', nameKana: 'ひめじ', distanceToNextKm: 1.5, landmark: false, theme: THEMES.business, blurb: 'La garza blanca: el castillo más bello de Japón.', doorSide: 'left' },
+  { id: 'kobe', nameEn: 'Kobe', nameJa: '神戸', nameKana: 'こうべ', distanceToNextKm: 1.2, landmark: false, theme: THEMES.bay, blurb: 'La torre roja del puerto y luces subiendo la montaña.', doorSide: 'right' },
+  { id: 'shinsekai', nameEn: 'Shinsekai', nameJa: '新世界', nameKana: 'しんせかい', distanceToNextKm: 1.1, landmark: false, theme: THEMES.business, blurb: 'Kushikatsu y farolillos bajo la torre Tsūtenkaku.', doorSide: 'left' },
+  { id: 'ginza', nameEn: 'Ginza', nameJa: '銀座', nameKana: 'ぎんざ', distanceToNextKm: 0.9, landmark: false, theme: THEMES.business, blurb: 'Escaparates de lujo: la capital ya se anuncia.', doorSide: 'right' },
 ]
 
 export const TOTAL_LOOP_KM = STATIONS.reduce((sum, s) => sum + s.distanceToNextKm, 0)

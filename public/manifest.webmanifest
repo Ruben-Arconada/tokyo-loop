@@ -1,7 +1,7 @@
 {
-  "name": "Tokyo Loop — 東京ループ Driver",
-  "short_name": "Tokyo Loop",
-  "description": "Conduce la línea circular de Tokio en 3D: ciclo día/noche, melodías de estación y parada de precisión. Juego de fans, sin afiliación con ninguna compañía ferroviaria.",
+  "name": "Japan Loop — ジャパンループ Driver",
+  "short_name": "Japan Loop",
+  "description": "Conduce un Japón en miniatura: templos, aldeas, neón y mar en un solo anillo. Juego de fans, sin afiliación con ninguna compañía ferroviaria.",
   "start_url": ".",
   "scope": ".",
   "display": "standalone",

@@ -130,14 +130,14 @@ export class Scenery {
   }
 
   /**
-   * Rainbow Bridge off the bay stretch (outward from Takanawa Gateway):
-   * two white suspension towers, a deck, and main cables — with the famous
-   * soft rainbow illumination after dark. The bay district's own landmark.
+   * The great bay suspension bridge (outward from Enoshima): two white
+   * towers, a deck and main cables — with a soft rainbow illumination after
+   * dark, in the family of Japan's big crossings. The coast's own landmark.
    */
   private buildRainbowBridge() {
-    // 620 → 950: with the Kamakura coast in (shoreline ~116 out), both ends
-    // of the span now fade out over open water instead of hanging over sand.
-    const base = this.outwardFrom('takanawa', 950)
+    // 620 → 950: with the coast in (shoreline ~95 out), both ends of the
+    // span fade out over open water instead of hanging over sand.
+    const base = this.outwardFrom('enoshima', 950)
     const g = new THREE.Group()
     g.position.copy(base)
     g.position.y = -0.58 // tower feet buried under the ground plane
@@ -438,13 +438,13 @@ export class Scenery {
     this.fujiSnowWinter = makeSnowCap(0.28)
     this.fujiSnowWinter.visible = false
 
-    // ——— Tokyo Tower near Hamamatsucho: red/white banded lattice silhouette.
-    // NEGATIVE outward distance = inland, INSIDE the loop — the real tower
-    // stands west of Hamamatsucho, not on the bay side (thanks, Haruto).
+    // ——— The red port tower by the Kobe stop: a lattice silhouette in the
+    // Tokyo Tower / Kobe Port Tower family. NEGATIVE outward distance =
+    // inland, INSIDE the loop, so it rises behind the city, not in the sea.
     // Landmark materials ignore fog — real towers pierce the haze and stay
     // visible as icons; update() fakes atmospheric fading by day instead.
     this.towerGlowMat = new THREE.MeshStandardMaterial({ color: 0xd8442a, emissive: 0xff5514, emissiveIntensity: 0, roughness: 0.6, fog: false })
-    const towerBase = this.outwardFrom('hamamatsucho', -420)
+    const towerBase = this.outwardFrom('kobe', -420)
     const tower = new THREE.Group()
     tower.position.copy(towerBase)
     tower.position.y = -0.58 // feet buried just under the ground plane
@@ -467,12 +467,11 @@ export class Scenery {
     tower.add(spire)
     this.scene.add(tower)
 
-    // ——— Tokyo Skytree beyond the northeast rim: slender lattice spire, cool white at night.
+    // ——— A Skytree-like broadcast spire beyond the northeast rim: slender lattice, cool white at night.
     this.skytreeMat = new THREE.MeshStandardMaterial({ color: 0xb8c4cc, roughness: 0.45, metalness: 0.3, fog: false })
     this.skytreeGlowMat = new THREE.MeshStandardMaterial({ color: 0xb8c4cc, emissive: 0x9fd8ff, emissiveIntensity: 0, roughness: 0.45, fog: false })
-    // Biased toward -z (game east): the real Skytree sits ESE of Nippori,
-    // across the Sumida river, not due north.
-    const skytreeBase = this.outwardFrom('nippori', 950).add(new THREE.Vector3(-300, 0, -700))
+    // Biased toward -z (game east), rising far behind the old-town rooftops.
+    const skytreeBase = this.outwardFrom('kanazawa', 950).add(new THREE.Vector3(-300, 0, -700))
     const skytree = new THREE.Group()
     skytree.position.copy(skytreeBase)
     skytree.position.y = -0.58
@@ -1270,7 +1269,7 @@ export class Scenery {
 
   /** t of THE level crossing (0.55 into the Tabata→Komagome stretch) — shared by the crossing itself and the hill walls' gap. */
   private crossingTFraction(): number {
-    const idx = STATIONS.findIndex((s) => s.id === 'tabata')
+    const idx = STATIONS.findIndex((s) => s.id === 'uji')
     const markerA = this.track.markerFor(idx).tFraction
     const markerB = this.track.markerFor((idx + 1) % N).tFraction
     return markerA + (((markerB - markerA + 1) % 1) || 0.02) * 0.55
@@ -1718,11 +1717,12 @@ export class Scenery {
   }
 
   /**
-   * THE level crossing. The real Yamanote famously keeps exactly one —
-   * Dai-ni Nakazato, on the Tabata→Komagome stretch; everywhere else the
-   * line runs on viaduct or in cutting. Yellow/black striped poles, the
-   * Japanese yellow crossbuck, and twin red lamps that alternate-blink (with
-   * a kan-kan bell fed by the Game) only while the train approaches.
+   * THE level crossing — the ring keeps exactly one, on the country stretch
+   * between Uji's tea fields and the Kiyomizu climb (an homage to circular
+   * lines that keep a single surviving fumikiri). Yellow/black striped
+   * poles, the Japanese yellow crossbuck, and twin red lamps that
+   * alternate-blink (with a kan-kan bell fed by the Game) only while the
+   * train approaches.
    */
   private buildCrossings() {
     const stripeTex = (() => {
@@ -1793,7 +1793,7 @@ export class Scenery {
   }
 
   /**
-   * The Shibuya tunnel (H4): where the trench (Track's negative hill) dips
+   * The Dōtonbori tunnel (H4): where the trench (Track's negative hill) dips
    * below grade, a concrete lining box takes over — walls, ceiling, sodium
    * lights — emerging above ground at both ends as portal hoods, the way a
    * real urban rail portal does. The approaches get low retaining walls so
@@ -1964,7 +1964,7 @@ export class Scenery {
       ctx.fillStyle = '#e8e6da'
       ctx.font = '700 40px "Hiragino Sans", sans-serif'
       ctx.textAlign = 'center'
-      ctx.fillText('渋谷隧道', 128, 46)
+      ctx.fillText('道頓堀隧道', 128, 46)
       const tex = new THREE.CanvasTexture(canvas)
       tex.colorSpace = THREE.SRGBColorSpace
       return tex

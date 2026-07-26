@@ -29,7 +29,7 @@ export function makeScuffedPanelTexture(base = '#1c1f26'): THREE.CanvasTexture {
 }
 
 /**
- * Tokyo Loop's signature green. A nod to the warbler-green tradition of
+ * Japan Loop's signature green. A nod to the warbler-green tradition of
  * Tokyo's loop line — color alone is not protectable, and this is our own
  * palette pick, used consistently across signage, HUD and branding.
  */

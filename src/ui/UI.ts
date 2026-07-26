@@ -159,11 +159,11 @@ export class UI {
           <div class="hud-stations-row">
             <div class="hud-station-now">
               <small>PARADA ACTUAL</small>
-              <span class="hud-station-row"><span class="tl-badge hud-station-now-code">TL01</span><span class="hud-station-now-name">Tokyo</span></span>
+              <span class="hud-station-row"><span class="tl-badge hud-station-now-code">JL01</span><span class="hud-station-now-name">Tokyo</span></span>
             </div>
             <div class="hud-station-next">
               <small>PRÓXIMA</small>
-              <span class="hud-station-row"><span class="tl-badge hud-station-next-code">TL02</span><span class="hud-station-next-name">Kanda</span></span>
+              <span class="hud-station-row"><span class="tl-badge hud-station-next-code">JL02</span><span class="hud-station-next-name">Yokohama</span></span>
             </div>
           </div>
           <div class="segment-progress">
@@ -336,7 +336,7 @@ export class UI {
         <h2>Ir a una estación</h2>
         <p class="atmo-hint">Apareces a 300 m del andén, en marcha. El horario se resincroniza — es un salto, no un retraso.</p>
         <div class="teleport-grid">
-          ${STATIONS.map((st, i) => `<button data-tp="${i}"><span class="tl-badge">TL${String(i + 1).padStart(2, '0')}</span><span class="tp-name">${st.nameEn}</span></button>`).join('')}
+          ${STATIONS.map((st, i) => `<button data-tp="${i}"><span class="tl-badge">JL${String(i + 1).padStart(2, '0')}</span><span class="tp-name">${st.nameEn}</span></button>`).join('')}
         </div>
         <button class="btn-close">Cancelar</button>
       </div>
@@ -465,8 +465,8 @@ export class UI {
     el.className = 'overlay start-overlay'
     el.innerHTML = `
       <div class="overlay-card">
-        <h1>東京ループ <span>Tokyo Loop</span></h1>
-        <p class="tagline">Sé el maquinista. Un giro completo a la línea circular de Tokio, de madrugada a madrugada.</p>
+        <h1>ジャパンループ <span>Japan Loop</span></h1>
+        <p class="tagline">Sé el maquinista. Una vuelta completa a un Japón en miniatura — templos, aldeas, neón y mar — de madrugada a madrugada.</p>
         <ul class="howto">
           <li><strong>Palanca:</strong> arrástrala arriba para acelerar (P1–P5), abajo para frenar (B1–B7/EB).</li>
           <li><strong>Teclado:</strong> ↑/W acelera, ↓/S frena, espacio = freno de emergencia, D = puertas.</li>
@@ -475,7 +475,7 @@ export class UI {
         </ul>
         <button class="btn-start">Subir a la cabina 🚃</button>
         <button class="btn-credits">Sobre el equipo</button>
-        <p class="disclaimer">Juego de fans no oficial. Sin afiliación con JR East ni con ninguna compañía ferroviaria; los nombres de estación se usan como topónimos. Melodías 100% originales.</p>
+        <p class="disclaimer">Juego de fans no oficial. Sin afiliación con ninguna compañía ferroviaria; las estaciones son alegorías de lugares reales de Japón usados como topónimos. Melodías 100% originales.</p>
       </div>
     `
     el.querySelector('.btn-start')!.addEventListener('click', () => {
@@ -571,7 +571,7 @@ export class UI {
     el.innerHTML = `
       <div class="overlay-card credits-card">
         <h2>El equipo</h2>
-        <p class="credits-intro">Tokyo Loop lo hacemos siete personas a las que nos obsesionan los trenes japoneses y Tokio. Nos pusimos de acuerdo en una sola cosa antes de escribir una línea de código: si no es entretenido, inmersivo y bonito de ver y de oír, no sale de la sala de pruebas.</p>
+        <p class="credits-intro">Japan Loop lo hacemos siete personas a las que nos obsesionan los trenes japoneses y Japón entero. Nos pusimos de acuerdo en una sola cosa antes de escribir una línea de código: si no es entretenido, inmersivo y bonito de ver y de oír, no sale de la sala de pruebas.</p>
         <ul class="team-list">
           ${TEAM.map((m) => `<li><strong>${m.name}</strong> — ${m.role}<br><span>${m.note}</span></li>`).join('')}
         </ul>
@@ -772,10 +772,9 @@ export class UI {
     this.notchEl.className = 'notch-readout' + (opts.notchLabel.startsWith('B') || opts.notchLabel === 'EB' ? ' braking' : opts.notchLabel.startsWith('P') ? ' powering' : '')
     this.stationNowEl.textContent = STATIONS[opts.currentStationIdx].nameEn
     this.stationNextEl.textContent = STATIONS[opts.targetStationIdx].nameEn
-    // "TL" (Tokyo Loop) numbering — deliberately NOT the real operator's
-    // line code, which is part of JR East's registered signage system.
-    this.stationNowCodeEl.textContent = `TL${String(opts.currentStationIdx + 1).padStart(2, '0')}`
-    this.stationNextCodeEl.textContent = `TL${String(opts.targetStationIdx + 1).padStart(2, '0')}`
+    // "JL" (Japan Loop) numbering — the ring's own code, not any operator's.
+    this.stationNowCodeEl.textContent = `JL${String(opts.currentStationIdx + 1).padStart(2, '0')}`
+    this.stationNextCodeEl.textContent = `JL${String(opts.targetStationIdx + 1).padStart(2, '0')}`
     const pct = Math.round(opts.segmentProgress * 100)
     this.segmentFillEl.style.width = `${pct}%`
     this.segmentTrainEl.style.left = `${pct}%`

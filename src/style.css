@@ -326,7 +326,7 @@ canvas.game-canvas {
 .hud-station-now-name, .hud-station-next-name { font-size: var(--text-body); font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; transition: opacity 0.2s ease; }
 .hud-station-now { border-color: rgba(120, 200, 255, 0.4); }
 
-/* Route map: Tokyo Loop's green band with round station markers riding on
+/* Route map: Japan Loop's green band with round station markers riding on
    it, in the spirit of in-train route diagrams. */
 .line-diagram {
   pointer-events: auto;
@@ -382,7 +382,7 @@ canvas.game-canvas {
   color: var(--text-muted);
 }
 
-/* "TL" station-number badge — Tokyo Loop's own numbering, not any operator's. */
+/* "JL" station-number badge — Japan Loop's own numbering, not any operator's. */
 .tl-badge {
   display: inline-flex;
   align-items: center;
