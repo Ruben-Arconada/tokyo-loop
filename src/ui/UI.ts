@@ -28,6 +28,8 @@ export interface UICallbacks {
   onCameraSet: (mode: CameraMode) => void
   /** Second PA language (Japanese is always there). */
   onPaLangSet: (lang: 'en' | 'es') => void
+  /** Tester teleport: picked a station from the line-diagram sheet. */
+  onTeleport: (stationIndex: number) => void
   /** Frame-time recording: start/stop, hand over the log, throw it away. */
   onPerfToggle: () => void
   onPerfExport: () => string
@@ -59,6 +61,7 @@ export class UI {
   private startOverlay: HTMLDivElement
   private menuOverlay: HTMLDivElement
   private atmoOverlay: HTMLDivElement
+  private teleportOverlay: HTMLDivElement
   private toastEl: HTMLDivElement
   private menuOpen = false
   private atmoOpen = false
@@ -130,6 +133,9 @@ export class UI {
 
     this.atmoOverlay = this.buildAtmoOverlay()
     mount.appendChild(this.atmoOverlay)
+
+    this.teleportOverlay = this.buildTeleportOverlay()
+    mount.appendChild(this.teleportOverlay)
   }
 
   private buildHud() {
@@ -249,6 +255,8 @@ export class UI {
     }
 
     this.hud.querySelector('.hud-menu-btn')!.addEventListener('click', () => this.toggleMenu())
+    // The line diagram doubles as the teleport door: tap it, pick a station.
+    this.lineDiagram.addEventListener('click', () => this.toggleTeleport(true))
     this.atmoChip = this.hud.querySelector('.hud-clock')!
     this.atmoGlyphEl = this.hud.querySelector('.hud-clock-atmo')!
     this.atmoChip.addEventListener('click', () => this.toggleAtmo())
@@ -313,6 +321,46 @@ export class UI {
     })
     el.querySelector('[data-weather-auto]')!.addEventListener('click', () => this.cb.onWeatherAutoSet(true))
     return el
+  }
+
+  /**
+   * The tester teleport sheet: every station as a tappable row, tap → land
+   * 300 units short of its platform, driving. Two deliberate taps (diagram,
+   * then station) so a stray finger can never yank the train across Tokyo.
+   */
+  private buildTeleportOverlay(): HTMLDivElement {
+    const el = document.createElement('div')
+    el.className = 'overlay teleport-overlay hidden'
+    el.innerHTML = `
+      <div class="overlay-card teleport-card" role="dialog" aria-label="Teletransporte">
+        <h2>Ir a una estación</h2>
+        <p class="atmo-hint">Apareces a 300 m del andén, en marcha. El horario se resincroniza — es un salto, no un retraso.</p>
+        <div class="teleport-grid">
+          ${STATIONS.map((st, i) => `<button data-tp="${i}"><span class="tl-badge">TL${String(i + 1).padStart(2, '0')}</span><span class="tp-name">${st.nameEn}</span></button>`).join('')}
+        </div>
+        <button class="btn-close">Cancelar</button>
+      </div>
+    `
+    el.querySelector('.btn-close')!.addEventListener('click', () => this.toggleTeleport(false))
+    el.addEventListener('click', (e) => {
+      if (e.target === el) this.toggleTeleport(false)
+    })
+    el.querySelectorAll<HTMLButtonElement>('[data-tp]').forEach((btn) => {
+      btn.addEventListener('click', () => {
+        this.toggleTeleport(false)
+        this.cb.onTeleport(parseInt(btn.dataset.tp!, 10))
+      })
+    })
+    return el
+  }
+
+  private toggleTeleport(open: boolean) {
+    this.teleportOverlay.classList.toggle('hidden', !open)
+  }
+
+  /** Feedback after the jump lands. */
+  showTeleportToast(stationIndex: number) {
+    this.flashToast(`Teletransportado — ${STATIONS[stationIndex].nameEn} a 300 m`, 'good')
   }
 
   private toggleAtmo(force?: boolean) {

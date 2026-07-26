@@ -379,6 +379,7 @@ export class Game {
         this.paLang = lang
         localStorage.setItem(PA_LANG_KEY, lang)
       },
+      onTeleport: (idx) => this.teleportToStation(idx),
       onPerfToggle: () => this.togglePerfRecording(),
       onPerfExport: () => (this.perf.frames > 0 ? this.perf.export() : PerfLog.stored()),
       onPerfClear: () => {
@@ -718,6 +719,40 @@ export class Game {
       if (tr.boardLeft <= 0 || moved === 0) tr.phase = 'done'
     }
     this.ui.setOccupancy(this.flow.onboard, TRAIN_CAPACITY, false)
+  }
+
+  /**
+   * Tester teleport (the line-diagram sheet): land 300 units short of the
+   * chosen platform, driving. Any half-open stop is abandoned WITHOUT the
+   * left-behind penalty — a jump is a test action, not a service failure —
+   * and the timetable resyncs to ON TIME at the landing point.
+   */
+  private teleportToStation(idx: number) {
+    if (!this.started) return
+    // Abandon any in-progress stop cleanly: melody off, sprites back to
+    // their queues, no transfer left half-counted.
+    this.transfer = null
+    audio.stopMelodyLoop()
+    this.passengers.endBoarding()
+
+    const UNITS_BEFORE = 300
+    this.train.jumpToApproach(idx, UNITS_BEFORE)
+    // Segment progress at the landing point feeds the schedule resync.
+    const prevT = this.track.markerFor(this.train.currentStationIndex).tFraction
+    const targetT = this.track.markerFor(idx).tFraction
+    const segLen = ((((targetT - prevT) % 1) + 1) % 1) * this.track.getLength() || 1
+    this.schedule.resync(idx, THREE.MathUtils.clamp(1 - UNITS_BEFORE / segLen, 0, 1))
+    // The platform camera should watch the platform being approached now.
+    if (this.cameraMode === 'platform') {
+      this.platformStation = idx
+      this.platYaw = 0
+      this.platPitch = 0
+    }
+    this.controls.syncNotch(0)
+    perfMark('teleport')
+    this.ui.showTeleportToast(idx)
+    this.updateCameraFromTrain()
+    if (!this.running) this.renderOnce()
   }
 
   /** One control for both door moves — the train decides which (if any) applies right now. */

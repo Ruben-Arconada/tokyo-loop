@@ -131,6 +131,29 @@ export class Train {
     this.notch = THREE.MathUtils.clamp(n, MIN_NOTCH, MAX_NOTCH)
   }
 
+  /**
+   * Test/tester teleport: drops the train `unitsBefore` short of a station's
+   * platform, at a stand, in clean 'running' state. Sets BOTH station
+   * indices (stop detection only reads the target — the trap every ad-hoc
+   * teleport falls into) and clears every latch a jump could leave armed:
+   * the arrival announcement, door state, boarding flags.
+   */
+  jumpToApproach(stationIndex: number, unitsBefore = 300) {
+    const idx = ((stationIndex % STATIONS.length) + STATIONS.length) % STATIONS.length
+    const marker = this.track.markerFor(idx)
+    this.progressFraction = THREE.MathUtils.euclideanModulo(marker.tFraction - unitsBefore / this.track.getLength(), 1)
+    this.currentStationIndex = (idx - 1 + STATIONS.length) % STATIONS.length
+    this.targetStationIndex = idx
+    this.state = 'running'
+    this.speedKmh = 0
+    this.notch = 0
+    this.doorsOpenAmount = 0
+    this.boardingComplete = false
+    this.boardingRemaining = 0
+    this.announcedArriving = false
+    this.lastCloseInterrupted = false
+  }
+
   get speed01(): number {
     return this.speedKmh / MAX_SPEED_KMH
   }

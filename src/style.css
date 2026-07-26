@@ -228,6 +228,30 @@ canvas.game-canvas {
 .delay-chip.slipping { border-color: rgba(255, 206, 74, 0.6); color: var(--color-warn); }
 .delay-chip.late { border-color: rgba(255, 92, 92, 0.7); color: var(--color-brake); }
 
+/* Teleport picker: two columns of station rows, thumb-sized. */
+.teleport-card { max-width: 400px; }
+.teleport-grid {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 6px;
+  max-height: 52vh;
+  overflow-y: auto;
+  margin-top: var(--space-3);
+}
+.teleport-grid button {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 7px 10px;
+  border-radius: var(--radius-sm);
+  border: 1px solid rgba(255, 255, 255, 0.16);
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--text-primary);
+  font-size: var(--text-label);
+  text-align: left;
+}
+.tp-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+
 /* One-off explanations. Sits above the HUD but never blocks the controls. */
 .hint-card {
   position: absolute;
@@ -305,6 +329,8 @@ canvas.game-canvas {
 /* Route map: Tokyo Loop's green band with round station markers riding on
    it, in the spirit of in-train route diagrams. */
 .line-diagram {
+  pointer-events: auto;
+  cursor: pointer;
   position: absolute;
   top: calc(var(--safe-top) + 58px);
   left: calc(var(--safe-left) + var(--space-2));

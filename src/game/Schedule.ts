@@ -177,6 +177,21 @@ export class Schedule {
     this.dwellElapsed = 0
   }
 
+  /**
+   * After a teleport: re-aim at the new target and absorb the whole
+   * discontinuity into schedShift so the clock reads ON TIME at the landing
+   * point — a jump is not a delay, and it is not two minutes of credit
+   * either. (delay() = elapsed − scheduledNow − shift, so setting the shift
+   * to the current raw delay zeroes it by construction.)
+   */
+  resync(target: number, segmentProgress: number) {
+    this.target = target
+    this.dwellElapsed = 0
+    this.stopped = false
+    this.schedShift = 0
+    this.schedShift = this.delay(segmentProgress)
+  }
+
   /** mm:ss with a sign, for the HUD. */
   static format(seconds: number): string {
     const sign = seconds < -1 ? '−' : seconds > 1 ? '+' : ''
