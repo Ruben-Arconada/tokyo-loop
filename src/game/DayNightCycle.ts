@@ -91,6 +91,12 @@ void main() {
   vec4 worldPosition = modelMatrix * vec4(position, 1.0);
   vWorldPosition = worldPosition.xyz;
   gl_Position = projectionMatrix * modelViewMatrix * vec4(position, 1.0);
+  // Pin the dome to the far plane whatever camera.far is: the tunnel pulls
+  // far in to 900 for culling, and a 4000-radius dome would clip out —
+  // the sky went BLACK inside and popped back when far was restored.
+  // With depth forced to just-inside-far it always draws and everything
+  // else still occludes it (the classic skybox depth trick).
+  gl_Position.z = gl_Position.w * 0.99999;
 }
 `
 const SKY_FRAGMENT = /* glsl */ `
@@ -207,6 +213,10 @@ export class DayNightCycle {
       fog: false,
     })
     this.skyMesh = new THREE.Mesh(skyGeo, skyMat)
+    // The depth trick above keeps the FRAGMENTS inside the far plane, but
+    // three would still frustum-cull the whole mesh by its bounding sphere
+    // before the shader ever runs — opt it out.
+    this.skyMesh.frustumCulled = false
     scene.add(this.skyMesh)
 
     this.sunSprite = new THREE.Sprite(

@@ -1872,14 +1872,13 @@ export class Scenery {
 
     const WALL_X = 6.0
     const CLEAR_H = 6.9
-    // The ceiling hangs a clear step BELOW the wall tops. With both at the
-    // exact same height the wall's top edge lay INSIDE the ceiling plane,
-    // and the strip triangulation of the curved bore sagged each surface a
-    // hair past the other — the two upper corners shimmered with z-fighting
-    // (Rubén: "la geometría lucha por aparecer"), worst near the portals
-    // where the far plane is still 9000 and depth precision is thinnest.
-    // A decisive overlap gives every corner pixel one clear winner.
-    const CEIL_DROP = 0.3
+    // The corner is WELDED: the ceiling's edge vertices are the exact same
+    // numbers as the wall tops, ring by ring. Every other arrangement lost:
+    // ceiling and walls at the same height but wider overlapped along the
+    // edge (v1, shimmered), and a ceiling stepped below the wall tops still
+    // CROSSED the wall plane, which at grazing angles down a 400-unit bore
+    // shimmers just the same (v2, Rubén saw it survive). Two strips sharing
+    // a bitwise-identical edge are watertight and have nothing to fight.
     const wallL: number[] = []
     const wallR: number[] = []
     const ceil: number[] = []
@@ -1895,11 +1894,14 @@ export class Scenery {
       const inv = 1 / Math.hypot(nx, nz)
       const floorY = p.y - 0.5
       const topY = p.y + CLEAR_H
-      const ceilY = topY - CEIL_DROP
+      const xL = p.x + nx * inv * WALL_X
+      const zL = p.z + nz * inv * WALL_X
+      const xR = p.x - nx * inv * WALL_X
+      const zR = p.z - nz * inv * WALL_X
       // Left wall: bottom then top.
-      wallL.push(p.x + nx * inv * WALL_X, floorY, p.z + nz * inv * WALL_X, p.x + nx * inv * WALL_X, topY, p.z + nz * inv * WALL_X)
-      wallR.push(p.x - nx * inv * WALL_X, floorY, p.z - nz * inv * WALL_X, p.x - nx * inv * WALL_X, topY, p.z - nz * inv * WALL_X)
-      ceil.push(p.x + nx * inv * (WALL_X + 0.4), ceilY, p.z + nz * inv * (WALL_X + 0.4), p.x - nx * inv * (WALL_X + 0.4), ceilY, p.z - nz * inv * (WALL_X + 0.4))
+      wallL.push(xL, floorY, zL, xL, topY, zL)
+      wallR.push(xR, floorY, zR, xR, topY, zR)
+      ceil.push(xL, topY, zL, xR, topY, zR)
       // One texture tile per ~14 units of bore; v spans the panel height.
       const u = (i * (spanUnits / RINGS)) / 14
       stripUvs.push(u, 0, u, 1)
@@ -1942,8 +1944,7 @@ export class Scenery {
       const nz = tangent.x
       const inv = 1 / Math.hypot(nx, nz)
       const side = i % 2 === 0 ? 2.4 : -2.4 // staggered rows, like a real bore
-      // Hung 0.12 below the (lowered) ceiling plane, same reveal as before.
-      dummy.position.set(p.x + nx * inv * side, p.y + CLEAR_H - CEIL_DROP - 0.12, p.z + nz * inv * side)
+      dummy.position.set(p.x + nx * inv * side, p.y + CLEAR_H - 0.12, p.z + nz * inv * side)
       dummy.rotation.set(0, Math.atan2(tangent.x, tangent.z), 0)
       dummy.updateMatrix()
       lamps.setMatrixAt(i, dummy.matrix)
