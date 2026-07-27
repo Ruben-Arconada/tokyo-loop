@@ -17,12 +17,16 @@ import type { Season } from './Seasons'
 // attribute instead of the old spheres'.
 // ————————————————————————————————————————————————————————————————
 
-const ATLAS_SIZE = 512
-const CELLS = 4 // 4 variant columns × 4 season rows
-const CELL = ATLAS_SIZE / CELLS
-export const CARDS_PER_TREE = 13
+const COLS = 4 // variant columns
+const ROWS = 8 // sakura seasons on rows 0-3, broadleaf seasons on rows 4-7
+const CELL = 128
+const ATLAS_W = COLS * CELL
+const ATLAS_H = ROWS * CELL
 
 const SEASON_ROW: Record<Season, number> = { spring: 0, summer: 1, autumn: 2, winter: 3 }
+
+export type CanopyFamily = 'sakura' | 'broadleaf'
+const FAMILY_ROW_BASE: Record<CanopyFamily, number> = { sakura: 0, broadleaf: 4 }
 
 // The sphere era multiplied every instance tint by the material's own pink
 // (0xf5c9dc); the cards' atlas is near-white, so that factor lives in the
@@ -37,9 +41,10 @@ const BLOSSOM_BASE = new THREE.Color(0xf5c9dc)
  */
 function bakeClumpAtlas(): THREE.CanvasTexture {
   const cnv = document.createElement('canvas')
-  cnv.width = cnv.height = ATLAS_SIZE
+  cnv.width = ATLAS_W
+  cnv.height = ATLAS_H
   const ctx = cnv.getContext('2d')!
-  ctx.clearRect(0, 0, ATLAS_SIZE, ATLAS_SIZE)
+  ctx.clearRect(0, 0, ATLAS_W, ATLAS_H)
 
   const rand = mulberry32(0x5a4b)
   /** Irregular blob membership test: union of 3 ellipses per cell, drawn fresh per cell so no two variants share a silhouette. */
@@ -57,8 +62,8 @@ function bakeClumpAtlas(): THREE.CanvasTexture {
     return (u: number, v: number) => lobes.some((l) => ((u - l.cx) / l.rx) ** 2 + ((v - l.cy) / l.ry) ** 2 < 1)
   }
 
-  for (let row = 0; row < CELLS; row++) {
-    for (let col = 0; col < CELLS; col++) {
+  for (let row = 0; row < ROWS; row++) {
+    for (let col = 0; col < COLS; col++) {
       const x0 = col * CELL
       const y0 = row * CELL
       const inBlob = blobTest()
@@ -71,8 +76,27 @@ function bakeClumpAtlas(): THREE.CanvasTexture {
         ctx.ellipse(x0 + u * CELL, y0 + v * CELL, r, r * squish, rand() * Math.PI, 0, Math.PI * 2)
         ctx.fill()
       }
+      // Rows 0-3: sakura. Rows 4-7: broadleaf — same seasons, its own build.
+      const season = row % 4
+      const broadleaf = row >= 4
 
-      if (row === SEASON_ROW.spring) {
+      if (broadleaf) {
+        if (season === 3) {
+          // Bare broadleaf: a slightly denser skeleton than the cherry's.
+          twigs(ctx, x0, y0, rand, 7, 0.92)
+        } else {
+          // Round overlapping leaf masses — lumpy and full, nothing like
+          // the cherry's posies. Autumn keeps the FULL mass (koyo is dense;
+          // the tint does the burning).
+          const n = season === 1 ? 48 : 40
+          for (let i = 0; i < n; i++) {
+            const u = rand()
+            const v = rand()
+            if (!inBlob(u, v)) continue
+            dot(u, v, 5.5 + rand() * 3.6, 0.7 + rand() * 0.3)
+          }
+        }
+      } else if (season === SEASON_ROW.spring) {
         // Bloom: cauliflower of small 5-petal posies; edge posies stay
         // distinct so the rim reads as flowers, not fuzz.
         for (let i = 0; i < 30; i++) {
@@ -87,7 +111,7 @@ function bakeClumpAtlas(): THREE.CanvasTexture {
           }
           dot(u, v, pr * 0.5 * CELL, Math.min(1, value + 0.08))
         }
-      } else if (row === SEASON_ROW.summer) {
+      } else if (season === SEASON_ROW.summer) {
         // Dense leaf: pointed little ellipses, tighter packing.
         for (let i = 0; i < 46; i++) {
           const u = rand()
@@ -95,7 +119,7 @@ function bakeClumpAtlas(): THREE.CanvasTexture {
           if (!inBlob(u, v)) continue
           dot(u, v, 4.5 + rand() * 3, 0.72 + rand() * 0.28, 0.6)
         }
-      } else if (row === SEASON_ROW.autumn) {
+      } else if (season === SEASON_ROW.autumn) {
         // Sparse amber: fewer, smaller clumps with daylight between them,
         // and a few twig strokes showing through the gaps.
         twigs(ctx, x0, y0, rand, 3, 0.62)
@@ -153,6 +177,29 @@ function twigs(ctx: CanvasRenderingContext2D, x0: number, y0: number, rand: () =
   }
 }
 
+/**
+ * A sphere whose vertices are pushed in and out by deterministic noise —
+ * for the blob geometry that STAYS instanced (scrub bushes): overlapping
+ * perfect spheres show their intersection seams, overlapping lumps read
+ * as one organic mass (Rubén: "algo de transición entre las uniones").
+ */
+export function makeLumpySphereGeometry(radius: number, widthSegs: number, heightSegs: number, amount = 0.22): THREE.SphereGeometry {
+  const geo = new THREE.SphereGeometry(radius, widthSegs, heightSegs)
+  const posAttr = geo.getAttribute('position') as THREE.BufferAttribute
+  const v = new THREE.Vector3()
+  for (let i = 0; i < posAttr.count; i++) {
+    v.fromBufferAttribute(posAttr, i)
+    // Position-hashed, not index-hashed: the sphere's seam column shares
+    // positions between duplicated vertices, and hashing the position keeps
+    // those duplicates moving together (no cracks).
+    const n = Math.sin(v.x * 7.3 + v.y * 5.1) * Math.cos(v.z * 6.7 - v.y * 3.9)
+    v.multiplyScalar(1 + n * amount)
+    posAttr.setXYZ(i, v.x, v.y, v.z)
+  }
+  geo.computeVertexNormals()
+  return geo
+}
+
 /** Deterministic PRNG so the atlas (and card layout noise) is identical every load. */
 function mulberry32(seed: number): () => number {
   let a = seed >>> 0
@@ -175,6 +222,8 @@ interface PendingCard {
   r: number
   g: number
   b: number
+  /** First atlas row of this card's family (0 sakura, 4 broadleaf). */
+  rowBase: number
   /** true = the Komagome grove: bloom row in every season. */
   evergreen: boolean
 }
@@ -182,6 +231,7 @@ interface PendingCard {
 export class SakuraCanopyCloud {
   private pending: PendingCard[] = []
   private rowAttr: THREE.InstancedBufferAttribute | null = null
+  private rowBases: Uint8Array | null = null
   private evergreenFlags: Uint8Array | null = null
   /** The seasonal pools recolor THIS attribute (rgb per card). */
   colorAttr: THREE.InstancedBufferAttribute | null = null
@@ -193,32 +243,46 @@ export class SakuraCanopyCloud {
   private readonly tint = new THREE.Color()
 
   /**
-   * Registers one tree's cards. Returns nothing; card order is the call
-   * order, so cluster ranges stay contiguous for the pool registrations.
+   * Registers one tree's cards. Card order is the call order, so cluster
+   * ranges stay contiguous for the pool registrations. Each family has its
+   * own crown build: the cherry is a tall lush ball of bloom (Rubén: "más
+   * grandes y más frondosos, el tronco casi igual"), the broadleaf a
+   * rounder, slightly lower head. Broadleaf callers pass their as-built
+   * tint (the pool's spring baseline); sakura mixes its own pink.
    */
-  addTree(x: number, groundY: number, z: number, scale: number, evergreen: boolean) {
-    const crownY = groundY + 4.05 * scale
-    for (let i = 0; i < CARDS_PER_TREE; i++) {
-      // Shell placement: two big CORE cards fill the heart of the crown
+  addTree(x: number, groundY: number, z: number, scale: number, family: CanopyFamily, evergreen: boolean, tint?: THREE.Color) {
+    const sakura = family === 'sakura'
+    const cards = sakura ? 15 : 9
+    const cores = sakura ? 3 : 2
+    const crownY = groundY + (sakura ? 4.3 : 3.3) * scale
+    for (let i = 0; i < cards; i++) {
+      // Shell placement: big CORE cards fill the heart of the crown
       // (without them the shell read as popcorn with daylight through the
       // middle), the rest hug an ellipsoid, and the last two drop lower as
       // a skirt so the silhouette never reads as an egg.
-      const core = i < 2
-      const skirt = i >= CARDS_PER_TREE - 2
+      const core = i < cores
+      const skirt = i >= cards - 2
       const a = Math.random() * Math.PI * 2
-      const rXZ = (core ? 0.25 : skirt ? 1.35 : 0.6 + Math.random() * 1.3) * scale
-      const yOff = core ? (Math.random() - 0.4) * 0.7 * scale : skirt ? -1.05 * scale : (Math.random() - 0.38) * 1.9 * scale
-      this.tint.setHSL(0.93 + Math.random() * 0.03, 0.55, 0.82 + Math.random() * 0.08).multiply(BLOSSOM_BASE)
+      const shell = sakura ? 0.5 + Math.random() * 1.2 : 0.4 + Math.random() * 0.9
+      const rXZ = (core ? 0.25 : skirt ? (sakura ? 1.5 : 1.1) : shell) * scale
+      const yOff = core
+        ? (Math.random() - 0.4) * 0.7 * scale
+        : skirt
+          ? (sakura ? -1.2 : -0.85) * scale
+          : (Math.random() - 0.38) * (sakura ? 2.1 : 1.5) * scale
+      if (sakura) this.tint.setHSL(0.93 + Math.random() * 0.03, 0.55, 0.82 + Math.random() * 0.08).multiply(BLOSSOM_BASE)
+      else this.tint.copy(tint!)
       this.pending.push({
         x: x + Math.cos(a) * rXZ,
         y: crownY + yOff,
         z: z + Math.sin(a) * rXZ,
-        size: (core ? 3.6 : 2.7 + Math.random() * 1.5) * scale,
-        col: Math.floor(Math.random() * CELLS),
+        size: (core ? (sakura ? 4.4 : 3.3) : sakura ? 3.2 + Math.random() * 1.7 : 2.5 + Math.random() * 1.2) * scale,
+        col: Math.floor(Math.random() * COLS),
         phase: Math.random() * Math.PI * 2,
         r: this.tint.r,
         g: this.tint.g,
         b: this.tint.b,
+        rowBase: FAMILY_ROW_BASE[family],
         evergreen,
       })
     }
@@ -244,6 +308,7 @@ export class SakuraCanopyCloud {
     const rows = new Float32Array(n)
     const colors = new Float32Array(n * 3)
     this.evergreenFlags = new Uint8Array(n)
+    this.rowBases = new Uint8Array(n)
     this.pending.forEach((c, i) => {
       pos[i * 3] = c.x
       pos[i * 3 + 1] = c.y
@@ -251,10 +316,11 @@ export class SakuraCanopyCloud {
       data[i * 3] = c.size
       data[i * 3 + 1] = c.col
       data[i * 3 + 2] = c.phase
-      rows[i] = 0 // everyone ships in bloom (spring is the baseline)
+      rows[i] = c.rowBase // everyone ships in spring (row 0 of its family)
       colors[i * 3] = c.r
       colors[i * 3 + 1] = c.g
       colors[i * 3 + 2] = c.b
+      this.rowBases![i] = c.rowBase
       this.evergreenFlags![i] = c.evergreen ? 1 : 0
     })
     geo.setAttribute('aPos', new THREE.InstancedBufferAttribute(pos, 3))
@@ -288,7 +354,7 @@ export class SakuraCanopyCloud {
           vec3 world = aPos
             + camRight * (position.x * size + sway)
             + camUp * (position.y * size * 0.92);
-          vUv = vec2((aData.y + uv.x) / ${CELLS}.0, (${CELLS}.0 - 1.0 - aRow + uv.y) / ${CELLS}.0);
+          vUv = vec2((aData.y + uv.x) / ${COLS}.0, (${ROWS}.0 - 1.0 - aRow + uv.y) / ${ROWS}.0);
           vTint = aTint;
           vec4 mvPosition = viewMatrix * vec4(world, 1.0);
           gl_Position = projectionMatrix * mvPosition;
@@ -320,10 +386,10 @@ export class SakuraCanopyCloud {
 
   /** Shape change on season change: one attribute rewrite, no rebuild. The grove (evergreen) blooms in all four. */
   setSeason(season: Season): void {
-    if (!this.rowAttr || !this.evergreenFlags) return
+    if (!this.rowAttr || !this.evergreenFlags || !this.rowBases) return
     const arr = this.rowAttr.array as Float32Array
-    const row = SEASON_ROW[season]
-    for (let i = 0; i < arr.length; i++) arr[i] = this.evergreenFlags[i] ? 0 : row
+    const off = SEASON_ROW[season]
+    for (let i = 0; i < arr.length; i++) arr[i] = this.rowBases[i] + (this.evergreenFlags[i] ? 0 : off)
     this.rowAttr.needsUpdate = true
   }
 
