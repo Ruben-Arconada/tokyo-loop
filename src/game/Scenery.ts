@@ -1872,6 +1872,14 @@ export class Scenery {
 
     const WALL_X = 6.0
     const CLEAR_H = 6.9
+    // The ceiling hangs a clear step BELOW the wall tops. With both at the
+    // exact same height the wall's top edge lay INSIDE the ceiling plane,
+    // and the strip triangulation of the curved bore sagged each surface a
+    // hair past the other — the two upper corners shimmered with z-fighting
+    // (Rubén: "la geometría lucha por aparecer"), worst near the portals
+    // where the far plane is still 9000 and depth precision is thinnest.
+    // A decisive overlap gives every corner pixel one clear winner.
+    const CEIL_DROP = 0.3
     const wallL: number[] = []
     const wallR: number[] = []
     const ceil: number[] = []
@@ -1887,10 +1895,11 @@ export class Scenery {
       const inv = 1 / Math.hypot(nx, nz)
       const floorY = p.y - 0.5
       const topY = p.y + CLEAR_H
+      const ceilY = topY - CEIL_DROP
       // Left wall: bottom then top.
       wallL.push(p.x + nx * inv * WALL_X, floorY, p.z + nz * inv * WALL_X, p.x + nx * inv * WALL_X, topY, p.z + nz * inv * WALL_X)
       wallR.push(p.x - nx * inv * WALL_X, floorY, p.z - nz * inv * WALL_X, p.x - nx * inv * WALL_X, topY, p.z - nz * inv * WALL_X)
-      ceil.push(p.x + nx * inv * (WALL_X + 0.4), topY, p.z + nz * inv * (WALL_X + 0.4), p.x - nx * inv * (WALL_X + 0.4), topY, p.z - nz * inv * (WALL_X + 0.4))
+      ceil.push(p.x + nx * inv * (WALL_X + 0.4), ceilY, p.z + nz * inv * (WALL_X + 0.4), p.x - nx * inv * (WALL_X + 0.4), ceilY, p.z - nz * inv * (WALL_X + 0.4))
       // One texture tile per ~14 units of bore; v spans the panel height.
       const u = (i * (spanUnits / RINGS)) / 14
       stripUvs.push(u, 0, u, 1)
@@ -1933,7 +1942,8 @@ export class Scenery {
       const nz = tangent.x
       const inv = 1 / Math.hypot(nx, nz)
       const side = i % 2 === 0 ? 2.4 : -2.4 // staggered rows, like a real bore
-      dummy.position.set(p.x + nx * inv * side, p.y + CLEAR_H - 0.12, p.z + nz * inv * side)
+      // Hung 0.12 below the (lowered) ceiling plane, same reveal as before.
+      dummy.position.set(p.x + nx * inv * side, p.y + CLEAR_H - CEIL_DROP - 0.12, p.z + nz * inv * side)
       dummy.rotation.set(0, Math.atan2(tangent.x, tangent.z), 0)
       dummy.updateMatrix()
       lamps.setMatrixAt(i, dummy.matrix)
@@ -1987,13 +1997,23 @@ export class Scenery {
         portalDummy.updateMatrix()
         portalBoxes.setMatrixAt(pbI++, portalDummy.matrix)
       }
-      putBox(0, CLEAR_H + 1.0, 0, 15.2, 2.2, 1.4) // header beam
+      // Header beam: wide enough to bury the pillar tops, and DEEP enough
+      // that its underside sits 0.15 below the lowered ceiling — otherwise
+      // the plenum between ceiling and wall tops showed as a lit slit under
+      // the beam at the mouth.
+      putBox(0, CLEAR_H + 0.825, 0, 16.0, 2.55, 1.4)
       for (const sx of [-1, 1]) {
-        putBox(sx * (WALL_X + 0.8), (CLEAR_H + 2.2) / 2 - 0.5, 0, 1.6, CLEAR_H + 2.2, 1.4) // pillar
+        // Inner pillar face at WALL_X + 0.2, NOT at WALL_X: flush with the
+        // lining wall the two coplanar surfaces z-fought all over the
+        // entrance flanks (the other half of Rubén's corner shimmer), and
+        // 0.1 was still within depth-buffer noise at approach distances.
+        putBox(sx * (WALL_X + 1.0), (CLEAR_H + 2.2) / 2 - 0.5, 0, 1.6, CLEAR_H + 2.2, 1.4) // pillar
         putBox(sx * (WALL_X + 4.2), 1.2, 2.6, 7.5, 3.4, 0.8, sx * 0.5) // wing wall
       }
       const plate = new THREE.Mesh(new THREE.PlaneGeometry(4.6, 1.15), signMat)
-      plate.position.set(0, CLEAR_H + 1.0, 0.74)
+      // 0.15 proud of the beam face — at 0.04 the plate sat inside
+      // depth-buffer noise at approach distances and could blink.
+      plate.position.set(0, CLEAR_H + 1.0, 0.85)
       g.add(plate)
       this.scene.add(g)
     }
