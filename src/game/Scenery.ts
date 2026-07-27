@@ -6,6 +6,7 @@ import type { DayNightCycle } from './DayNightCycle'
 import { STATIONS, type ZoneTier } from '../data/stations'
 import { makeCloudTexture, makeNeonSignTexture, makeWindowGridTexture, makeRoofTileTexture, applyProgressiveWindows } from './signage'
 import { registerPool, applySeasonToPool, type Season, type SeasonalPool, type Weather } from './Seasons'
+import { SakuraCanopyCloud, PetalCarpet, type CarpetSpot } from './SakuraCanopy'
 
 const N = STATIONS.length
 
@@ -93,6 +94,8 @@ export class Scenery {
   private sakuraClusters: { x: number; z: number; always: boolean }[] = []
   private petalsMesh: THREE.Points | null = null
   private petalSeeds!: Float32Array
+  private sakuraCloud = new SakuraCanopyCloud()
+  private petalCarpet = new PetalCarpet()
   /** Everything that changes color with the season, registered at build time. */
   private seasonalPools: SeasonalPool[] = []
   private season: Season = 'spring'
@@ -507,16 +510,24 @@ export class Scenery {
     const sakuraCount = greenStations.length * sakuraPerStation + GROVE_TREES
     const trunkMat = new THREE.MeshStandardMaterial({ color: 0x4a3527, roughness: 0.95 })
     const sakuraTrunks = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.28, 0.42, 3.2, 6), trunkMat, sakuraCount)
-    const blossomMat = new THREE.MeshStandardMaterial({ color: 0xf5c9dc, roughness: 0.9 })
+    // The old sphere blobs live on ONLY as shadow proxies: invisible in the
+    // color pass (colorWrite off, and no depth writes so they can't punch
+    // holes in the cards drawn around them) but still shadow-casting, so
+    // the billboard crowns keep grounded shadows for free.
+    const blossomMat = new THREE.MeshStandardMaterial({ color: 0xf5c9dc, roughness: 0.9, colorWrite: false, depthWrite: false })
     const sakuraCanopies = new THREE.InstancedMesh(new THREE.SphereGeometry(1, 8, 6), blossomMat, sakuraCount * 3)
-    sakuraCanopies.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(sakuraCount * 3 * 3), 3)
     sakuraTrunks.castShadow = sakuraCanopies.castShadow = true
+    // Pool registrations against the card cloud must wait until finalize()
+    // builds its color attribute — collect the ranges as we plant.
+    const cardPools: { kind: 'sakura' | 'sakuraEver'; start: number; count: number }[] = []
+    const carpetSpots: CarpetSpot[] = []
 
     let ti = 0
     let ci = 0
     for (const { s: stationDef, i } of greenStations) {
       const marker = this.track.markerFor(i)
-      const clusterStartCi = ci
+      const isHill = stationDef.id === HILL_STATION_ID
+      const clusterCardStart = this.sakuraCloud.cardCount
       let sumX = 0
       let sumZ = 0
       for (let k = 0; k < sakuraPerStation; k++) {
@@ -553,15 +564,14 @@ export class Scenery {
           dummy.rotation.set(0, 0, 0)
           dummy.updateMatrix()
           sakuraCanopies.setMatrixAt(ci, dummy.matrix)
-          tint.setHSL(0.93 + Math.random() * 0.03, 0.55, 0.82 + Math.random() * 0.08)
-          sakuraCanopies.setColorAt(ci, tint)
           ci++
         }
+        this.sakuraCloud.addTree(pos.x, groundY, pos.z, scale, isHill)
+        carpetSpots.push({ x: pos.x, y: groundY, z: pos.z, radius: (1.7 + Math.random()) * scale, evergreen: isHill })
       }
-      const isHill = stationDef.id === HILL_STATION_ID
       this.sakuraClusters.push({ x: sumX / sakuraPerStation, z: sumZ / sakuraPerStation, always: isHill })
       // The hill garden's cluster blooms all year; the rest follow spring.
-      this.seasonalPools.push(registerPool(isHill ? 'sakuraEver' : 'sakura', sakuraCanopies.instanceColor!, clusterStartCi, ci - clusterStartCi))
+      cardPools.push({ kind: isHill ? 'sakuraEver' : 'sakura', start: clusterCardStart, count: this.sakuraCloud.cardCount - clusterCardStart })
     }
 
     // ——— The Komagome platform grove: a ring of big cherries wrapping the
@@ -571,7 +581,7 @@ export class Scenery {
       const hillIdx = STATIONS.findIndex((s) => s.id === HILL_STATION_ID)
       const marker = this.track.markerFor(Math.max(0, hillIdx))
       const platformSide = STATIONS[Math.max(0, hillIdx)].doorSide === 'left' ? -1 : 1 // sign against `normal` (driver's right)
-      const groveStartCi = ci
+      const groveCardStart = this.sakuraCloud.cardCount
       // [along-track, lateral (platform-side positive), scale] — kept clear
       // of the rail corridor (canopies stop ~5 units short of the track).
       const groveSpots: [number, number, number][] = [
@@ -609,20 +619,38 @@ export class Scenery {
           dummy.rotation.set(0, 0, 0)
           dummy.updateMatrix()
           sakuraCanopies.setMatrixAt(ci, dummy.matrix)
-          tint.setHSL(0.925 + Math.random() * 0.035, 0.58, 0.8 + Math.random() * 0.09)
-          sakuraCanopies.setColorAt(ci, tint)
           ci++
         }
+        this.sakuraCloud.addTree(pos.x, groundY, pos.z, scale, true)
+        // The grove sheds heavier than anyone: a disc under the crown and a
+        // second one thrown toward the platform, so the drift reads as
+        // covering the station and not just ringing the trunks.
+        carpetSpots.push({ x: pos.x, y: groundY, z: pos.z, radius: (1.9 + Math.random()) * scale, evergreen: true })
+        carpetSpots.push({
+          x: pos.x + (Math.random() - 0.5) * 7,
+          y: groundY,
+          z: pos.z + (Math.random() - 0.5) * 7,
+          radius: 1.3 + Math.random() * 1.2,
+          evergreen: true,
+        })
       }
       this.sakuraClusters.push({ x: sumX / groveSpots.length, z: sumZ / groveSpots.length, always: true })
-      this.seasonalPools.push(registerPool('sakuraEver', sakuraCanopies.instanceColor!, groveStartCi, ci - groveStartCi))
+      cardPools.push({ kind: 'sakuraEver', start: groveCardStart, count: this.sakuraCloud.cardCount - groveCardStart })
     }
     sakuraTrunks.count = ti
     sakuraCanopies.count = ci
     sakuraTrunks.instanceMatrix.needsUpdate = true
     sakuraCanopies.instanceMatrix.needsUpdate = true
-    if (sakuraCanopies.instanceColor) sakuraCanopies.instanceColor.needsUpdate = true
     this.scene.add(sakuraTrunks, sakuraCanopies)
+
+    // One draw call for every blossom card on the ring; pools registered
+    // over the cloud's tint attribute so the existing season machinery
+    // recolors cards exactly like it recolored the spheres.
+    this.sakuraCloud.finalize(this.scene)
+    for (const p of cardPools) {
+      this.seasonalPools.push(registerPool(p.kind, this.sakuraCloud.colorAttr!, p.start, p.count))
+    }
+    this.petalCarpet.build(this.scene, carpetSpots)
 
     // ——— Pines: dark conifers dotted along the loop, weighted HEAVILY toward
     // quiet-tier stretches (real rail-side tree lines) and nearly absent in
@@ -2334,6 +2362,8 @@ export class Scenery {
     this.time += dt
     const night = dayNight.nightFactor
     const horizon = dayNight.horizonColor
+    // Blossom cards: sway clock + the night dimmer their unlit shader needs.
+    this.sakuraCloud.tick(this.time, night)
 
     // Fuji sits against the sky: tint toward the horizon color by day, nearly
     // silhouette-black at night, warm at dawn/dusk automatically because the
@@ -2435,6 +2465,11 @@ export class Scenery {
   setSeason(season: Season) {
     this.season = season
     for (const pool of this.seasonalPools) applySeasonToPool(pool, season)
+    // The card crowns change SHAPE with the season (bloom/leaf/amber/bare),
+    // not just tint; the fallen-petal carpet follows the same spring gate
+    // as the drifting petals.
+    this.sakuraCloud.setSeason(season)
+    this.petalCarpet.setSeason(season)
     this.fujiSnowRegular.visible = season !== 'winter'
     this.fujiSnowWinter.visible = season === 'winter'
   }
