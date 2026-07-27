@@ -2026,11 +2026,13 @@ export class Scenery {
         portalDummy.updateMatrix()
         portalBoxes.setMatrixAt(pbI++, portalDummy.matrix)
       }
-      // Header beam: wide enough to bury the pillar tops, and DEEP enough
-      // that its underside sits 0.15 below the lowered ceiling — otherwise
-      // the plenum between ceiling and wall tops showed as a lit slit under
-      // the beam at the mouth.
-      putBox(0, CLEAR_H + 0.825, 0, 16.0, 2.55, 1.4)
+      // Header beam: wide enough to bury the pillar tops, deep enough to
+      // seal over the ceiling, and 0.3 DEEPER than the pillars — at the
+      // same 1.4 depth their front/back faces were exactly coplanar over
+      // the whole overlap rectangle, and that patch shimmered (Rubén's
+      // red-circle screenshot, round 3). No box shares a plane with any
+      // other: that is the portal's one law now.
+      putBox(0, CLEAR_H + 0.825, 0, 16.0, 2.55, 1.7)
       for (const sx of [-1, 1]) {
         // Inner pillar face at WALL_X + 0.2, NOT at WALL_X: flush with the
         // lining wall the two coplanar surfaces z-fought all over the
@@ -2040,9 +2042,9 @@ export class Scenery {
         putBox(sx * (WALL_X + 4.2), 1.2, 2.6, 7.5, 3.4, 0.8, sx * 0.5) // wing wall
       }
       const plate = new THREE.Mesh(new THREE.PlaneGeometry(4.6, 1.15), signMat)
-      // 0.15 proud of the beam face — at 0.04 the plate sat inside
-      // depth-buffer noise at approach distances and could blink.
-      plate.position.set(0, CLEAR_H + 1.0, 0.85)
+      // 0.15 proud of the (deepened) beam face — at 0.04 the plate sat
+      // inside depth-buffer noise at approach distances and could blink.
+      plate.position.set(0, CLEAR_H + 1.0, 1.0)
       g.add(plate)
       this.scene.add(g)
     }
