@@ -48,14 +48,21 @@ const DOOR_LABELS: Record<DoorPhase, string> = {
 }
 
 /**
- * Is the primary pointer a finger? Asked as a CAPABILITY, never by device
- * brand or user-agent string: a Surface with a pen, an iPad with a trackpad
- * and a phone all answer honestly, and the answer stays right when the
- * hardware changes. On a hybrid the welcome screen speaks to the finger —
- * that is the one input every player there definitely has — and the keyboard
- * stays fully documented one tap away, in the pause menu's Controles block.
+ * Is there a touch pointer at all? `any-pointer`, NOT `pointer`: the latter
+ * reports only the PRIMARY pointer, so an iPad with a trackpad or a Surface
+ * with a mouse answers "fine" and would get a keyboard-led welcome despite
+ * being touch devices. What we agreed for hybrids is to lead with the finger,
+ * because that is the input everyone there is holding — and `any-pointer:
+ * coarse` is the question that actually asks that.
+ *
+ * Two things this deliberately does NOT claim. It is not a keyboard test: a
+ * fine pointer proves a mouse, never a keyboard, which is exactly why the
+ * shortcuts live unconditionally in the pause menu and the welcome screen
+ * only decides whether to LEAD with them. And it is not a one-time snapshot —
+ * see the `change` listener in the constructor: plugging a trackpad in or out
+ * re-renders the list instead of waiting for a reload.
  */
-const TOUCH_FIRST = window.matchMedia?.('(pointer: coarse)').matches ?? false
+const touchQuery = window.matchMedia?.('(any-pointer: coarse)') ?? null
 
 /** The keyboard reference, shown on the start screen only when there IS a keyboard. */
 const KEYBOARD_HELP = '↑/W acelera, ↓/S frena, espacio = freno de emergencia, D = puertas.'
@@ -131,6 +138,7 @@ export class UI {
   private scoreValueEl!: HTMLSpanElement
   private scoreBestEl!: HTMLElement
   private lastNotchLabel = 'N'
+  private howtoEl!: HTMLUListElement
   private mount: HTMLElement
   private cb: UICallbacks
 
@@ -162,6 +170,11 @@ export class UI {
     // behind the card. Registered in CAPTURE so it wins before the driving
     // keys — Escape must never reach the train.
     window.addEventListener('keydown', (e) => this.onModalKey(e), true)
+
+    // Pointer capabilities are not a constant: attaching or removing a
+    // trackpad flips them mid-session. Read once, the welcome screen would go
+    // on describing hardware that is no longer there until a reload.
+    touchQuery?.addEventListener('change', () => this.renderHowto())
   }
 
   /**
@@ -566,12 +579,7 @@ export class UI {
       <div class="overlay-card">
         <h1><span class="title-ja" lang="ja">ジャパンループ</span> <span class="title-en">Japan Loop</span></h1>
         <p class="tagline">Sé el maquinista. Una vuelta completa a un Japón en miniatura — templos, aldeas, neón y mar — de madrugada a madrugada.</p>
-        <ul class="howto">
-          <li><strong>Objetivo:</strong> detén el tren justo en el andén de cada estación.</li>
-          <li><strong>Palanca:</strong> arrástrala arriba para acelerar (P1–P5), abajo para frenar (B1–B7/EB).</li>
-          <li><strong>Puertas:</strong> ábrelas al parar y ciérralas cuando acabe el embarque — hay bonus por reflejos.</li>
-          ${TOUCH_FIRST ? '' : `<li><strong>Teclado:</strong> ${KEYBOARD_HELP}</li>`}
-        </ul>
+        <ul class="howto"></ul>
         <button class="btn-start">Subir a la cabina 🚃</button>
         <button class="btn-credits">Sobre el equipo</button>
         <p class="disclaimer">Juego de fans no oficial. Sin afiliación con ninguna compañía ferroviaria; las estaciones son alegorías de lugares reales de Japón usados como topónimos. Melodías 100% originales.</p>
@@ -582,7 +590,27 @@ export class UI {
       this.cb.onStart()
     })
     el.querySelector('.btn-credits')!.addEventListener('click', () => this.showCredits())
+    this.howtoEl = el.querySelector('.howto')!
+    this.renderHowto()
     return el
+  }
+
+  /**
+   * The welcome bullets, in the order you need them: what you are trying to
+   * do, then the lever, then the doors. The keyboard line is appended only
+   * when there is NO touch pointer — on anything you can tap, it would be the
+   * second thing a player reads and the first thing they cannot use. It is
+   * never lost, though: the pause menu lists it unconditionally, because a
+   * pointer says nothing about whether a keyboard is attached.
+   */
+  private renderHowto() {
+    const touch = touchQuery?.matches ?? false
+    this.howtoEl.innerHTML = `
+      <li><strong>Objetivo:</strong> detén el tren justo en el andén de cada estación.</li>
+      <li><strong>Palanca:</strong> arrástrala arriba para acelerar (P1–P5), abajo para frenar (B1–B7/EB).</li>
+      <li><strong>Puertas:</strong> ábrelas al parar y ciérralas cuando acabe el embarque — hay bonus por reflejos.</li>
+      ${touch ? '' : `<li><strong>Teclado:</strong> ${KEYBOARD_HELP}</li>`}
+    `
   }
 
   private buildMenuOverlay(): HTMLDivElement {
