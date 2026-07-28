@@ -87,6 +87,15 @@ export function worldStream(name: WorldStream): () => number {
 /** Names handed out so far — dev-only bookkeeping for the guard above. */
 const claimedStreams = new Set<string>()
 
+// Hot reload re-executes a consumer module, which re-claims its stream while
+// this registry survives — so every edit made the guard cry wolf about names
+// that are perfectly unique. Forgetting the claims before each hot update
+// keeps the warning meaningful: after an edit the modules simply claim again
+// from a clean slate, and only a REAL duplicate still shows up.
+if (import.meta.hot) {
+  import.meta.hot.on('vite:beforeUpdate', () => claimedStreams.clear())
+}
+
 /**
  * Every stream in the static world. Named as a union so a typo is a compile
  * error rather than a silently different world — and so this list doubles as

@@ -17,6 +17,24 @@ import { WORLD_SEED } from './Rng'
 /** Positions/scales to the millimetre, colours to ~1/1000 of a channel. */
 const QUANT = 1000
 
+/**
+ * Is this object placed by something that moves during play? Checked up the
+ * PARENTS too, so tagging one group covers everything under it — the train is
+ * nine meshes and tagging them one by one is how the next one gets forgotten.
+ *
+ * Getting this wrong is not cosmetic: the consist and the camera-following sky
+ * dome were landing in the "static" total, so the world's hash quietly changed
+ * with the train's position. Every comparison still had to be made at the same
+ * spot on the ring to mean anything, which is exactly the kind of hidden
+ * precondition a determinism check must not have.
+ */
+function isDynamic(obj: THREE.Object3D): boolean {
+  for (let o: THREE.Object3D | null = obj; o; o = o.parent) {
+    if (o.userData?.dynamic) return true
+  }
+  return false
+}
+
 /** FNV-1a over a stream of quantized integers, returned as 8 hex chars. */
 class Digest {
   private h = 0x811c9dc5
@@ -85,7 +103,7 @@ export function worldFingerprint(scene: THREE.Scene): WorldFingerprint {
     const d = new Digest()
     const kind = mesh.geometry.type
     d.pushText(kind)
-    const bucket = mesh.userData?.dynamic ? dynamicParts : parts
+    const bucket = isDynamic(mesh) ? dynamicParts : parts
 
     if (mesh.userData?.seedTable) {
       // Point clouds whose rendered positions are rewritten every frame (the

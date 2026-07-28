@@ -138,6 +138,13 @@ export class UI {
   private scoreValueEl!: HTMLSpanElement
   private scoreBestEl!: HTMLElement
   private lastNotchLabel = 'N'
+  // Last value written to each per-frame HUD field. -1 / '' mean "nothing
+  // painted yet", so the first frame always draws.
+  private lastSpeedText = ''
+  private lastCurrentIdx = -1
+  private lastTargetIdx = -1
+  private lastSegmentPct = -1
+  private lastDoorWidth = ''
   private howtoEl!: HTMLUListElement
   private mount: HTMLElement
   private cb: UICallbacks
@@ -906,36 +913,58 @@ export class UI {
     /** 0..1 — how far along the current inter-station segment the train is. */
     segmentProgress: number
   }) {
-    this.speedEl.textContent = String(Math.round(opts.speedKmh))
+    // Everything here runs 60 times a second, and almost none of it changes
+    // 60 times a second: the speed rounds to the same integer for many frames
+    // in a row, the station names hold for a whole segment, and the notch
+    // holds until the driver moves the lever. Each field remembers what it
+    // last wrote and only touches the DOM on a real change.
+    const speedText = String(Math.round(opts.speedKmh))
+    if (speedText !== this.lastSpeedText) {
+      this.lastSpeedText = speedText
+      this.speedEl.textContent = speedText
+    }
     if (opts.notchLabel !== this.lastNotchLabel) {
       this.lastNotchLabel = opts.notchLabel
       this.speedEl.classList.add('bump')
       window.setTimeout(() => this.speedEl.classList.remove('bump'), 120)
+      this.notchEl.textContent = opts.notchLabel
+      this.notchEl.className = 'notch-readout' + (opts.notchLabel.startsWith('B') || opts.notchLabel === 'EB' ? ' braking' : opts.notchLabel.startsWith('P') ? ' powering' : '')
     }
-    this.notchEl.textContent = opts.notchLabel
-    this.notchEl.className = 'notch-readout' + (opts.notchLabel.startsWith('B') || opts.notchLabel === 'EB' ? ' braking' : opts.notchLabel.startsWith('P') ? ' powering' : '')
-    this.stationNowEl.textContent = STATIONS[opts.currentStationIdx].nameEn
-    this.stationNextEl.textContent = STATIONS[opts.targetStationIdx].nameEn
-    // "JL" (Japan Loop) numbering — the ring's own code, not any operator's.
-    this.stationNowCodeEl.textContent = `JL${String(opts.currentStationIdx + 1).padStart(2, '0')}`
-    this.stationNextCodeEl.textContent = `JL${String(opts.targetStationIdx + 1).padStart(2, '0')}`
+    if (opts.currentStationIdx !== this.lastCurrentIdx || opts.targetStationIdx !== this.lastTargetIdx) {
+      this.stationNowEl.textContent = STATIONS[opts.currentStationIdx].nameEn
+      this.stationNextEl.textContent = STATIONS[opts.targetStationIdx].nameEn
+      // "JL" (Japan Loop) numbering — the ring's own code, not any operator's.
+      this.stationNowCodeEl.textContent = `JL${String(opts.currentStationIdx + 1).padStart(2, '0')}`
+      this.stationNextCodeEl.textContent = `JL${String(opts.targetStationIdx + 1).padStart(2, '0')}`
+      // Four dots move, not thirty: clear the two that were marked and mark
+      // the two that take over. The old sweep did 60 classList calls a frame
+      // to change at most two of them.
+      this.stationDots[this.lastCurrentIdx]?.classList.remove('current')
+      this.stationDots[this.lastTargetIdx]?.classList.remove('next')
+      this.stationDots[opts.currentStationIdx]?.classList.add('current')
+      this.stationDots[opts.targetStationIdx]?.classList.add('next')
+      this.lastCurrentIdx = opts.currentStationIdx
+      this.lastTargetIdx = opts.targetStationIdx
+    }
     const pct = Math.round(opts.segmentProgress * 100)
-    this.segmentFillEl.style.width = `${pct}%`
-    this.segmentTrainEl.style.left = `${pct}%`
+    if (pct !== this.lastSegmentPct) {
+      this.lastSegmentPct = pct
+      this.segmentFillEl.style.width = `${pct}%`
+      this.segmentTrainEl.style.left = `${pct}%`
+    }
     // Door button: class/label churn only on phase change; the boarding
-    // fill is the one thing that animates every frame.
+    // fill is the one thing that really does animate.
     if (opts.doorPhase !== this.lastDoorPhase) {
       this.lastDoorPhase = opts.doorPhase
       this.doorBtn.className = `door-btn door-${opts.doorPhase}`
       this.doorBtnLabel.textContent = DOOR_LABELS[opts.doorPhase]
       this.doorBtn.disabled = opts.doorPhase !== 'can-open' && opts.doorPhase !== 'can-close'
     }
-    this.doorBtnProgress.style.width = opts.doorPhase === 'boarding' ? `${Math.round(opts.boardingProgress * 100)}%` : '0%'
-
-    this.stationDots.forEach((dot, i) => {
-      dot.classList.toggle('current', i === opts.currentStationIdx)
-      dot.classList.toggle('next', i === opts.targetStationIdx)
-    })
+    const doorWidth = opts.doorPhase === 'boarding' ? `${Math.round(opts.boardingProgress * 100)}%` : '0%'
+    if (doorWidth !== this.lastDoorWidth) {
+      this.lastDoorWidth = doorWidth
+      this.doorBtnProgress.style.width = doorWidth
+    }
   }
 
   /** Score chip refresh; a short streak flourish appears from 2 consecutive perfects. */

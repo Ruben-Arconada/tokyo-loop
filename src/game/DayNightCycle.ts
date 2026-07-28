@@ -222,6 +222,8 @@ export class DayNightCycle {
     // three would still frustum-cull the whole mesh by its bounding sphere
     // before the shader ever runs — opt it out.
     this.skyMesh.frustumCulled = false
+    // Follows the camera every frame, so its world matrix is not world data.
+    this.skyMesh.userData.dynamic = true
     scene.add(this.skyMesh)
 
     this.sunSprite = new THREE.Sprite(

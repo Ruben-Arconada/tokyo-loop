@@ -221,6 +221,13 @@ const P = new THREE.Vector3()
 const S = new THREE.Vector3(1, 1, 1)
 const UP = new THREE.Vector3(0, 1, 0)
 const FWD = new THREE.Vector3()
+// update() runs every frame in the two outside views. These three exist so it
+// allocates nothing: pointAt/tangentAt would each hand back a fresh Vector3
+// per car, and the bogie and nose maths used to build a throwaway Matrix4 per
+// placement — around a thousand short-lived objects a second between them.
+const PT = new THREE.Vector3()
+const TAN = new THREE.Vector3()
+const M2 = new THREE.Matrix4()
 const CAR_MATRICES: THREE.Matrix4[] = Array.from({ length: CAR_COUNT }, () => new THREE.Matrix4())
 
 export class TrainConsist {
@@ -291,6 +298,10 @@ export class TrainConsist {
     // the train is the one object the player never sees a shadow of anyway.
     this.shells.receiveShadow = true
     this.group.visible = false
+    // The train is placed by the simulation, not by the world seed: tagging
+    // the group keeps all nine of its meshes out of the world fingerprint's
+    // static total (see worldHash.ts — the flag is inherited).
+    this.group.userData.dynamic = true
     scene.add(this.group)
   }
 
@@ -321,8 +332,8 @@ export class TrainConsist {
     const len = this.track.getLength()
     for (let i = 0; i < CAR_COUNT; i++) {
       const t = THREE.MathUtils.euclideanModulo(progress + CAR_OFFSETS[i] / len, 1)
-      const point = this.track.pointAt(t)
-      const tangent = this.track.tangentAt(t).normalize()
+      const point = this.track.pointAt(t, PT)
+      const tangent = this.track.tangentAt(t, TAN).normalize()
       FWD.copy(point).add(tangent)
       // Object convention: +Z faces the target (see Passengers' station frames).
       M.lookAt(FWD, point, UP)
@@ -334,7 +345,7 @@ export class TrainConsist {
       // Bogies sit under the car ends, in the car's own frame.
       for (let b = 0; b < 2; b++) {
         P.set(0, 0, (b === 0 ? -1 : 1) * (CAR_LEN / 2 - 3.1))
-        M.copy(CAR_MATRICES[i]).multiply(new THREE.Matrix4().makeTranslation(P.x, P.y, P.z))
+        M.copy(CAR_MATRICES[i]).multiply(M2.makeTranslation(P.x, P.y, P.z))
         this.bogies.setMatrixAt(i * 2 + b, M)
       }
     }
@@ -349,14 +360,14 @@ export class TrainConsist {
       const carIdx = n === 0 ? 0 : CAR_COUNT - 1
       const zLocal = (n === 0 ? 1 : -1) * (CAR_LEN / 2)
       M.makeTranslation(0, 0, zLocal)
-      if (n === 1) M.multiply(new THREE.Matrix4().makeRotationY(Math.PI))
+      if (n === 1) M.multiply(M2.makeRotationY(Math.PI))
       M.premultiply(CAR_MATRICES[carIdx])
       this.noses.setMatrixAt(n, M)
       this.noseGlass.setMatrixAt(n, M)
       // Two round headlights low on each nose.
       for (const x of [-1, 1]) {
         M.makeTranslation(x * HALF_W * 0.55, FLOOR_Y + 0.05, zLocal + (n === 0 ? NOSE_LEN : -NOSE_LEN))
-        if (n === 1) M.multiply(new THREE.Matrix4().makeRotationY(Math.PI))
+        if (n === 1) M.multiply(M2.makeRotationY(Math.PI))
         M.premultiply(CAR_MATRICES[carIdx])
         this.lamps.setMatrixAt(n * 2 + (x > 0 ? 1 : 0), M)
       }

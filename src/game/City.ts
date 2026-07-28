@@ -60,13 +60,6 @@ export const PLATFORM_GEOM = {
   len: PLATFORM_LEN,
 }
 
-/** Rough crowd density by hour — busiest around the morning/evening rush, quiet overnight. */
-export function crowdDensityForHour(hour: number): number {
-  const proximity = (center: number, width: number) => Math.max(0, 1 - Math.abs(((hour - center + 12 + 24) % 24) - 12) / width)
-  const rush = Math.max(proximity(8, 2.5), proximity(18, 2.5))
-  return THREE.MathUtils.clamp(0.16 + rush * 0.84, 0, 1)
-}
-
 interface ThemeGroup {
   instanced: THREE.InstancedMesh
   material: THREE.MeshStandardMaterial

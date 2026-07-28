@@ -268,7 +268,10 @@ export class Game {
     // static on phones. A no-op on desktop GPUs.
     this.renderer.getContext().disable(this.renderer.getContext().DITHER)
     this.renderer.shadowMap.enabled = true
-    this.renderer.shadowMap.type = THREE.PCFSoftShadowMap
+    // PCFShadowMap explicitly: PCFSoftShadowMap is deprecated in three 0.185
+    // and the renderer silently swaps it for exactly this, warning as it goes.
+    // Same pixels as before — we simply stop believing we have soft shadows.
+    this.renderer.shadowMap.type = THREE.PCFShadowMap
     // Only the ground plane uses clipping (the hole over the Shibuya
     // trench); every other material is untouched by this flag.
     this.renderer.localClippingEnabled = true
