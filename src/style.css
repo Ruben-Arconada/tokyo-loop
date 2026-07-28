@@ -704,7 +704,10 @@ canvas.game-canvas {
   overflow-y: auto;
 }
 .overlay-card h1 { font-size: 26px; margin: 0 0 var(--space-1); }
-.overlay-card h1 span { display: block; font-size: var(--text-body); font-weight: 400; color: var(--text-secondary); letter-spacing: 0.08em; }
+/* Only the ROMAJI line is the subtitle. Targeting `h1 span` broke the moment
+   the Japanese was wrapped in its own span for lang="ja": both dropped to
+   subtitle size and the h1 lost its title. */
+.overlay-card h1 .title-en { display: block; font-size: var(--text-body); font-weight: 400; color: var(--text-secondary); letter-spacing: 0.08em; }
 .overlay-card h2 { margin-top: 0; }
 .tagline { color: var(--text-secondary); font-size: var(--text-body); margin: var(--space-3) 0 var(--space-5); }
 .howto { text-align: left; font-size: var(--text-body); line-height: 1.6; color: var(--text-secondary); padding-left: var(--space-4); margin-bottom: var(--space-5); }

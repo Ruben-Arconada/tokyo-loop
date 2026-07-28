@@ -551,7 +551,7 @@ export class UI {
     el.className = 'overlay start-overlay'
     el.innerHTML = `
       <div class="overlay-card">
-        <h1><span lang="ja">ジャパンループ</span> <span>Japan Loop</span></h1>
+        <h1><span class="title-ja" lang="ja">ジャパンループ</span> <span class="title-en">Japan Loop</span></h1>
         <p class="tagline">Sé el maquinista. Una vuelta completa a un Japón en miniatura — templos, aldeas, neón y mar — de madrugada a madrugada.</p>
         <ul class="howto">
           <li><strong>Palanca:</strong> arrástrala arriba para acelerar (P1–P5), abajo para frenar (B1–B7/EB).</li>
