@@ -198,6 +198,8 @@ export class PerfLog {
   private shadowFrames = 0
   /** Previous frame's render time, so the interval that merely REPORTS a slow render isn't logged as a second stall. */
   private lastRenderMs = 0
+  /** Whether to write the log to storage mid-run — off for short automated runs, where our own disk writes would be a confound. */
+  private persistDuringRun = true
 
   /** Live frame rate for the on-screen counter, smoothed just enough to be readable. */
   fpsNow = 0
@@ -209,7 +211,7 @@ export class PerfLog {
    * compile something, and inferring the baseline from it would hide exactly
    * that.
    */
-  start(context: Record<string, unknown>, gpu: { programs: number; textures: number; texUploads: number }) {
+  start(context: Record<string, unknown>, gpu: { programs: number; textures: number; texUploads: number }, persistDuringRun = true) {
     this.hist.fill(0)
     this.frames = 0
     this.totalMs = 0
@@ -239,6 +241,7 @@ export class PerfLog {
     this.texUploadsSeen = gpu.texUploads
     this.shadowFrames = 0
     this.lastRenderMs = 0
+    this.persistDuringRun = persistDuringRun
     this.context = context
     this.recording = true
   }
@@ -330,7 +333,14 @@ export class PerfLog {
     // Timed like everything else now. It serializes the whole log and writes
     // it synchronously, and being the one periodic job nobody had measured
     // made it an unfalsifiable suspect for every unexplained stall.
-    if (now - this.lastPersist > 5000) this.time('perf-persist', () => this.persist())
+    //
+    // Its SYNCHRONOUS cost turned out to be 1 ms at worst — but WebKit backs
+    // localStorage with a database it flushes on its own schedule, and that
+    // flush would land exactly where the unexplained 310 ms lands: outside
+    // every timer we own. A run that cannot be explained must not also be
+    // writing 13 KB to disk every five seconds, so short automated runs turn
+    // this off and persist once, at the end.
+    if (this.persistDuringRun && now - this.lastPersist > 5000) this.time('perf-persist', () => this.persist())
   }
 
   /** Notes that a game event happened right now (cheap: two array writes). */

@@ -513,7 +513,7 @@ export class Game {
    * the moment it starts, because a frame-time number without the context it
    * was measured in is unfalsifiable.
    */
-  private togglePerfRecording() {
+  private togglePerfRecording(persistDuringRun = true) {
     if (this.perf.recording) {
       this.perf.stop()
       setActivePerfLog(null)
@@ -565,7 +565,7 @@ export class Game {
         // Already true when we get here: the watch polls every frame, not
         // only while recording, so nothing resident gets counted as new.
         texUploads: this.uploadWatch.poll(),
-      })
+      }, persistDuringRun)
     }
     this.pushPerfState()
   }
@@ -1844,7 +1844,12 @@ export class Game {
     if (p.arming > 0) {
       p.arming--
       if (p.arming === 0) {
-        this.togglePerfRecording()
+        // No mid-run persistence: a two-minute automated run must not also be
+        // writing the log to disk every five seconds, because WebKit flushes
+        // that store on its own schedule and the flush would land exactly
+        // where the unexplained stall lands — outside every timer we own.
+        // The run stops by itself, and stopping persists.
+        this.togglePerfRecording(false)
         this.nextProbeLeg()
       }
       return
@@ -1998,7 +2003,7 @@ export class Game {
       this.camera.updateProjectionMatrix()
     }
 
-    this.dayNight.update(dt * this.timeScale, this.camera.position)
+    perfPhase('f:daynight', () => this.dayNight.update(dt * this.timeScale, this.camera.position))
 
     // The tunnel overrides the sky's word on light and fog: the lining is
     // close, dark and warm-lit, whatever the weather is doing overhead.
@@ -2137,7 +2142,7 @@ export class Game {
       : this.train.state === 'doors_closing' ? 'closing'
       : 'idle'
     this.ui.setDelay(this.schedule.delay(segmentProgress))
-    this.ui.updateTrain({
+    perfPhase('f:hud', () => this.ui.updateTrain({
       speedKmh: this.train.speedKmh,
       notchLabel: notchLabel(this.train.notch),
       currentStationIdx: this.train.currentStationIndex,
@@ -2146,6 +2151,6 @@ export class Game {
       doorPhase,
       boardingProgress: this.train.boardingSeconds > 0 ? 1 - this.train.boardingRemaining / this.train.boardingSeconds : 1,
       segmentProgress,
-    })
+    }))
   }
 }
