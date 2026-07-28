@@ -34,8 +34,11 @@ const MAX_BINS = 1800
 type Bin = [number, number, number, number, number, number, number, number]
 
 /**
- * One hitch: [tSec, ms, renderMs, progress‰, station, draws, kTris,
- *             programasNuevos, texturasSubidas, tagsRecientes].
+ * One hitch: [tSec, ms, renderMs, prevTickMs, gapMs, progress‰, station,
+ *             draws, kTris, programasNuevos, texturasSubidas, tagsRecientes].
+ *
+ * `ms ≈ prevTickMs + gapMs` — those three describe the SAME interval. A stall
+ * that lands in `gapMs` happened while our callback was not running at all.
  *
  * Read `renderMs` first, but read it for what it is: the CPU time BLOCKED
  * inside `renderer.render()`. WebGL is asynchronous, so driver work a draw
@@ -50,7 +53,7 @@ type Bin = [number, number, number, number, number, number, number, number]
  * shader" versus "uploaded a texture" — and all three describe the SAME
  * render, which the first version of this did not.
  */
-type Hitch = [number, number, number, number, number, number, number, number, number, string]
+type Hitch = [number, number, number, number, number, number, number, number, number, number, number, string]
 /** How far back a hitch looks for game events that might have caused it. */
 const MARK_WINDOW_MS = 2000
 const MARK_RING = 48
@@ -75,6 +78,28 @@ export interface PerfSample {
    * resource columns, because WebGL can defer the driver work a draw triggers.
    */
   renderMs: number
+  /**
+   * The PREVIOUS tick, end to end — every line of our animation callback,
+   * including the parts no phase wraps: PerfLog.record itself, the texture
+   * upload poll, the HUD's fps chip.
+   *
+   * It exists because `frameMs` and the phases were still a frame apart:
+   * `frameMs` spans the interval BEFORE this tick, while `f:step` and
+   * `renderMs` measure THIS one, so adding them up compared different frames
+   * — the same mistake as the original one-frame offset, wearing a different
+   * hat. These two belong to the same interval `frameMs` does, so
+   * `frameMs ≈ prevTickMs + gapMs` is an equation that actually holds.
+   */
+  prevTickMs: number
+  /**
+   * From the end of the previous tick to the start of this one: time the page
+   * spent somewhere that is not our callback at all — compositing, GC, timers,
+   * audio and speech callbacks, driver work deferred past the swap.
+   *
+   * If a 320 ms frame turns out to be almost all gap, the stall is outside our
+   * code and this says so directly instead of by subtraction.
+   */
+  gapMs: number
   draws: number
   tris: number
   speedKmh: number
@@ -314,6 +339,8 @@ export class PerfLog {
         Math.round((now - this.startedAt) / 100) / 10,
         Math.round(s.frameMs),
         Math.round(s.renderMs),
+        Math.round(s.prevTickMs),
+        Math.round(s.gapMs),
         Math.round(s.progress * 1000),
         s.stationIdx,
         s.draws,
@@ -509,7 +536,7 @@ export class PerfLog {
       // resource baseline moved to start(). v3 shipped with those columns
       // misaligned by one frame, so its numbers must not be compared with
       // these — hence a new number rather than a patched meaning.
-      v: 4,
+      v: 5,
       // Which world this lap was driven through. Two laps are only comparable
       // if this matches — before seeding, every reload dealt a different Japan
       // and draw counts could not be told apart from layout luck.
@@ -518,7 +545,7 @@ export class PerfLog {
       summary: this.summary,
       // [tSec, frames, meanMs, maxMs, draws, kTris, kmh, progress‰]
       bins: this.bins,
-      // [tSec, ms, renderMs, progress‰, station, draws, kTris, programasNuevos, texturasSubidas, tags] — worst first, capped
+      // [tSec, ms, renderMs, prevTickMs, gapMs, progress‰, station, draws, kTris, programasNuevos, texturasSubidas, tags] — worst first, capped
       // Sorted by the WORSE of the two clocks, not by the interval. A stall
       // caught inside render() has an ordinary `frameMs` by construction, so
       // sorting on that alone would rank the very records that carry the

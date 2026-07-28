@@ -31,11 +31,15 @@ function frame(
   log: PerfLog,
   frameMs: number,
   renderMs: number,
-  opts: { programs?: number; texUploads?: number } = {},
+  opts: { programs?: number; texUploads?: number; prevTickMs?: number; gapMs?: number } = {},
 ) {
   log.record({
     frameMs,
     renderMs,
+    // Default split: our callback took the render plus a little, and whatever
+    // is left of the interval was spent outside it.
+    prevTickMs: opts.prevTickMs ?? renderMs + 2,
+    gapMs: opts.gapMs ?? Math.max(0, frameMs - (renderMs + 2)),
     draws: 100,
     tris: 400_000,
     speedKmh: 95,
@@ -55,8 +59,10 @@ function hitchesOf(log: PerfLog): number[][] {
 // Column indices, named so the assertions read as claims rather than arithmetic.
 const MS = 1
 const RENDER_MS = 2
-const NEW_PROGRAMS = 7
-const NEW_TEXTURES = 8
+const PREV_TICK_MS = 3
+const GAP_MS = 4
+const NEW_PROGRAMS = 9
+const NEW_TEXTURES = 10
 
 test('un render lento y los programas que enlazó caen en el MISMO registro', () => {
   const log = recorder(60)
@@ -138,4 +144,31 @@ test('el resumen distingue textura RESIDENTE de textura SUBIDA', () => {
   assert.equal(s.textures0, s.texturesEnd, 'el total residente se queda plano, que es justo el punto ciego')
   assert.equal(s.texUploads0, 5)
   assert.equal(s.texUploadsEnd, 6)
+})
+
+test('ms, prevTickMs y gapMs describen el MISMO intervalo y cuadran', () => {
+  const log = recorder(60)
+  frame(log, 16.7, 15)
+  // 320 ms de los que solo 8 son nuestro callback: el resto, fuera.
+  frame(log, 320, 5, { prevTickMs: 8, gapMs: 312 })
+  frame(log, 16.7, 15)
+
+  const h = hitchesOf(log)
+  assert.equal(h.length, 1)
+  assert.equal(h[0][PREV_TICK_MS], 8)
+  assert.equal(h[0][GAP_MS], 312)
+  // La suma es la propiedad que hace comparables las tres columnas — sin ella
+  // volvemos a mezclar fotogramas, que es el fallo que las trajo aquí.
+  assert.ok(Math.abs(h[0][MS] - (h[0][PREV_TICK_MS] + h[0][GAP_MS])) <= 1)
+})
+
+test('un parón DENTRO de nuestro callback no se confunde con uno de fuera', () => {
+  const log = recorder(60)
+  frame(log, 16.7, 15)
+  // Aquí el callback anterior SÍ tardó 300 ms y el hueco fue normal.
+  frame(log, 320, 5, { prevTickMs: 300, gapMs: 20 })
+
+  const h = hitchesOf(log)
+  assert.equal(h[0][PREV_TICK_MS], 300)
+  assert.ok(h[0][GAP_MS] < 50, 'el hueco pequeño dice que el tiempo se fue en nuestro código')
 })

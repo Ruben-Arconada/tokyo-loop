@@ -550,6 +550,10 @@ export class Game {
         // in the summary: under a closed sky the sun stops casting, so a rainy
         // lap reports `shadows: true` and never pays for one.
         shadows: this.renderer.shadowMap.enabled,
+        // The audio A/B needs this on the record: two cold runs, one muted,
+        // are the only way left to test the audio path now that the stall is
+        // known to be outside every synchronous phase we measure.
+        muted: this.muted,
         // Whether real GPU timing is even available on this device. `renderMs`
         // is CPU-blocked time, so it cannot tell deferred driver work from no
         // work at all; this says whether the honest measurement is on the
@@ -1809,10 +1813,6 @@ export class Game {
    */
   private startProbe() {
     if (!this.started || this.probe) return
-    if (this.muted) {
-      this.ui.showHint('Quita el silencio primero', 'La prueba tiene que oír la megafonía: uno de los sospechosos es la ruta de audio, y con el sonido apagado ese caso no se prueba.')
-      return
-    }
     if (this.perf.recording) this.togglePerfRecording()
     const cameraBefore = this.cameraMode
     this.setCameraMode('cab')
@@ -1836,7 +1836,7 @@ export class Game {
     // Full power: the leg is 300 units and we want it driven, not crawled.
     this.train.setNotch(MAX_NOTCH)
     this.controls.syncNotch(MAX_NOTCH)
-    this.ui.showProbeToast(`Prueba de tirones — tramo ${p.leg + 1} de ${Game.PROBE_LEGS}`)
+    this.ui.showProbeToast(`Prueba de tirones${this.muted ? ' (SILENCIADA)' : ''} — tramo ${p.leg + 1} de ${Game.PROBE_LEGS}`)
   }
 
   private updateProbe(dt: number) {
@@ -1909,6 +1909,11 @@ export class Game {
   }
 
   private tick() {
+    // Taken FIRST, before anything else in the callback: the gap is the time
+    // the page spent outside our code, and measuring it after any work of ours
+    // would fold that work into it.
+    const tickStart = performance.now()
+    const gapMs = this.lastTickEnd > 0 ? tickStart - this.lastTickEnd : 0
     // The raw interval is what the player felt; the clamped one is what the
     // simulation is allowed to swallow. The recorder wants the former.
     const rawDt = this.clock.getDelta()
@@ -1944,6 +1949,10 @@ export class Game {
     this.perf.record({
       frameMs: rawDt * 1000,
       renderMs,
+      // Both describe the interval BEFORE this tick, which is the one frameMs
+      // measures — so the three can be compared without mixing frames.
+      prevTickMs: this.lastTickCpuMs,
+      gapMs,
       draws: info.calls,
       tris: info.triangles,
       speedKmh: this.train.speedKmh,
@@ -1957,7 +1966,16 @@ export class Game {
       shadowPass: this.dayNight.sunLight.castShadow,
     })
     this.ui.updatePerfChip(this.perf.fpsNow, this.perf.recording)
+    // Last line of the callback, so `lastTickCpuMs` covers EVERYTHING we do —
+    // including record(), the upload poll and the fps chip, none of which any
+    // phase wraps.
+    this.lastTickEnd = performance.now()
+    this.lastTickCpuMs = this.lastTickEnd - tickStart
   }
+
+  /** End of the previous animation callback, and how long that whole callback took. */
+  private lastTickEnd = 0
+  private lastTickCpuMs = 0
 
   /**
    * Presentation layer: runs once per rendered frame with the real frame

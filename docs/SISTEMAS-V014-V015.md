@@ -269,15 +269,15 @@ minuto a minuto (que es lo que delata a un móvil estrangulándose por calor).
 Formato de exportación (JSON compacto, ~13 KB por vuelta completa de 7 min):
 
 ```
-v        4
+v        5
 ctx      { version, commit, ua, gpu, gpuTimer, dpr, cap, vw, vh, pwa, season,
-           weather, weatherAuto, camera, hour, timeScale, shadows }
+           weather, weatherAuto, camera, hour, timeScale, shadows, muted }
 summary  { seconds, frames, meanFps, p05, p50, p95, p99, maxMs, over17, over33,
            over50, maxDraws, maxTris, gaps, programs0, programsEnd,
            textures0, texturesEnd, texUploads0, texUploadsEnd, shadowFrames }
 bins[]   [tSec, frames, meanMs, maxMs, draws, kTris, kmh, progress‰]  ← uno por segundo
-hitches[][tSec, ms, renderMs, progress‰, station, draws, kTris,
-          programasNuevos, texturasSubidas, tags]                     ← peores primero
+hitches[][tSec, ms, renderMs, prevTickMs, gapMs, progress‰, station, draws,
+          kTris, programasNuevos, texturasSubidas, tags]              ← peores primero
 costs    { tag: [veces, msTotal, msPeor] }                            ← bloqueo SÍNCRONO en el móvil
 ```
 
@@ -322,9 +322,27 @@ Verificado: una marca real sobrevive a 4.800 mediciones de fase.
 Hoy están medidas `f:physics`, `f:step`, `f:daynight`, `f:city`, `f:flow`,
 `f:schedule`, `f:passengers`, `f:scenery`, `f:transfer`, `f:consist`,
 `f:precip`, `f:windshield`, `f:audio`, `f:camera`, `f:lever` y `f:hud`.
-**`f:physics + f:step + renderMs` deberían dar cuenta de `frameMs`**; lo que
-sobre no es código nuestro (GC, hilo de audio, el propio iOS), y saber eso es
-la mitad de la respuesta.
+
+⚠️ **Las fases NO se suman a `frameMs`, y decirlo aquí fue un error.** `frameMs`
+es el intervalo ANTERIOR al tick y las fases son de ESTE, así que sumarlos
+compara fotogramas distintos — el mismo fallo que el desfase original con otra
+cara. Lo que los máximos de `costs` sí demuestran es que **ninguna fase medida
+llegó nunca a tardar 320 ms en toda la grabación**, que es una afirmación más
+débil pero cierta. Y las fases tampoco cubren todo nuestro código: `record()`,
+el sondeo de subidas y el chip de fps quedan fuera de ellas.
+
+Para eso están **`prevTickMs`** (el callback anterior ENTERO, esas tres cosas
+incluidas) y **`gapMs`** (desde que devolvimos el control hasta que nos vuelven
+a llamar). Los dos pertenecen al mismo intervalo que `frameMs`, así que
+**`ms ≈ prevTickMs + gapMs`** sí es una ecuación que se sostiene, y lo sujeta
+`test/perfLog.test.ts`. Un tirón con `gapMs` grande pasó fuera de nuestro
+callback: compositor, GC, temporizadores, callbacks de audio o trabajo del
+driver diferido más allá del swap.
+
+**Coste del propio instrumento**: envolver una fase asigna una closure por
+fase y fotograma (~16), se grabe o no. Es garbage que antes no existía, y con
+el GC entre los sospechosos hay que tenerlo presente — cuando la caza termine,
+estas fases deberían salir o quedar tras una bandera.
 
 ### 🧪 Prueba de tirones automática (menú de pausa)
 
@@ -345,10 +363,15 @@ CUATRO condiciones y cualquiera invalida la tanda:
    registra y calienta recursos fuera del log — si se pausa, la prueba **se
    cancela sola** y lo dice, en vez de devolver una tanda que parece buena.
 
-Se niega a empezar con el sonido silenciado (uno de los sospechosos es el
-audio) y arranca la grabación unos fotogramas DESPUÉS de fijar la cabina, para
-que la primera subida de la propia cabina caiga en la línea base y no en el
-primer tirón.
+Arranca la grabación unos fotogramas DESPUÉS de fijar la cabina, para que la
+primera subida de la propia cabina caiga en la línea base y no en el primer
+tirón.
+
+**Sí se puede lanzar SILENCIADA, y hace falta**: el A/B del audio son dos
+arranques en frío idénticos, uno con sonido y otro sin él, y `ctx.muted` dice
+cuál fue cada log. Al principio se negaba a arrancar en silencio para que nadie
+invalidara la rama de audio sin querer; ahora que el parón está fuera de todas
+las fases síncronas, esa comparación es justo la que falta.
 
 **Ojo en dev**: `version`/`commit` se inyectan con `define` de Vite, que se
 evalúa al ARRANCAR el servidor — en `npm run dev` el commit se queda congelado
