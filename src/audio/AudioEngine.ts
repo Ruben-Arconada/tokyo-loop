@@ -1276,7 +1276,11 @@ export class AudioEngine {
    * asynchronous — never blocks the game loop or player input.
    */
   announce(segments: AnnounceSegment[], opts: AnnounceOptions = {}) {
-    if (!this.ctx || !('speechSynthesis' in window) || !segments.length || this.muted) return
+    // `segments` may be EMPTY on purpose: the "no voice" setting keeps the
+    // chime and the PA bed and says nothing. That path never touches
+    // speechSynthesis at all, which is also what isolates it as a suspect —
+    // the per-station freezes all land on the announcement's teardown.
+    if (!this.ctx || !('speechSynthesis' in window) || this.muted) return
     const item: QueuedAnnouncement = { segments, fanfare: !!opts.fanfare, kind: opts.kind ?? 'general', valid: opts.valid }
     if (this.announcing) {
       // A newer announcement of the same kind makes the playing one stale, so
@@ -1400,6 +1404,11 @@ export class AudioEngine {
       // nothing of ours is speaking when a new sequence starts.
       // Timed: on iOS this block is the prime suspect for the ~320 ms freezes
       // that showed up once per station in the first real-device lap.
+      // Nothing to say: end here without going near the speech engine.
+      if (item.segments.length === 0) {
+        this.finishAnnouncement()
+        return
+      }
       const utterances = perfTime('speak-init', () => {
         speechSynthesis.cancel()
         return item.segments.map((seg) => this.buildUtterance(seg.lang, seg.text))

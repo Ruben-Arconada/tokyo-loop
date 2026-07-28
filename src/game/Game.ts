@@ -45,12 +45,12 @@ const MAX_CATCHUP_STEPS = 15
 // the gap. The second one follows the player's browser; the pause menu can
 // override it.
 // ————————————————————————————————————————————————————————————————
-export type PaSecondLang = 'en' | 'es'
+export type PaSecondLang = 'en' | 'es' | 'off'
 const PA_LANG_KEY = 'yamanote-pa-lang'
 
 function detectSecondLang(): PaSecondLang {
   const stored = localStorage.getItem(PA_LANG_KEY)
-  if (stored === 'en' || stored === 'es') return stored
+  if (stored === 'en' || stored === 'es' || stored === 'off') return stored
   return (navigator.language || 'en').toLowerCase().startsWith('es') ? 'es' : 'en'
 }
 
@@ -501,6 +501,9 @@ export class Game {
 
   /** Japanese plus the player's language — see the PA note at the top of the file. */
   private paSegments(ja: string, en: string, es: string) {
+    // 'off' keeps the chime and the PA bed and speaks nothing — the station
+    // still announces itself, it just does not talk.
+    if (this.paLang === 'off') return []
     return [
       { lang: 'ja' as const, text: ja },
       this.paLang === 'es' ? { lang: 'es' as const, text: es } : { lang: 'en' as const, text: en },

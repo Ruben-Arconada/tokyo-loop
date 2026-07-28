@@ -27,7 +27,7 @@ export interface UICallbacks {
   /** Which eye the player looks through: cab, outside, or standing on the platform. */
   onCameraSet: (mode: CameraMode) => void
   /** Second PA language (Japanese is always there). */
-  onPaLangSet: (lang: 'en' | 'es') => void
+  onPaLangSet: (lang: 'en' | 'es' | 'off') => void
   /** Tester teleport: picked a station from the line-diagram sheet. */
   onTeleport: (stationIndex: number) => void
   /** Frame-time recording: start/stop, hand over the log, throw it away. */
@@ -659,6 +659,7 @@ export class UI {
           <div class="pa-lang-row">
             <button data-pa="es"><span lang="ja">日本語</span> + Español</button>
             <button data-pa="en"><span lang="ja">日本語</span> + English</button>
+            <button data-pa="off">Sin voz (solo campanilla)</button>
           </div>
         </div>
         <div class="perf-block">
@@ -698,7 +699,7 @@ export class UI {
     })
     el.querySelectorAll<HTMLButtonElement>('[data-pa]').forEach((btn) => {
       btn.addEventListener('click', () => {
-        const lang = btn.dataset.pa as 'en' | 'es'
+        const lang = btn.dataset.pa as 'en' | 'es' | 'off'
         this.cb.onPaLangSet(lang)
         this.setPaLang(lang)
       })
@@ -854,7 +855,7 @@ export class UI {
     this.camChip.setAttribute('aria-label', `Vista: ${m.label}. Tocar para cambiar.`)
   }
 
-  setPaLang(lang: 'en' | 'es') {
+  setPaLang(lang: 'en' | 'es' | 'off') {
     this.menuOverlay.querySelectorAll<HTMLButtonElement>('[data-pa]').forEach((b) => b.classList.toggle('active', b.dataset.pa === lang))
   }
 
