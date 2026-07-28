@@ -8,6 +8,7 @@ import { makeCloudTexture, makeNeonSignTexture, makeWindowGridTexture, makeRoofT
 import { registerPool, applySeasonToPool, type Season, type SeasonalPool, type Weather } from './Seasons'
 import { SakuraCanopyCloud, PetalCarpet, makeLumpySphereGeometry, type CarpetSpot } from './SakuraCanopy'
 import { worldStream, mulberry32 } from './Rng'
+import { tagGroup } from './worldHash'
 
 const N = STATIONS.length
 
@@ -675,6 +676,8 @@ export class Scenery {
     sakuraCanopies.count = ci
     sakuraTrunks.instanceMatrix.needsUpdate = true
     sakuraCanopies.instanceMatrix.needsUpdate = true
+        tagGroup(sakuraTrunks, 'sakura-trunks')
+    tagGroup(sakuraCanopies, 'sakura-shadow')
     this.scene.add(sakuraTrunks, sakuraCanopies)
 
     // ——— Pines: dark conifers dotted along the loop, weighted HEAVILY toward
@@ -727,6 +730,8 @@ export class Scenery {
     pineTrunks.instanceMatrix.needsUpdate = true
     pineFoliage.instanceMatrix.needsUpdate = true
     if (pineFoliage.instanceColor) pineFoliage.instanceColor.needsUpdate = true
+        tagGroup(pineTrunks, 'pine-trunks')
+    tagGroup(pineFoliage, 'pine-foliage')
     this.scene.add(pineTrunks, pineFoliage)
     this.seasonalPools.push(registerPool('pine', pineFoliage.instanceColor!))
 
@@ -767,6 +772,7 @@ export class Scenery {
     }
     scrub.instanceMatrix.needsUpdate = true
     if (scrub.instanceColor) scrub.instanceColor.needsUpdate = true
+        tagGroup(scrub, 'scrub')
     this.scene.add(scrub)
     this.seasonalPools.push(registerPool('scrub', scrub.instanceColor!))
   }
@@ -1677,6 +1683,9 @@ export class Scenery {
     canopies.instanceMatrix.needsUpdate = true
     hillPines.instanceMatrix.needsUpdate = true
     if (hillPines.instanceColor) hillPines.instanceColor.needsUpdate = true
+        tagGroup(trunks, 'hill-trunks')
+    tagGroup(canopies, 'hill-shadow')
+    tagGroup(hillPines, 'hill-pines')
     this.scene.add(trunks, canopies, hillPines)
     this.canopyCardPools.push({ kind: 'broadleaf', start: broadleafCardStart, count: this.sakuraCloud.cardCount - broadleafCardStart })
     this.seasonalPools.push(registerPool('pine', hillPines.instanceColor!))

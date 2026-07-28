@@ -166,6 +166,161 @@ export function worldFingerprint(scene: THREE.Scene): WorldFingerprint {
   return { seed: WORLD_SEED, parts, total: totalDigest.hex, dynamicParts }
 }
 
+// ————————————————————————————————————————————————————————————————
+// The SEMANTIC fingerprint, which is a different question from the structural
+// one above and exists for one reason: sectorising the ring.
+//
+// The structural hash keys on traversal order and on how many instances each
+// mesh holds, so splitting one 68-instance pool into eight sector pools of
+// nine changes it even though not a single tree moved. It stays exactly as it
+// is — it answers "is the scene built the same way?", which is still worth
+// asking. This one answers "is the same WORLD there?", and to do that it must
+// be blind to the partition: instances are flattened out of their meshes,
+// grouped by an explicit NAME the builder declares, sorted into a stable set,
+// and only then digested. Eight sectors or one pool, shuffled or not, the
+// answer is the same.
+// ————————————————————————————————————————————————————————————————
+
+/**
+ * Declares which world system a mesh's contents belong to. Sector pools carry
+ * the SAME name as the single pool they were split from — that is the whole
+ * mechanism. Returns the object so it can wrap a `scene.add(tag(mesh, '…'))`.
+ */
+export function tagGroup<T extends THREE.Object3D>(obj: T, group: string): T {
+  obj.userData.semanticGroup = group
+  return obj
+}
+
+/** Stable identity for a geometry, so two pools only merge if they really are the same thing. */
+function geometryKey(geo: THREE.BufferGeometry): string {
+  const params = (geo as THREE.BufferGeometry & { parameters?: Record<string, unknown> }).parameters
+  return params ? `${geo.type}(${Object.values(params).join(',')})` : geo.type
+}
+
+/**
+ * Fallback name for meshes whose builder has not declared a group yet. Derived
+ * from the geometry, NEVER from traversal order — an order-derived name would
+ * defeat the entire point. Reported in `untagged` so the gap stays visible
+ * instead of quietly passing as a real group.
+ */
+function fallbackGroup(geo: THREE.BufferGeometry): string {
+  return `untagged:${geometryKey(geo)}`
+}
+
+export interface SemanticFingerprint {
+  seed: string
+  /** group name → hash of its instances as an unordered set. */
+  groups: Record<string, string>
+  /** group name → how many instances it holds. A split that loses or duplicates one shows up here. */
+  counts: Record<string, number>
+  total: string
+  /** Groups still riding the geometry-derived fallback — tag these before trusting them across a refactor. */
+  untagged: string[]
+}
+
+export function semanticFingerprint(scene: THREE.Scene): SemanticFingerprint {
+  /** group → one quantized record per instance, as strings so they can be sorted as a set. */
+  const records = new Map<string, string[]>()
+  const push = (group: string, parts: number[], prefix: string) => {
+    const quantized = prefix + '|' + parts.map((v) => Math.round(v * QUANT) | 0).join(',')
+    const list = records.get(group)
+    if (list) list.push(quantized)
+    else records.set(group, [quantized])
+  }
+
+  scene.traverse((obj) => {
+    const mesh = obj as THREE.Mesh & {
+      isInstancedMesh?: boolean
+      isPoints?: boolean
+      count?: number
+      instanceMatrix?: THREE.BufferAttribute
+      instanceColor?: THREE.BufferAttribute | null
+    }
+    const drawable = (mesh as unknown as { isMesh?: boolean }).isMesh || mesh.isPoints
+    if (!drawable || !mesh.geometry || isDynamic(mesh)) return
+
+    const group = (findGroupName(mesh) ?? fallbackGroup(mesh.geometry)) as string
+    const kind = geometryKey(mesh.geometry)
+
+    if (mesh.isInstancedMesh && mesh.instanceMatrix) {
+      const count = mesh.count ?? 0
+      const m = mesh.instanceMatrix.array as Float32Array
+      const c = mesh.instanceColor?.array as Float32Array | undefined
+      for (let i = 0; i < count; i++) {
+        const parts: number[] = []
+        for (let k = 0; k < 16; k++) parts.push(m[i * 16 + k])
+        if (c) for (let k = 0; k < 3; k++) parts.push(c[i * 3 + k])
+        push(group, parts, kind)
+      }
+    } else if ((mesh.geometry as THREE.InstancedBufferGeometry).isInstancedBufferGeometry) {
+      const geo = mesh.geometry as THREE.InstancedBufferGeometry
+      const names = Object.keys(geo.attributes)
+        .filter((n) => (geo.attributes[n] as THREE.InstancedBufferAttribute).isInstancedBufferAttribute)
+        .sort()
+      for (let i = 0; i < geo.instanceCount; i++) {
+        const parts: number[] = []
+        for (const n of names) {
+          const attr = geo.attributes[n] as THREE.BufferAttribute
+          const arr = attr.array as Float32Array
+          for (let k = 0; k < attr.itemSize; k++) parts.push(arr[i * attr.itemSize + k])
+        }
+        push(group, parts, kind + '{' + names.join(',') + '}')
+      }
+    } else if (mesh.userData?.seedTable) {
+      const seeds = mesh.userData.seedTable as Float32Array
+      push(group, Array.from(seeds), kind + '{seedTable}')
+    } else if (mesh.isPoints) {
+      const pos = mesh.geometry.getAttribute('position') as THREE.BufferAttribute
+      push(group, Array.from(pos.array as Float32Array), kind + '{points}')
+    } else {
+      mesh.updateWorldMatrix(false, false)
+      push(group, Array.from(mesh.matrixWorld.elements), kind)
+    }
+  })
+
+  const groups: Record<string, string> = {}
+  const counts: Record<string, number> = {}
+  const totalDigest = new Digest()
+  for (const name of [...records.keys()].sort()) {
+    const list = records.get(name)!
+    // Sorted as a SET: which mesh an instance came out of, and in what order,
+    // is exactly the information a partition changes and this must not see.
+    list.sort()
+    const d = new Digest()
+    d.pushText(name)
+    // The count rides inside the hash too, so a split that drops or
+    // duplicates an instance cannot come out looking identical.
+    d.push(list.length)
+    for (const rec of list) d.pushText(rec)
+    groups[name] = d.hex
+    counts[name] = list.length
+    totalDigest.pushText(name).pushText(d.hex)
+  }
+
+  return {
+    seed: WORLD_SEED,
+    groups,
+    counts,
+    total: totalDigest.hex,
+    untagged: Object.keys(groups).filter((g) => g.startsWith('untagged:')),
+  }
+}
+
+/** The nearest declared group name, walking up parents so tagging a group covers its children. */
+function findGroupName(obj: THREE.Object3D): string | null {
+  for (let o: THREE.Object3D | null = obj; o; o = o.parent) {
+    const name = o.userData?.semanticGroup
+    if (typeof name === 'string') return name
+  }
+  return null
+}
+
+/** Names the groups whose contents differ — "did sectorising move anything?" in one line. */
+export function semanticDiff(a: SemanticFingerprint, b: SemanticFingerprint): string[] {
+  const names = new Set([...Object.keys(a.groups), ...Object.keys(b.groups)])
+  return [...names].filter((n) => a.groups[n] !== b.groups[n]).sort()
+}
+
 /**
  * Names the parts that differ between two fingerprints — the readable form of
  * "changing the vegetation must not move the city".

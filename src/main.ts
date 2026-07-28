@@ -2,7 +2,7 @@ import './style.css'
 import * as THREE from 'three'
 import { Game } from './game/Game'
 import { audio } from './audio/AudioEngine'
-import { worldFingerprint, fingerprintDiff } from './game/worldHash'
+import { worldFingerprint, fingerprintDiff, semanticFingerprint, semanticDiff, tagGroup } from './game/worldHash'
 import { WORLD_SEED } from './game/Rng'
 
 const app = document.querySelector<HTMLDivElement>('#app')!
@@ -23,6 +23,16 @@ if (import.meta.env.DEV) {
   // identical. `?seed=` deals a different one.
   ;(window as unknown as Record<string, unknown>).__worldHash = () => worldFingerprint(game.scene)
   ;(window as unknown as Record<string, unknown>).__fingerprintDiff = fingerprintDiff
+  // The partition-blind twin: `__semanticHash()` groups instances by the name
+  // their builder declares and hashes each group as an unordered SET, so
+  // splitting a pool across sectors leaves it unchanged. That is the check
+  // sectorising has to pass — the structural hash above cannot answer it.
+  ;(window as unknown as Record<string, unknown>).__semanticHash = () => semanticFingerprint(game.scene)
+  ;(window as unknown as Record<string, unknown>).__semanticDiff = semanticDiff
+  // Raw handles so the harness can hash a SYNTHETIC scene: the partition
+  // tests build the same instances split 1/2/8 ways and demand one answer.
+  ;(window as unknown as Record<string, unknown>).__semanticOf = semanticFingerprint
+  ;(window as unknown as Record<string, unknown>).__tag = tagGroup
   ;(window as unknown as Record<string, unknown>).__seed = WORLD_SEED
 }
 

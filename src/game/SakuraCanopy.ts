@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import type { Season } from './Seasons'
 import { mulberry32, Rng } from './Rng'
+import { tagGroup } from './worldHash'
 
 // ————————————————————————————————————————————————————————————————
 // Billboard-cloud sakura canopies (Rubén: the sphere blobs "se ven bastante
@@ -378,7 +379,7 @@ export class SakuraCanopyCloud {
     })
     const mesh = new THREE.Mesh(geo, mat)
     mesh.frustumCulled = false // cards span the whole loop
-    scene.add(mesh)
+    scene.add(tagGroup(mesh, 'canopy-cards'))
   }
 
   /** Shape change on season change: one attribute rewrite, no rebuild. The grove (evergreen) blooms in all four. */
@@ -470,7 +471,7 @@ export class PetalCarpet {
     })
     this.mesh.receiveShadow = true
     this.mesh.instanceMatrix.needsUpdate = true
-    scene.add(this.mesh)
+    scene.add(tagGroup(this.mesh, 'petal-carpet'))
   }
 
   setSeason(season: Season): void {
