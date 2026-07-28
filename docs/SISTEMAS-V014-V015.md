@@ -270,8 +270,8 @@ Formato de exportación (JSON compacto, ~13 KB por vuelta completa de 7 min):
 
 ```
 v        4
-ctx      { version, commit, ua, gpu, dpr, cap, vw, vh, pwa, season, weather,
-           weatherAuto, camera, hour, timeScale, shadows }
+ctx      { version, commit, ua, gpu, gpuTimer, dpr, cap, vw, vh, pwa, season,
+           weather, weatherAuto, camera, hour, timeScale, shadows }
 summary  { seconds, frames, meanFps, p05, p50, p95, p99, maxMs, over17, over33,
            over50, maxDraws, maxTris, gaps, programs0, programsEnd,
            textures0, texturesEnd, texUploads0, texUploadsEnd, shadowFrames }
@@ -295,13 +295,31 @@ eco del fotograma siguiente no se cuenta aparte. Lo sujeta
 `test/perfLog.test.ts`; la línea base de recursos se toma en `start()` desde el
 renderer, no del primer fotograma.
 
-**Cómo se lee un tirón**: mira `renderMs` primero — dice si el parón estuvo
-DENTRO del render. Si no lo estuvo, los recursos son irrelevantes y el
-sospechoso es audio, JS o almacenamiento. Si lo estuvo, `programasNuevos` y
-`texturasSubidas` separan «enlazó un shader» de «subió una textura».
-Medido en escritorio, al entrar en una estación nueva pasan LAS DOS cosas
-(Kiyomizu: +25 programas y +9 texturas), así que en el móvil hará falta el
-dato real para decidir.
+**Cómo se lee un tirón**: mira `renderMs` primero, pero sabiendo qué es —
+**tiempo de CPU BLOQUEADO dentro de `renderer.render()`, no tiempo de GPU**.
+WebGL es asíncrono: el trabajo de driver que dispara un dibujado (enlazar un
+programa, subir una textura) no tiene por qué pagarse dentro de la llamada que
+lo provocó. Así que un `renderMs` alto es evidencia fuerte de que el parón es
+del lado del render; uno bajo **no** exonera a las columnas de recursos, porque
+el coste puede caer en el siguiente dibujado o en el swap. Descartar GPU de
+verdad exige `EXT_disjoint_timer_query_webgl2`, y por eso `ctx.gpuTimer` dice
+si el dispositivo lo ofrece.
+
+Con eso en la mano, `programasNuevos` y `texturasSubidas` separan «enlazó un
+shader» de «subió una textura». Medido en escritorio, al entrar en una estación
+nueva pasan LAS DOS cosas (Kiyomizu: +25 programas y +9 texturas), así que en
+el móvil hará falta el dato real para decidir.
+
+**Ojo en dev**: `version`/`commit` se inyectan con `define` de Vite, que se
+evalúa al ARRANCAR el servidor — en `npm run dev` el commit se queda congelado
+en el que hubiera entonces. En un build de producción es siempre el del build.
+
+**La base de `texturasSubidas` se sondea SIEMPRE, no solo grabando.** Si el
+contador solo mirase durante la grabación valdría cero al pulsar grabar, y el
+primer fotograma descubriría de golpe todas las texturas ya residentes y las
+apuntaría como subidas nuevas: un pico inventado, en el primer fotograma,
+señalando justo al sospechoso que se investiga. Lo sujeta
+`test/textureWatch.test.ts`.
 
 **`texturasSubidas` no es `texturesEnd`**: el total residente cuenta lo que hay
 vivo, y la tablilla de destino se destruye y se recrea en cada estación

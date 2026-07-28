@@ -14,6 +14,7 @@ import { Schedule, ON_TIME_TOLERANCE, LATE_TOLERANCE, type ScheduleLevel } from 
 import { registerPool, applySeasonToPool, overcastTarget, precipProfile, type Season, type Weather, type SeasonalPool } from './Seasons'
 import { WORLD_SEED, worldStream } from './Rng'
 import { CANONICAL_SCENARIO, FORCE_CANONICAL, tagGroup, type WorldScenario } from './worldHash'
+import { TextureUploadWatch } from './textureWatch'
 import { Scenery } from './Scenery'
 import { DayNightCycle } from './DayNightCycle'
 import { audio } from '../audio/AudioEngine'
@@ -401,6 +402,11 @@ export class Game {
     this.buildCabRig()
     this.buildHeadlight()
 
+    // Registered once, here, so the upload watch is already tracking them long
+    // before anyone presses record — that is what keeps its baseline honest.
+    this.city.collectSignTextures(this.uploadWatch)
+    this.uploadWatch.watch(this.destinationMat.map)
+
     this.controls = new Controls(mount, {
       onNotchChange: (n) => this.train.setNotch(n),
       onLook: (dx, dy) => this.handleLook(dx, dy),
@@ -543,6 +549,11 @@ export class Game {
         // in the summary: under a closed sky the sun stops casting, so a rainy
         // lap reports `shadows: true` and never pays for one.
         shadows: this.renderer.shadowMap.enabled,
+        // Whether real GPU timing is even available on this device. `renderMs`
+        // is CPU-blocked time, so it cannot tell deferred driver work from no
+        // work at all; this says whether the honest measurement is on the
+        // table here or whether we are stuck with inference.
+        gpuTimer: !!gl.getExtension('EXT_disjoint_timer_query_webgl2'),
       }, {
         // Read here, before the lap's first render. Inferring this from the
         // first sample instead would fold whatever that render compiled into
@@ -550,7 +561,9 @@ export class Game {
         // likeliest of the whole lap to compile something.
         programs: this.renderer.info.programs?.length ?? 0,
         textures: this.renderer.info.memory.textures,
-        texUploads: this.texUploadCount,
+        // Already true when we get here: the watch polls every frame, not
+        // only while recording, so nothing resident gets counted as new.
+        texUploads: this.uploadWatch.poll(),
       })
     }
     this.pushPerfState()
@@ -1577,8 +1590,13 @@ export class Game {
     this.leverPivot.rotation.x = THREE.MathUtils.mapLinear(this.train.notch, MIN_NOTCH, MAX_NOTCH, 0.5, -0.35)
     if (this.train.targetStationIndex !== this.lastDestinationIdx) {
       this.lastDestinationIdx = this.train.targetStationIndex
+      // The outgoing roll may never have been drawn; stop waiting for it.
+      this.uploadWatch.forget(this.destinationMat.map)
       this.destinationMat.map?.dispose()
       this.destinationMat.map = makeDestinationTexture(this.train.targetStation.nameEn.toUpperCase())
+      // Watch the REPLACEMENT: its upload is a real per-station cost that the
+      // resident texture count cannot see.
+      this.uploadWatch.watch(this.destinationMat.map)
       this.destinationMat.needsUpdate = true
     }
   }
@@ -1723,41 +1741,28 @@ export class Game {
   }
 
   /**
-   * How many of the canvas-built textures have actually reached the GPU so
-   * far. Monotonic, so PerfLog can take a per-render delta and say "this
-   * render uploaded a station board".
+   * Watches the canvas-built textures for their first arrival on the GPU: the
+   * thirty station boards and the destination roll.
    *
    * Why not `renderer.info.memory.textures`: that counts what is RESIDENT.
    * The destination roll is disposed and rebuilt at every station
    * (`updateLever`), so one leaves as one arrives and the total never moves —
-   * the single texture we KNOW churns once per stop is invisible to it. And
-   * the thirty station boards are 1024×384 canvases uploaded lazily on their
-   * first draw, which is a per-station one-off cost that fits the freezes.
+   * the single texture we KNOW churns once per stop is invisible to it.
    *
-   * Reads `renderer.properties`, which is three's internal bookkeeping: a
-   * texture that has been uploaded has a `__webglTexture`. Dev telemetry only,
-   * and cheap — a WeakMap lookup per tracked texture, and each one is checked
-   * only until it goes resident.
+   * It polls on EVERY frame, recording or not. Gating it on `recording` was a
+   * bug with the same shape as the one-frame offset it was added to replace:
+   * the counter stayed at zero until the moment the lap began, so the first
+   * recorded frame discovered every already-resident board at once and booked
+   * the lot as fresh uploads — a fabricated spike, in the first frame, naming
+   * the very suspect under investigation. Polling always means the count is
+   * already true when `start()` reads it, and the loop stops costing anything
+   * once everything has arrived.
    */
-  private countTextureUploads(): number {
-    if (!this.perf.recording) return this.texUploadCount
+  private uploadWatch = new TextureUploadWatch<THREE.Texture>((tex) => {
+    // three's own bookkeeping: an uploaded texture has a __webglTexture.
     const props = (this.renderer as unknown as { properties?: { get(o: object): { __webglTexture?: unknown } } }).properties
-    if (!props) return this.texUploadCount
-    const check = (tex: THREE.Texture | null | undefined) => {
-      if (!tex || this.uploadedTextures.has(tex)) return
-      if (props.get(tex)?.__webglTexture) {
-        this.uploadedTextures.add(tex)
-        this.texUploadCount++
-      }
-    }
-    for (const entry of this.city.signTextures) check(entry)
-    check(this.destinationMat?.map)
-    return this.texUploadCount
-  }
-
-  /** Textures already seen on the GPU — a Set, so a disposed-and-rebuilt one counts as a NEW upload. */
-  private uploadedTextures = new Set<THREE.Texture>()
-  private texUploadCount = 0
+    return !!props?.get(tex)?.__webglTexture
+  })
 
   private onResize() {
     // The VISUAL viewport when the platform reports one: on iOS the layout
@@ -1818,7 +1823,7 @@ export class Game {
       // material is drawn, so growth here IS first-draw work happening.
       programs: this.renderer.info.programs?.length ?? 0,
       textures: this.renderer.info.memory.textures,
-      texUploads: this.countTextureUploads(),
+      texUploads: this.uploadWatch.poll(),
       shadowPass: this.dayNight.sunLight.castShadow,
     })
     this.ui.updatePerfChip(this.perf.fpsNow, this.perf.recording)

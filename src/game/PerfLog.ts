@@ -37,12 +37,18 @@ type Bin = [number, number, number, number, number, number, number, number]
  * One hitch: [tSec, ms, renderMs, progress‰, station, draws, kTris,
  *             programasNuevos, texturasSubidas, tagsRecientes].
  *
- * Read `renderMs` FIRST. It says whether the stall happened inside the render
- * call at all, which is the fork that matters: work outside it (audio, JS,
- * storage) cannot show up there. Only then do the two resource columns split
- * an expensive render into "linked a shader" versus "uploaded a texture" —
- * and all three describe the same render, which the first version of this
- * did not.
+ * Read `renderMs` first, but read it for what it is: the CPU time BLOCKED
+ * inside `renderer.render()`. WebGL is asynchronous, so driver work a draw
+ * triggers — linking a program, uploading a texture — need not be paid inside
+ * the call that caused it. A high `renderMs` is therefore strong evidence that
+ * the stall is render-side; a low one does NOT clear the resource columns,
+ * because the cost can land at the next draw or at buffer swap. Ruling GPU
+ * work out properly needs real GPU timing (EXT_disjoint_timer_query_webgl2),
+ * whose availability is reported in the context.
+ *
+ * The two resource columns then split an expensive frame into "linked a
+ * shader" versus "uploaded a texture" — and all three describe the SAME
+ * render, which the first version of this did not.
  */
 type Hitch = [number, number, number, number, number, number, number, number, number, string]
 /** How far back a hitch looks for game events that might have caused it. */
@@ -57,13 +63,16 @@ export interface PerfSample {
    */
   frameMs: number
   /**
-   * This frame's own `renderer.render()`, measured around the call. Added
-   * because pairing `frameMs` with resources read after the render was off by
-   * exactly one frame: a 320 ms render that linked two programs booked the
-   * programs against a normal-looking frame and the 320 ms against the next
-   * one, which had linked none. The column meant to prove compilation would
-   * have disproved it every time. `renderMs` and the resource deltas below
-   * describe the SAME render.
+   * CPU time blocked inside this frame's own `renderer.render()`, measured
+   * around the call. Added because pairing `frameMs` with resources read after
+   * the render was off by exactly one frame: a 320 ms render that linked two
+   * programs booked the programs against a normal-looking frame and the 320 ms
+   * against the next one, which had linked none. The column meant to prove
+   * compilation would have disproved it every time. `renderMs` and the
+   * resource deltas below describe the SAME render.
+   *
+   * Not GPU time. See the Hitch doc — a low value does not exonerate the
+   * resource columns, because WebGL can defer the driver work a draw triggers.
    */
   renderMs: number
   draws: number

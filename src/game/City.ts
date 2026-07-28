@@ -92,13 +92,18 @@ export class City {
   private signEntries: SignEntry[] = []
 
   /**
-   * The thirty station name boards, for the performance log to watch. Each is
-   * a 1024×384 canvas that only reaches the GPU the first time its platform is
-   * drawn — a per-station one-off cost, which is the shape of the freezes we
-   * are chasing.
+   * Hands the thirty station name boards to the performance log's upload
+   * watch. Each is a 1024×384 canvas that only reaches the GPU the first time
+   * its platform is drawn — a per-station one-off cost, which is the shape of
+   * the freezes we are chasing.
+   *
+   * Fills a caller-owned set rather than returning an array: this used to be a
+   * getter that mapped all thirty entries into a fresh array on every recorded
+   * frame, which is garbage for the one instrument that must never be the
+   * reason a frame is slow. Now it is called once.
    */
-  get signTextures(): (THREE.Texture | null)[] {
-    return this.signEntries.map((e) => e.material.map)
+  collectSignTextures(into: { watch(tex: THREE.Texture | null | undefined): void }) {
+    for (const entry of this.signEntries) into.watch(entry.material.map)
   }
   private time = 0
   /** Platform canopy colors, snow-capped in winter alongside the house roofs. */
