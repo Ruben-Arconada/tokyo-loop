@@ -485,7 +485,7 @@ export class AudioEngine {
    */
   private updateStationMurmur(t: number, hour: number, level: number, pan: number, duckMul: number) {
     const ctx = this.ctx!
-    if (!this.stationMurmurGain) {
+    if (!this.stationMurmurGain) perfTime('a:src-murmur', () => {
       const src = ctx.createBufferSource()
       src.buffer = this.noiseBuffer
       src.loop = true
@@ -502,9 +502,11 @@ export class AudioEngine {
       this.stationMurmurPanner.connect(this.dryGain!)
       this.stationMurmurPanner.connect(this.wetSend!)
       src.start()
-    }
+    })
     const rush = this.rushFactor(hour)
-    this.stationMurmurGain.gain.setTargetAtTime(level * (0.35 + 0.65 * rush) * 0.05 * duckMul, t, 0.35)
+    // `!` because the assignment above now happens inside a timed callback,
+    // which is opaque to the narrowing — it is still assigned by this point.
+    this.stationMurmurGain!.gain.setTargetAtTime(level * (0.35 + 0.65 * rush) * 0.05 * duckMul, t, 0.35)
     this.stationMurmurPanner!.pan.setTargetAtTime(pan, t, 0.3)
   }
 
@@ -555,7 +557,7 @@ export class AudioEngine {
         window.clearTimeout(this.rainStopHandle)
         this.rainStopHandle = null
       }
-      if (this.rainSources.length === 0) {
+      if (this.rainSources.length === 0) perfTime('a:src-rain', () => {
         const wash = ctx.createBufferSource()
         wash.buffer = this.noiseBuffer
         wash.loop = true
@@ -568,10 +570,10 @@ export class AudioEngine {
         patter.connect(this.rainPatterFilter!)
         patter.start()
         this.rainSources.push(wash, patter)
-      }
+      })
     } else if (this.rainSources.length > 0 && this.rainStopHandle === null) {
       // Let the 1.2 s fade land first, then genuinely stop the loops.
-      this.rainStopHandle = window.setTimeout(() => {
+      this.rainStopHandle = window.setTimeout(() => perfTime('a:tmr-rain-stop', () => {
         this.rainStopHandle = null
         if (this.rainLevel > 0) return // weather turned again while fading
         for (const src of this.rainSources) {
@@ -579,7 +581,7 @@ export class AudioEngine {
           src.disconnect()
         }
         this.rainSources.length = 0
-      }, 3000)
+      }), 3000)
     }
     // Slow fades: weather rolls in, it doesn't switch.
     this.rainWashGain.gain.setTargetAtTime(level01 * 0.05, t, 1.2)
@@ -615,7 +617,7 @@ export class AudioEngine {
         window.clearTimeout(this.windStopHandle)
         this.windStopHandle = null
       }
-      if (!this.windSource) {
+      if (!this.windSource) perfTime('a:src-wind', () => {
         const src = ctx.createBufferSource()
         src.buffer = this.noiseBuffer
         src.loop = true
@@ -623,17 +625,17 @@ export class AudioEngine {
         src.connect(this.windFilter!)
         src.start()
         this.windSource = src
-      }
+      })
     } else {
       this.windGain.gain.setTargetAtTime(0, ctx.currentTime, 1.4)
       if (this.windSource && this.windStopHandle === null) {
-        this.windStopHandle = window.setTimeout(() => {
+        this.windStopHandle = window.setTimeout(() => perfTime('a:tmr-wind-stop', () => {
           this.windStopHandle = null
           if (this.windLevel > 0 || !this.windSource) return
           try { this.windSource.stop() } catch { /* already stopped */ }
           this.windSource.disconnect()
           this.windSource = null
-        }, 3600)
+        }), 3600)
       }
     }
   }
@@ -662,7 +664,7 @@ export class AudioEngine {
         window.clearTimeout(this.shoreStopHandle)
         this.shoreStopHandle = null
       }
-      if (!this.shoreSource) {
+      if (!this.shoreSource) perfTime('a:src-shore', () => {
         const src = ctx.createBufferSource()
         src.buffer = this.noiseBuffer
         src.loop = true
@@ -670,17 +672,17 @@ export class AudioEngine {
         src.connect(this.shoreFilter!)
         src.start()
         this.shoreSource = src
-      }
+      })
     } else {
       this.shoreGain.gain.setTargetAtTime(0, ctx.currentTime, 1.6)
       if (this.shoreSource && this.shoreStopHandle === null) {
-        this.shoreStopHandle = window.setTimeout(() => {
+        this.shoreStopHandle = window.setTimeout(() => perfTime('a:tmr-shore-stop', () => {
           this.shoreStopHandle = null
           if (this.shoreLevel > 0 || !this.shoreSource) return
           try { this.shoreSource.stop() } catch { /* already stopped */ }
           this.shoreSource.disconnect()
           this.shoreSource = null
-        }, 4200)
+        }), 4200)
       }
     }
   }
@@ -1387,7 +1389,7 @@ export class AudioEngine {
     const epoch = ++this.announceEpoch
     this.announcing = true
     const totalChars = item.segments.reduce((n, s) => n + s.text.length, 0)
-    const fanfareDuration = item.fanfare ? this.playMelody(RETRO_FANFARE, 'retro', 0.4) || 0.8 : 0
+    const fanfareDuration = item.fanfare ? perfTime('a:fanfare', () => this.playMelody(RETRO_FANFARE, 'retro', 0.4) || 0.8) : 0
     this.duckFor(3.5 + totalChars * 0.06 + fanfareDuration)
     const chimeDuration = perfTime('chime', () => this.playMelody(ATTENTION_CHIME, 'attention', 0.32) || 0.3)
     perfTime('pa-bed', () => this.startPaBed())
@@ -1416,7 +1418,7 @@ export class AudioEngine {
         const advance = () => {
           if (advanced) return
           advanced = true
-          window.setTimeout(() => speakAt(i + 1), SEGMENT_GAP_MS)
+          window.setTimeout(() => perfTime('a:tmr-segment', () => speakAt(i + 1)), SEGMENT_GAP_MS)
         }
         utter.onend = advance
         // Fallback in case `onend` never fires (a known flakiness in some browsers' queued-utterance handling).
@@ -1432,9 +1434,11 @@ export class AudioEngine {
     this.stopPaBed()
     this.currentItem = null
     window.setTimeout(() => {
-      this.announcing = false
-      const next = this.announceQueue.shift()
-      if (next) this.playAnnouncement(next)
+      perfTime('a:tmr-announce-gap', () => {
+        this.announcing = false
+        const next = this.announceQueue.shift()
+        if (next) this.playAnnouncement(next)
+      })
     }, ANNOUNCEMENT_GAP_MS)
   }
 

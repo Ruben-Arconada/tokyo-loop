@@ -777,11 +777,11 @@ export class Game {
     const level = p.audioLevel * (1 + 0.4 * this.train.speed01)
     if (Math.abs(level - this.lastRainAudioLevel) > 0.03 || (level === 0) !== (this.lastRainAudioLevel === 0)) {
       this.lastRainAudioLevel = level
-      audio.setRain(level)
+      perfPhase('a:setRain', () => audio.setRain(level))
     }
     if (Math.abs(p.windAudio - this.lastWindAudioLevel) > 0.03 || (p.windAudio === 0) !== (this.lastWindAudioLevel === 0)) {
       this.lastWindAudioLevel = p.windAudio
-      audio.setWind(p.windAudio)
+      perfPhase('a:setWind', () => audio.setWind(p.windAudio))
     }
   }
 
@@ -2011,7 +2011,7 @@ export class Game {
       this.wasInTunnel = inTunnel
       if (inTunnel) perfMark('tunnel')
       // The portal is an EVENT: pressure whoosh + thump, in both directions.
-      audio.tunnelWhoosh(inTunnel, this.train.speed01)
+      perfPhase('a:whoosh', () => audio.tunnelWhoosh(inTunnel, this.train.speed01))
     }
     // Deep inside, fog ends at ~260 — everything beyond is invisible, so
     // stop paying for it: pull the far plane in and the frustum culls the
@@ -2048,7 +2048,7 @@ export class Game {
     }
     if (Math.abs(this.tunnelF - this.lastTunnelAudioF) > 0.04 || (this.tunnelF === 0) !== (this.lastTunnelAudioF === 0)) {
       this.lastTunnelAudioF = this.tunnelF
-      audio.setTunnel(this.tunnelF)
+      perfPhase('a:setTunnel', () => audio.setTunnel(this.tunnelF))
     }
     // Every window-lit material shares this: windows pop on one by one
     // through dusk as it rises from 0 to 1.
@@ -2081,7 +2081,7 @@ export class Game {
     // Kan-kan: one bell strike per blink flip while the crossing is active.
     if (this.scenery.crossingBlinkPhase !== this.lastCrossingPhase) {
       this.lastCrossingPhase = this.scenery.crossingBlinkPhase
-      if (this.scenery.crossingBellActive) audio.crossingTick(0.7)
+      if (this.scenery.crossingBellActive) perfPhase('a:bell', () => audio.crossingTick(0.7))
     }
     perfPhase('f:transfer', () => this.updateTransfer(dt))
     // The doors only ever open at the station being served, and while stopped
@@ -2120,7 +2120,7 @@ export class Game {
     const shore = bay * (0.25 + 0.75 * (1 - this.train.speed01)) * (1 - this.tunnelF)
     if (Math.abs(shore - this.lastShoreAudioLevel) > 0.05 || (shore === 0) !== (this.lastShoreAudioLevel === 0)) {
       this.lastShoreAudioLevel = shore
-      audio.setShore(shore)
+      perfPhase('a:setShore', () => audio.setShore(shore))
     }
 
     // Atmosphere discovery: one gentle nudge, ~20 s into the first session
