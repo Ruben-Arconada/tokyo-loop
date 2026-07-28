@@ -52,6 +52,37 @@ worker: si algún día se le añade uno, debe nacer con prefijo.
 este juego van prefijadas (`yamanote-season`, `yamanote-best-score`…). Mantener
 esa costumbre: una clave genérica tipo `settings` chocaría con la de otro juego.
 
+## 🎲 El mundo estático es DETERMINISTA — no metas `Math.random()` en él
+
+Ver [src/game/Rng.ts](src/game/Rng.ts). La semilla por defecto es
+`japan-loop-0.5-world-1` y `?seed=loquesea` reparte otro Japón. Cada **sistema**
+tiene su propio flujo (`worldStream('vegetation')`, `'city'`, `'houses'`…), y eso
+es lo importante: con una secuencia global, añadir una sola llamada en cualquier
+sitio desplaza todos los sorteos posteriores y rebaraja el mundo entero.
+
+Reglas al tocar el escenario:
+
+1. **Nada de `Math.random()` en la construcción del mundo.** Usa el flujo del
+   sistema que estés tocando.
+2. **Dos módulos no pueden compartir nombre de flujo** o sortearán exactamente
+   los mismos números. Le pasó a Scenery y City con `'city'`; hoy son
+   `'skyline'` y `'city'`.
+3. **Las texturas son artwork, no reparto**: semilla FIJA (`mulberry32(0x…)`),
+   para que se vean igual en todos los mundos. Todo `signage.ts` va así.
+4. **Lo dinámico se queda sin sembrar a propósito** (pasajeros, precipitación,
+   frentes de clima, audio): es jugabilidad, no maquetación. Márcalo con
+   `userData.dynamic = true` para que no ensucie el fingerprint.
+5. **Las melodías tienen su propia semilla por estación** y su propio
+   `hashString` local: cambiar de mundo no puede cambiar lo que suena en
+   Kiyomizu, y unificar ese hash reescribiría las treinta.
+
+**Cómo se comprueba** (en dev, consola): `__worldHash()` devuelve un
+fingerprint CUANTIZADO de los datos generados — matrices, colores y atributos
+instanciados. **No compares capturas píxel a píxel**: WebGL cambia con la GPU,
+el driver y el antialiasing aunque el mundo sea idéntico. `__fingerprintDiff(a,b)`
+dice qué partes se movieron. El informe de rendimiento (`PerfLog` v2) lleva la
+semilla: dos vueltas solo son comparables si coincide.
+
 ## Publicar
 
 Ritual completo en la memoria del proyecto. Resumen: `npx tsc --noEmit` +
