@@ -66,10 +66,13 @@ export class UI {
   private menuOpen = false
   private atmoOpen = false
   private paused = false
-  /** The dialog currently holding focus, and how to dismiss it (Escape / trap). */
-  private activeModal: { el: HTMLElement; close: () => void } | null = null
-  /** What had focus before the dialog opened, so closing gives it back. */
-  private modalReturnFocus: HTMLElement | null = null
+  /**
+   * Open dialogs, innermost LAST — a stack, because they nest: Credits opens
+   * on top of the pause menu. A single slot meant closing Credits left the
+   * still-visible menu unregistered, so Escape and the Tab trap went dead
+   * until you dismissed it with the mouse.
+   */
+  private modalStack: { el: HTMLElement; close: () => void; returnFocus: HTMLElement | null }[] = []
   private atmoChip!: HTMLButtonElement
   private atmoGlyphEl!: HTMLSpanElement
   private perfChip!: HTMLDivElement
@@ -154,7 +157,8 @@ export class UI {
    * buttons underneath it, and there was no way out except the mouse.
    */
   private onModalKey(e: KeyboardEvent) {
-    const modal = this.activeModal
+    // Only the innermost dialog listens; the ones underneath wait their turn.
+    const modal = this.modalStack[this.modalStack.length - 1]
     if (!modal) return
     if (e.key === 'Escape') {
       e.preventDefault()
@@ -181,18 +185,20 @@ export class UI {
     }
   }
 
-  /** Registers/clears the focused dialog and hands focus over and back. */
+  /** Pushes/pops a dialog on the stack and hands focus over and back. */
   private setModalOpen(el: HTMLElement, open: boolean, close: () => void) {
+    const at = this.modalStack.findIndex((m) => m.el === el)
     if (open) {
-      this.modalReturnFocus = document.activeElement as HTMLElement | null
-      this.activeModal = { el, close }
+      if (at !== -1) return // already open — don't stack it on itself
+      this.modalStack.push({ el, close, returnFocus: document.activeElement as HTMLElement | null })
       el.querySelector<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')?.focus()
-    } else if (this.activeModal?.el === el) {
-      this.activeModal = null
-      // Back to the chip that opened it — losing focus to <body> strands a
-      // keyboard or switch-control user at the top of the document.
-      this.modalReturnFocus?.focus()
-      this.modalReturnFocus = null
+    } else if (at !== -1) {
+      const [closed] = this.modalStack.splice(at, 1)
+      // Back to whatever opened it — for a nested dialog that is a control
+      // inside its parent, so focus lands back in the dialog underneath.
+      // Losing focus to <body> strands a keyboard or switch-control user at
+      // the top of the document.
+      closed.returnFocus?.focus()
     }
   }
 
@@ -545,7 +551,7 @@ export class UI {
     el.className = 'overlay start-overlay'
     el.innerHTML = `
       <div class="overlay-card">
-        <h1>ジャパンループ <span>Japan Loop</span></h1>
+        <h1><span lang="ja">ジャパンループ</span> <span>Japan Loop</span></h1>
         <p class="tagline">Sé el maquinista. Una vuelta completa a un Japón en miniatura — templos, aldeas, neón y mar — de madrugada a madrugada.</p>
         <ul class="howto">
           <li><strong>Palanca:</strong> arrástrala arriba para acelerar (P1–P5), abajo para frenar (B1–B7/EB).</li>
@@ -591,8 +597,8 @@ export class UI {
         <div class="perf-block">
           <span class="perf-title">Megafonía</span>
           <div class="pa-lang-row">
-            <button data-pa="es">日本語 + Español</button>
-            <button data-pa="en">日本語 + English</button>
+            <button data-pa="es"><span lang="ja">日本語</span> + Español</button>
+            <button data-pa="en"><span lang="ja">日本語</span> + English</button>
           </div>
         </div>
         <div class="perf-block">
