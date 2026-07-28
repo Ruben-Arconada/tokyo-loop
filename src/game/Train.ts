@@ -116,7 +116,8 @@ export class Train {
   lastCloseInterrupted = false
   private track: Track
   private events: TrainEvents
-  private announcedArriving = false
+  /** True once the arrival announcement for the current target has fired. Read by the automated hitch probe, which waits for it before jumping on. */
+  announcedArriving = false
   private stoppedElapsed = 0
   private closeElapsed = 0
   private hurryUpFired = false

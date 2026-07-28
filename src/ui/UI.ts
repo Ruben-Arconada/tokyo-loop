@@ -32,6 +32,8 @@ export interface UICallbacks {
   onTeleport: (stationIndex: number) => void
   /** Frame-time recording: start/stop, hand over the log, throw it away. */
   onPerfToggle: () => void
+  /** The automated hitch probe: the game drives the whole diagnostic itself. */
+  onProbeStart: () => void
   onPerfExport: () => string
   onPerfClear: () => void
 }
@@ -462,6 +464,16 @@ export class UI {
   }
 
   /** Feedback after the jump lands. */
+  /** Opens the pause menu from code — where the automated probe leaves you, with the log ready to copy. */
+  openPauseMenu() {
+    if (!this.menuOpen) this.toggleMenu()
+  }
+
+  /** Progress line while the automated probe runs, so a two-minute test does not look like a hang. */
+  showProbeToast(text: string) {
+    this.flashToast(text, 'good')
+  }
+
   showTeleportToast(stationIndex: number) {
     this.flashToast(`Teletransportado — ${STATIONS[stationIndex].nameEn} a 300 m`, 'good')
   }
@@ -661,6 +673,7 @@ export class UI {
         <div class="perf-block">
           <span class="perf-title">Rendimiento</span>
           <button class="btn-perf">Medir rendimiento</button>
+          <button class="btn-probe">🧪 Prueba de tirones (auto, ~2 min)</button>
           <p class="perf-headline">Sin datos todavía.</p>
           <div class="perf-actions hidden">
             <button class="btn-perf-copy">Copiar log</button>
@@ -694,6 +707,12 @@ export class UI {
     this.perfHeadlineEl = el.querySelector('.perf-headline')!
     this.perfActionsEl = el.querySelector('.perf-actions')!
     this.perfMenuBtn.addEventListener('click', () => this.cb.onPerfToggle())
+    // Closes the menu FIRST: the probe must run with the loop going, and a
+    // pause mid-run renders frames that the log never sees.
+    el.querySelector('.btn-probe')!.addEventListener('click', () => {
+      this.toggleMenu()
+      this.cb.onProbeStart()
+    })
     // Clipboard writes must happen inside the gesture, so the export runs here
     // rather than being pushed in from the game loop.
     el.querySelector('.btn-perf-copy')!.addEventListener('click', () => this.copyPerfLog())

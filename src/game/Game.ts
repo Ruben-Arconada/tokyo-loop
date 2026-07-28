@@ -435,6 +435,7 @@ export class Game {
       },
       onTeleport: (idx) => this.teleportToStation(idx),
       onPerfToggle: () => this.togglePerfRecording(),
+      onProbeStart: () => this.startProbe(),
       onPerfExport: () => (this.perf.frames > 0 ? this.perf.export() : PerfLog.stored()),
       onPerfClear: () => {
         PerfLog.clearStored()
@@ -591,6 +592,11 @@ export class Game {
 
   /** Menu open/close: a real pause, not just a frozen simulation — the render loop itself stops. */
   private setPaused(p: boolean) {
+    // Pausing mid-probe invalidates the run: stopping the loop renders a frame
+    // nobody records, which warms resources outside the log — the exact thing
+    // the probe exists to prevent. Better to abandon it loudly than to hand
+    // back a lap that looks fine and is not.
+    if (p && this.probe) this.abortProbe()
     if (this.started) this.setRunning(!p)
     // The menu is where the recording is read, so refresh its numbers as it opens.
     if (p) this.pushPerfState()
@@ -1764,6 +1770,119 @@ export class Game {
     return !!props?.get(tex)?.__webglTexture
   })
 
+  // ————————————————————————————————————————————————————————————————
+  // The automated hitch probe.
+  //
+  // The manual protocol for chasing the per-station freezes has four
+  // conditions, and every one of them invalidates the run if it slips:
+  // alternate TWO stations (jumping to the same one twice never changes
+  // `targetStationIndex`, so the destination roll is never rebuilt and that
+  // hypothesis goes untested), stay in the CAB (the roll hangs off `cabRig`,
+  // which is hidden in the outside views, so it would be rebuilt and never
+  // uploaded), let each leg reach the arrival announcement (it fires at 260
+  // units and the jump lands at 300, so leaving early tests the visuals and
+  // never the audio), and never open Pause in between (`setRunning(false)`
+  // renders a frame that no one records, warming resources outside the log).
+  //
+  // Four conditions to hold in your head while driving a phone is how a lap
+  // gets thrown away. So the game drives instead.
+  // ————————————————————————————————————————————————————————————————
+
+  /** Kiyomizu and Fushimi Inari, alternating: two stations far enough apart to share nothing. */
+  private static readonly PROBE_STATIONS = [9, 18]
+  /** Four visits each — the first two arrive cold, the rest with everything already warm. */
+  private static readonly PROBE_LEGS = 8
+  /** After the announcement fires, keep going: the speech itself starts a couple of seconds later. */
+  private static readonly PROBE_LINGER_SECONDS = 5
+  /** A leg that never announces (something went wrong) must not hang the run. */
+  private static readonly PROBE_LEG_TIMEOUT = 40
+
+  /** Frames to draw in the cab BEFORE recording starts — see `arming` in startProbe. */
+  private static readonly PROBE_ARM_FRAMES = 3
+
+  private probe: { leg: number; linger: number; legTime: number; arming: number; cameraBefore: CameraMode } | null = null
+
+  /**
+   * Runs the whole diagnostic by itself: forces the cab view, starts the
+   * recording, alternates the two stations waiting for each arrival, then
+   * stops and opens the menu with the log ready to copy.
+   */
+  private startProbe() {
+    if (!this.started || this.probe) return
+    if (this.muted) {
+      this.ui.showHint('Quita el silencio primero', 'La prueba tiene que oír la megafonía: uno de los sospechosos es la ruta de audio, y con el sonido apagado ese caso no se prueba.')
+      return
+    }
+    if (this.perf.recording) this.togglePerfRecording()
+    const cameraBefore = this.cameraMode
+    this.setCameraMode('cab')
+    // Armed for a few frames before recording begins: coming from an outside
+    // view, the cab's own textures and shaders reach the GPU on its first
+    // draw, and starting the log before that would open the lap with a spike
+    // that belongs to the camera switch and not to any station.
+    this.probe = { leg: -1, linger: 0, legTime: 0, arming: Game.PROBE_ARM_FRAMES, cameraBefore }
+  }
+
+  private nextProbeLeg() {
+    const p = this.probe!
+    p.leg++
+    if (p.leg >= Game.PROBE_LEGS) {
+      this.finishProbe()
+      return
+    }
+    p.linger = Game.PROBE_LINGER_SECONDS
+    p.legTime = 0
+    this.teleportToStation(Game.PROBE_STATIONS[p.leg % Game.PROBE_STATIONS.length])
+    // Full power: the leg is 300 units and we want it driven, not crawled.
+    this.train.setNotch(MAX_NOTCH)
+    this.controls.syncNotch(MAX_NOTCH)
+    this.ui.showProbeToast(`Prueba de tirones — tramo ${p.leg + 1} de ${Game.PROBE_LEGS}`)
+  }
+
+  private updateProbe(dt: number) {
+    const p = this.probe!
+    if (p.arming > 0) {
+      p.arming--
+      if (p.arming === 0) {
+        this.togglePerfRecording()
+        this.nextProbeLeg()
+      }
+      return
+    }
+    p.legTime += dt
+    if (this.train.announcedArriving) {
+      p.linger -= dt
+      if (p.linger > 0) return
+    } else if (p.legTime < Game.PROBE_LEG_TIMEOUT) {
+      return
+    }
+    this.nextProbeLeg()
+  }
+
+  private finishProbe() {
+    this.endProbe()
+    // Straight to the menu, where the log is waiting behind «Copiar log».
+    this.ui.openPauseMenu()
+  }
+
+  /** Pausing mid-run makes the log unusable, so say so instead of leaving a half-run behind. */
+  private abortProbe() {
+    this.endProbe()
+    this.ui.showHint(
+      'Prueba cancelada',
+      'Se ha pausado a mitad, y eso deja recursos cargados fuera del registro: el log ya no diría la verdad. Vuelve a lanzarla y déjala terminar sola (unos 2 minutos).',
+    )
+  }
+
+  private endProbe() {
+    const p = this.probe!
+    this.probe = null
+    this.train.setNotch(0)
+    this.controls.syncNotch(0)
+    if (this.perf.recording) this.togglePerfRecording()
+    this.setCameraMode(p.cameraBefore)
+  }
+
   private onResize() {
     // The VISUAL viewport when the platform reports one: on iOS the layout
     // viewport can disagree with what is actually visible (collapsing
@@ -1836,6 +1955,7 @@ export class Game {
    * re-run per physics step.
    */
   private step(dt: number) {
+    if (this.probe) this.updateProbe(dt)
     // H3: the front director only runs while the sky is on AUTO and the
     // world is actually moving (a paused menu shouldn't ambush anyone).
     if (this.started && this.weatherAuto) {

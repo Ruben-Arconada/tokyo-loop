@@ -310,6 +310,30 @@ shader» de «subió una textura». Medido en escritorio, al entrar en una estac
 nueva pasan LAS DOS cosas (Kiyomizu: +25 programas y +9 texturas), así que en
 el móvil hará falta el dato real para decidir.
 
+### 🧪 Prueba de tirones automática (menú de pausa)
+
+El diagnóstico de las congelaciones por estación se lanza solo. Botón
+**«Prueba de tirones (auto, ~2 min)»** → conduce él, y al terminar abre el menú
+con el log listo para copiar. Hace falta porque el protocolo manual tiene
+CUATRO condiciones y cualquiera invalida la tanda:
+
+1. **Alternar DOS estaciones** (Kiyomizu ↔ Fushimi Inari). Saltar dos veces a
+   la misma no cambia `targetStationIndex`, así que `updateLever` no recrea la
+   tablilla de destino y esa hipótesis queda sin probar.
+2. **Vista de CABINA**. La tablilla cuelga de `cabRig`, oculto en exterior y
+   andén: se recrearía sin llegar nunca a subirse a la GPU.
+3. **Llegar al anuncio**. `ARRIVING_ANNOUNCE_DISTANCE` es 260 y el salto
+   aterriza a 300: saltando en el acto se prueban los recursos visuales y
+   nunca la ruta de audio.
+4. **No pausar en medio**. `setRunning(false)` dibuja un fotograma que nadie
+   registra y calienta recursos fuera del log — si se pausa, la prueba **se
+   cancela sola** y lo dice, en vez de devolver una tanda que parece buena.
+
+Se niega a empezar con el sonido silenciado (uno de los sospechosos es el
+audio) y arranca la grabación unos fotogramas DESPUÉS de fijar la cabina, para
+que la primera subida de la propia cabina caiga en la línea base y no en el
+primer tirón.
+
 **Ojo en dev**: `version`/`commit` se inyectan con `define` de Vite, que se
 evalúa al ARRANCAR el servidor — en `npm run dev` el commit se queda congelado
 en el que hubiera entonces. En un build de producción es siempre el del build.

@@ -1040,6 +1040,22 @@ canvas.game-canvas {
   cursor: pointer;
 }
 .btn-perf.recording { background: rgba(255, 92, 92, 0.22); border-color: rgba(255, 92, 92, 0.7); }
+/* Same shape as the manual button, one step quieter: it is the recommended
+   route, but it takes two minutes and drives the train, so it should not read
+   as the casual option. Keeps the 44px touch target. */
+.btn-probe {
+  width: 100%;
+  margin-top: var(--space-2);
+  padding: var(--space-3);
+  min-height: 44px;
+  border-radius: var(--radius-md);
+  background: rgba(122, 200, 255, 0.14);
+  border: 1px solid rgba(122, 200, 255, 0.45);
+  color: var(--text-primary);
+  font: inherit;
+  font-size: var(--text-body);
+  cursor: pointer;
+}
 .perf-headline {
   margin: var(--space-2) 0 0;
   font-size: var(--text-label);
