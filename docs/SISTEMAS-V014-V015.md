@@ -339,13 +339,18 @@ adivinar: un tirón con nombre es un bug, y sin nombre es una corazonada.
 pasaba nada» y «lo que fuera pasó hace más de 2 s») y 16 de los 22 tirones
 grandes de la primera vuelta real volvían vacíos.
 
-**`programasNuevos` es la columna que decide** entre las dos hipótesis del
-tirón por estación. three enlaza un programa de shader la PRIMERA vez que se
-dibuja un material, y en iOS ese enlazado bloquea el hilo principal cientos de
-milisegundos. Si un frame de 320 ms enlazó programas, el parón es compilación;
-si no enlazó ninguno, la compilación queda descartada. Lo mismo cuentan
-`programs0/programsEnd` y `textures0/texturesEnd` para toda la vuelta: una
-vuelta que no compila nada no puede estar parándose a compilar.
+**`programasNuevos` acota, no sentencia.** three enlaza un programa de shader
+la PRIMERA vez que se dibuja un material, y en iOS ese enlazado bloquea el hilo
+principal cientos de milisegundos: un frame de 320 ms que enlazó programas es
+evidencia fuerte de compilación. **Al revés NO vale.** Un 0 no la descarta,
+porque el driver puede diferir el trabajo al siguiente dibujado o al swap y el
+coste caer en un frame que no enlazó nada — es la misma asincronía que impide
+leer `renderMs` como tiempo de GPU, y por coherencia hay que aplicarla también
+aquí.
+
+Lo único concluyente es la escala de VUELTA: si `programs0 == programsEnd` no
+se enlazó un solo programa en toda la grabación, y entonces la compilación no
+explica nada de lo que pasó dentro. Igual con `texUploads0/texUploadsEnd`.
 
 **`shadows` es el AJUSTE, `shadowFrames` es la realidad.** Bajo cielo cerrado
 el sol deja de proyectar (`DayNightCycle`), así que una vuelta con lluvia
