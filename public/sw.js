@@ -2,7 +2,14 @@
 // Strategy: network-first for navigations (so deploys land immediately),
 // stale-while-revalidate for same-origin assets (hashed by Vite, so a cached
 // asset is always the right version for the page that requested it).
-const CACHE = 'tokyo-loop-v4'
+// CacheStorage is scoped to the ORIGIN, not to the path — and every one of
+// our projects deploys under ruben-arconada.github.io, so Japan Loop,
+// Abismo and Abismo 2 all share one cache namespace. The name therefore
+// carries a project prefix, and the eviction in activate() must only ever
+// touch keys wearing it. (See CLAUDE.md: this file used to delete every
+// key that wasn't its own, i.e. the neighbours' offline caches.)
+const CACHE_PREFIX = 'tokyo-loop-'
+const CACHE = CACHE_PREFIX + 'v5'
 
 // Precached at install time so the app is truly offline-capable right after
 // the FIRST visit — previously install() only called skipWaiting() and left
@@ -41,7 +48,9 @@ self.addEventListener('activate', (event) => {
   event.waitUntil(
     caches
       .keys()
-      .then((keys) => Promise.all(keys.filter((k) => k !== CACHE).map((k) => caches.delete(k))))
+      // ONLY our own superseded versions: `k !== CACHE` swept away every
+      // sibling project's cache on this shared origin.
+      .then((keys) => Promise.all(keys.filter((k) => k.startsWith(CACHE_PREFIX) && k !== CACHE).map((k) => caches.delete(k))))
       .then(() => self.clients.claim()),
   )
 })
