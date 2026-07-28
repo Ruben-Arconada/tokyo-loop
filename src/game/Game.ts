@@ -554,6 +554,13 @@ export class Game {
         // are the only way left to test the audio path now that the stall is
         // known to be outside every synchronous phase we measure.
         muted: this.muted,
+        // Seconds since this Game was built. Cold versus warm decided a whole
+        // A/B once: a muted run taken minutes into a session had everything
+        // already uploaded, so "the stalls went away" was equally consistent
+        // with the audio being the cause and with there being nothing left to
+        // load. Inferring it from ctx.hour and texUploads0 worked, but a run
+        // should state its own starting conditions.
+        uptime: Math.round((performance.now() - this.bornAt) / 1000),
         // Whether real GPU timing is even available on this device. `renderMs`
         // is CPU-blocked time, so it cannot tell deferred driver work from no
         // work at all; this says whether the honest measurement is on the
@@ -1972,6 +1979,9 @@ export class Game {
     this.lastTickEnd = performance.now()
     this.lastTickCpuMs = this.lastTickEnd - tickStart
   }
+
+  /** When this Game was constructed — the log reports uptime so cold and warm runs are told apart by measurement, not by inference. */
+  private readonly bornAt = performance.now()
 
   /** End of the previous animation callback, and how long that whole callback took. */
   private lastTickEnd = 0
