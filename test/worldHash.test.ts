@@ -190,6 +190,22 @@ test('el hash estructural SÍ cambia con la partición — es su trabajo', () =>
   )
 })
 
+test('las polilíneas cuentan — los cables llevaban etiqueta y no entraban en el hash', () => {
+  const line = (shift: number) => {
+    const geo = new THREE.BufferGeometry()
+    geo.setAttribute('position', new THREE.Float32BufferAttribute([0, 0, 0, 10 + shift, 4, 2, 20, 4, 2], 3))
+    return tagGroup(new THREE.LineSegments(geo, new THREE.LineBasicMaterial()), 'wires')
+  }
+
+  const base = semanticFingerprint(sceneOf(line(0)))
+  // The bug this pins: `isMesh || isPoints` skipped LineSegments entirely, so
+  // a tagged group could report nothing and still look accounted for.
+  assert.ok(base.groups.wires, 'la polilínea etiquetada tiene que producir un grupo')
+  assert.equal(base.counts.wires, 1)
+  assert.notEqual(semanticFingerprint(sceneOf(line(1))).groups.wires, base.groups.wires)
+  assert.ok(worldFingerprint(sceneOf(line(0))).total !== worldFingerprint(new THREE.Scene()).total)
+})
+
 test('un hash sin escenario canónico se marca como no canónico', () => {
   const off: WorldScenario = { ...CANONICAL_SCENARIO, season: 'winter' }
 

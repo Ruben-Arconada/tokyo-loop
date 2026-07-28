@@ -231,12 +231,18 @@ export class DayNightCycle {
       new THREE.SpriteMaterial({ map: makeSunTexture(), color: 0xffffff, transparent: true, depthWrite: false, fog: false }),
     )
     this.sunSprite.scale.setScalar(260)
+    // Sun and moon are repositioned every frame from the clock, so they are
+    // not world layout. The fingerprint's traversal skips Sprites anyway;
+    // marking them says so ON PURPOSE, instead of leaving them excluded by
+    // an accident of which classes the walk happens to recognise.
+    this.sunSprite.userData.dynamic = true
     scene.add(this.sunSprite)
 
     this.moonSprite = new THREE.Sprite(
       new THREE.SpriteMaterial({ map: makeMoonTexture(), color: 0xffffff, transparent: true, opacity: 0.9, depthWrite: false, fog: false }),
     )
     this.moonSprite.scale.setScalar(110)
+    this.moonSprite.userData.dynamic = true
     scene.add(this.moonSprite)
 
     // Two layers: a dense field of fine stars plus a sparse handful of

@@ -141,25 +141,40 @@ mundo estático, ~110 grupos sin etiquetar) están **cerrados**. El contrato hoy
 Al sectorizar: **el semántico DEBE seguir igual, el estructural cambiará** y
 eso es correcto — re-captura el estructural cuando el refactor esté cerrado.
 
-Dos avisos que siguen vivos:
+### ⚠️ Alcance EXACTO de la garantía (no es «todo el mundo»)
 
-- **La rama de `Points` digiere el buffer entero como UN registro**: si algún
-  día se sectorizan estrellas o pétalos, deja de ser independiente de la
-  partición. Hay que aplanarla como las instancias.
-- **Una referencia escrita a mano se pudre.** El número viejo `e7cdb9f8` se
-  anotó como «el semántico de la semilla por defecto» y al re-medirlo en el
-  mismo commit con almacenamiento limpio daba `851a0eed`; nunca se supo por
-  qué. Por eso la tabla vive en el repo y la compara `__checkWorld()`, no el
-  ojo.
+Lo que se puede afirmar: **los pools INSTANCIADOS se pueden repartir entre
+sectores libremente y el hash semántico aguanta**. Lo que NO:
+
+- **Solo se recorren `Mesh`, `Points` y `Line`.** `Sprite` queda fuera (sol y
+  luna, que van marcados `dynamic` a propósito para que la exclusión esté
+  declarada y no sea un accidente). Cualquier tipo dibujable nuevo es
+  invisible al hash hasta que el recorrido lo aprenda. Esto ya mordió: los
+  cables del tendido llevaban `tagGroup` y **no entraban en el hash**, así que
+  parecían cubiertos sin serlo.
+- **`Points` y `Line` se digieren como UN registro con el búfer entero**, al
+  revés que las instancias, que se aplanan una a una. Vale mientras cada uno
+  sea un objeto único; deja de valer el día que se sectorizen estrellas,
+  pétalos o la catenaria. Aplanarlos antes de tocarlos.
+
+**Una referencia escrita a mano se pudre.** El número viejo `e7cdb9f8` se
+anotó como «el semántico de la semilla por defecto» y al re-medirlo en el
+mismo commit con almacenamiento limpio daba `851a0eed`; nunca se supo por qué.
+Por eso la tabla vive en el repo y la compara `__checkWorld()`, no el ojo.
 
 ## Publicar
 
 Ritual completo en la memoria del proyecto. Resumen: `npm test` +
-`npx tsc --noEmit` + `npm run build`, y bump de versión solo en
-`package.json` (nada más la lleva; lo decide Rubén). **Nada de tocar cachés a
-mano**: el `sw.js` y su generación se generan solos en cada build, ver la
-sección de arriba. Push a `main` dispara `.github/workflows/deploy.yml` →
-Pages. Verificar con `gh run list --repo Ruben-Arconada/tokyo-loop --limit 1`.
+`npx tsc --noEmit` + `npm run build`. **Nada de tocar cachés a mano**: el
+`sw.js` y su generación se generan solos en cada build, ver la sección de
+arriba. Push a `main` dispara `.github/workflows/deploy.yml` → Pages, que
+ejecuta `npm test` ANTES del build. Verificar con
+`gh run list --repo Ruben-Arconada/tokyo-loop --limit 1`.
+
+**La versión la decide Rubén y vive en DOS sitios**: `package.json` y
+`package-lock.json` (que la repite dos veces, en la raíz y en el paquete
+`""`). Bumpear a mano solo el primero los deja descuadrados — se arregla con
+`npm install --package-lock-only`.
 
 **Numeración (decisión de Rubén, 2026-07-28)**: la etiqueta de sus chats y la
 versión del código son **la misma** desde la 0.1.8 — antes iban por separado

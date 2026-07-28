@@ -24,6 +24,11 @@ jobs:
           node-version: 22
           cache: npm
       - run: npm ci
+      # Before the build, not after: the partition contract is what lets the
+      # ring be sectorised without silently moving the world, and a deploy
+      # that goes green while those properties are broken would be exactly
+      # the false assurance the hashes exist to prevent.
+      - run: npm test
       - run: npm run build
       - uses: actions/upload-pages-artifact@v3
         with:

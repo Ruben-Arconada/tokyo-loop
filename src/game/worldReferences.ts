@@ -34,13 +34,37 @@ export interface SeasonReference {
  * Captured 2026-07-28 on the canonical scenario (default seed, clear, auto
  * fronts off) with only the season varied — every entry taken from one clean
  * `?canon` load, which is also what `__checkWorld()` does.
+ *
+ * Re-captured the same day when polylines joined the walk: the utility wires
+ * and the bridge cables are `LineSegments`, which the traversal used to skip,
+ * so the first table described the world minus its wires.
  */
 export const WORLD_REFERENCES: Record<Season, SeasonReference> = {
-  spring: { semantic: 'e780b8bf', structural: '7a4c4cc7' },
-  summer: { semantic: '0f26584e', structural: '3f3d95ce' },
-  autumn: { semantic: '1f5dabb7', structural: '17ea9252' },
-  winter: { semantic: '3c23d813', structural: 'c6220415' },
+  spring: { semantic: '494d8caa', structural: 'dfce1556' },
+  summer: { semantic: '5cd79b31', structural: '087e9d3f' },
+  autumn: { semantic: 'fe5b2886', structural: 'ddeaf5c7' },
+  winter: { semantic: '312b1646', structural: '1346d80c' },
 }
+
+// ————————————————————————————————————————————————————————————————
+// WHAT THESE HASHES DO NOT COVER — read before quoting them as "same world".
+//
+// 1. Only `Mesh`, `Points` and `Line` are walked. `Sprite` is not: the sun and
+//    the moon are the only ones, they are repositioned every frame from the
+//    clock, and they carry `userData.dynamic` to say so deliberately rather
+//    than by omission. Anything else drawable that gets added later is
+//    invisible here until this walk learns about it.
+// 2. A `Points` or `Line` mesh is digested as ONE record holding its whole
+//    buffer, unlike instances which are flattened individually. That is fine
+//    while each of them is a single object — and it stops being fine the day
+//    stars, petals or the catenary get split across sectors, because the
+//    partition would then change the record. Flatten them like the instances
+//    before sectorising any of those.
+//
+// So the guarantee the ring sectorisation may lean on is precise: INSTANCED
+// POOLS can be repartitioned freely and the semantic hash will hold. It is not
+// a blanket "the whole world is verified".
+// ————————————————————————————————————————————————————————————————
 
 export const CAPTURE_RECIPE =
   'Carga limpia con ?canon en dev y ejecuta __checkWorld() en la consola. ' +

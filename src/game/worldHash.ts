@@ -165,8 +165,13 @@ export function worldFingerprint(scene: THREE.Scene, scenario: WorldScenario | n
   let index = 0
 
   scene.traverse((obj) => {
-    const mesh = obj as THREE.Mesh & { isInstancedMesh?: boolean; isPoints?: boolean; count?: number; instanceMatrix?: THREE.BufferAttribute; instanceColor?: THREE.BufferAttribute | null }
-    const isDrawable = (mesh as unknown as { isMesh?: boolean }).isMesh || mesh.isPoints
+    const mesh = obj as THREE.Mesh & { isInstancedMesh?: boolean; isPoints?: boolean; isLine?: boolean; count?: number; instanceMatrix?: THREE.BufferAttribute; instanceColor?: THREE.BufferAttribute | null }
+    // Lines count too. They were missing, and the omission was invisible in
+    // the worst way: the utility wires carry a `tagGroup` name, so they LOOKED
+    // covered while contributing nothing at all. Anything drawable that holds
+    // generated placement has to be in here or "same world" is a claim about
+    // a subset nobody wrote down.
+    const isDrawable = (mesh as unknown as { isMesh?: boolean }).isMesh || mesh.isPoints || mesh.isLine
     if (!isDrawable || !mesh.geometry) return
 
     const d = new Digest()
@@ -183,13 +188,16 @@ export function worldFingerprint(scene: THREE.Scene, scenario: WorldScenario | n
       d.pushText('seedTable')
       for (let i = 0; i < seeds.length; i++) d.push(seeds[i])
       bucket[`${String(index).padStart(2, '0')}.seeded.${seeds.length}`] = d.hex
-    } else if (mesh.isPoints) {
-      // A static point cloud — the star field. Its positions ARE the data.
+    } else if (mesh.isPoints || mesh.isLine) {
+      // A static point cloud (the star field) or a generated polyline (the
+      // catenary wires, the bridge cables): the vertex positions ARE the
+      // generated data — these are built in world space, so their transform
+      // is an identity that would say nothing.
       const pos = mesh.geometry.getAttribute('position') as THREE.BufferAttribute
       const arr = pos.array as Float32Array
       d.push(arr.length)
       for (let i = 0; i < arr.length; i++) d.push(arr[i])
-      bucket[`${String(index).padStart(2, '0')}.points.${pos.count}`] = d.hex
+      bucket[`${String(index).padStart(2, '0')}.${mesh.isLine ? 'line' : 'points'}.${pos.count}`] = d.hex
     } else if (mesh.isInstancedMesh && mesh.instanceMatrix) {
       const count = mesh.count ?? 0
       d.push(count)
@@ -304,11 +312,12 @@ export function semanticFingerprint(scene: THREE.Scene, scenario: WorldScenario 
     const mesh = obj as THREE.Mesh & {
       isInstancedMesh?: boolean
       isPoints?: boolean
+      isLine?: boolean
       count?: number
       instanceMatrix?: THREE.BufferAttribute
       instanceColor?: THREE.BufferAttribute | null
     }
-    const drawable = (mesh as unknown as { isMesh?: boolean }).isMesh || mesh.isPoints
+    const drawable = (mesh as unknown as { isMesh?: boolean }).isMesh || mesh.isPoints || mesh.isLine
     if (!drawable || !mesh.geometry || isDynamic(mesh)) return
 
     const group = (findGroupName(mesh) ?? fallbackGroup(mesh.geometry)) as string
@@ -341,9 +350,9 @@ export function semanticFingerprint(scene: THREE.Scene, scenario: WorldScenario 
     } else if (mesh.userData?.seedTable) {
       const seeds = mesh.userData.seedTable as Float32Array
       push(group, Array.from(seeds), kind + '{seedTable}')
-    } else if (mesh.isPoints) {
+    } else if (mesh.isPoints || mesh.isLine) {
       const pos = mesh.geometry.getAttribute('position') as THREE.BufferAttribute
-      push(group, Array.from(pos.array as Float32Array), kind + '{points}')
+      push(group, Array.from(pos.array as Float32Array), kind + (mesh.isLine ? '{line}' : '{points}'))
     } else {
       mesh.updateWorldMatrix(false, false)
       push(group, Array.from(mesh.matrixWorld.elements), kind)
