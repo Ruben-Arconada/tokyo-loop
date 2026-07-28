@@ -28,7 +28,11 @@ export const DEFAULT_WORLD_SEED = 'japan-loop-0.5-world-1'
  * same world, which is what makes two perf laps comparable.
  */
 export const WORLD_SEED: string = (() => {
-  const fromUrl = new URLSearchParams(window.location.search).get('seed')
+  // Guarded so this module can also be imported outside a browser: the
+  // partition checks in test/ are a real test runner now, not a console
+  // ritual, and a module that dereferences `window` at import time cannot be
+  // tested at all.
+  const fromUrl = typeof window === 'undefined' ? null : new URLSearchParams(window.location.search).get('seed')
   return fromUrl && fromUrl.trim() ? fromUrl.trim() : DEFAULT_WORLD_SEED
 })()
 
@@ -73,7 +77,9 @@ export function worldStream(name: WorldStream): () => number {
   // numbers march in lockstep. It happened twice before this guard existed
   // ('city' between Scenery and City; 'sky' and 'canopy' between Scenery and
   // its neighbours), so the mistake is now loud instead of invisible.
-  if (import.meta.env.DEV) {
+  // `?.` because `import.meta.env` is a Vite injection: under the plain node
+  // runner it does not exist, and a bare `.DEV` would throw on import.
+  if (import.meta.env?.DEV) {
     if (claimedStreams.has(name)) {
       console.error(
         `[Rng] El flujo '${name}' ya estaba pedido por otro módulo. Dos consumidores del mismo nombre sortean LOS MISMOS números: dale un nombre propio en WorldStream.`,

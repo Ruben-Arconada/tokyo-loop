@@ -1,6 +1,7 @@
 import * as THREE from 'three'
 import { makeSunTexture, makeMoonTexture } from './signage'
 import { worldStream } from './Rng'
+import { tagGroup } from './worldHash'
 
 // The star field is world layout, so it comes from the seed. The lightning
 // timers further down deliberately do NOT: a storm should surprise you.
@@ -269,7 +270,10 @@ export class DayNightCycle {
     this.starsMaterial = this.stars.material as THREE.PointsMaterial
     this.starsBright = makeStarLayer(420, 2.4)
     this.starsBrightMaterial = this.starsBright.material as THREE.PointsMaterial
-    scene.add(this.stars, this.starsBright)
+    // Named apart: both layers are plain BufferGeometry point clouds, so the
+    // geometry-derived fallback would fold the two into one bucket and hide
+    // which of them moved.
+    scene.add(tagGroup(this.stars, 'stars-faint'), tagGroup(this.starsBright, 'stars-bright'))
 
     scene.fog = new THREE.Fog(0xcfe8ff, 200, 1500)
   }

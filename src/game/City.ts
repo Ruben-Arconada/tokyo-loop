@@ -5,6 +5,7 @@ import { STATIONS, prevStationIndex, nextStationIndex, type ZoneTier } from '../
 import { worldStream } from './Rng'
 import { makeStationSignTexture, makePlatformTileTexture, makeTactilePavingTexture, makeWindowGridTexture, applyProgressiveWindows, LOOP_LINE_COLOR } from './signage'
 import { registerPool, applySeasonToPool, type Season, type SeasonalPool } from './Seasons'
+import { tagGroup } from './worldHash'
 
 const THEME_GROUPS = ['business', 'downtown', 'shitamachi', 'green', 'youth', 'bay'] as const
 
@@ -140,7 +141,9 @@ export class City {
       instanced.castShadow = true
       instanced.receiveShadow = true
       instanced.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(perTheme * 3), 3)
-      this.scene.add(instanced)
+      // Per THEME: the themes share a box geometry and differ by texture, so
+      // one blanket name would let a building drift between themes unseen.
+      this.scene.add(tagGroup(instanced, `city-buildings-${theme}`))
       this.themeGroups.set(theme, { instanced, material })
     }
 
@@ -356,10 +359,34 @@ export class City {
     const hangSignMat = new THREE.MeshStandardMaterial({ map: hangSignTex, emissive: 0xffffff, emissiveMap: hangSignTex, emissiveIntensity: 0.08, roughness: 0.7 })
     const hangSigns = new THREE.InstancedMesh(new THREE.PlaneGeometry(1.5, 0.55), hangSignMat, N * 4)
 
-    const instancedPools: THREE.InstancedMesh[] = [
-      platformSlab, safetyStrip, tactileStrip, roof, fascia, columns, columnBands, struts,
-      lampBody, lampHousing, signFrame, signRods, bench, vending, clockPole, clockFace, mapBoard,
-      ridges, lanternPosts, lanterns, windbreaks, ledStrips, beams, hangSigns,
+    // Each pool carries the name its instances answer to in the semantic
+    // fingerprint. Sector pools split off these keep the SAME name — that is
+    // what lets the ring be partitioned without the world's hash moving.
+    const instancedPools: [THREE.InstancedMesh, string][] = [
+      [platformSlab, 'platform-slab'],
+      [safetyStrip, 'platform-safety-strip'],
+      [tactileStrip, 'platform-tactile-strip'],
+      [roof, 'platform-roof'],
+      [fascia, 'platform-fascia'],
+      [columns, 'platform-columns'],
+      [columnBands, 'platform-column-bands'],
+      [struts, 'platform-struts'],
+      [lampBody, 'platform-lamp-bodies'],
+      [lampHousing, 'platform-lamp-housings'],
+      [signFrame, 'platform-sign-frames'],
+      [signRods, 'platform-sign-rods'],
+      [bench, 'platform-benches'],
+      [vending, 'platform-vending'],
+      [clockPole, 'platform-clock-poles'],
+      [clockFace, 'platform-clock-faces'],
+      [mapBoard, 'platform-map-boards'],
+      [ridges, 'platform-ridges'],
+      [lanternPosts, 'platform-lantern-posts'],
+      [lanterns, 'platform-lanterns'],
+      [windbreaks, 'platform-windbreaks'],
+      [ledStrips, 'platform-led-strips'],
+      [beams, 'platform-beams'],
+      [hangSigns, 'platform-hanging-signs'],
     ]
     let rusticIdx = 0
     let modernIdx = 0
@@ -402,7 +429,11 @@ export class City {
       group.position.copy(point)
       group.lookAt(point.clone().add(tangent))
       group.updateMatrixWorld(true)
-      this.scene.add(group)
+      // Everything hung off this anchor — the station name boards and the
+      // landmark props (torii, towers, the Dōtonbori screen) — inherits the
+      // name, which is what "one group per system" means here: they are all
+      // the per-station dressing, and a sector split moves them wholesale.
+      this.scene.add(tagGroup(group, 'station-landmarks'))
 
       // The group's local +X axis points to the driver's LEFT (lookAt builds
       // X = up × forward), so 'left' means +X here. Getting this sign wrong
@@ -500,10 +531,10 @@ export class City {
       this.addLandmarkProps(station.id, group, station.theme.accentColor)
     }
 
-    for (const mesh of instancedPools) {
+    for (const [mesh, group] of instancedPools) {
       mesh.instanceMatrix.needsUpdate = true
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
-      this.scene.add(mesh)
+      this.scene.add(tagGroup(mesh, group))
     }
     this.lampMaterials.push(lampMat)
     this.canopyPools.push(registerPool('roof', roof.instanceColor!))

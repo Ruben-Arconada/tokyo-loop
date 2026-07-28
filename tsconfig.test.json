@@ -1,0 +1,17 @@
+{
+  /*
+   * Typechecks the tests. It needs BOTH type sets — node's, for the test
+   * runner, and vite/client's, because the modules under test are game code
+   * that reads `import.meta.env`.
+   *
+   * The base tsconfig stays the authority for src/: `npm run build` runs plain
+   * `tsc`, which has no node types, so a stray `process` in browser code still
+   * fails the build. This config only widens what the TEST tree is allowed to
+   * see.
+   */
+  "extends": "./tsconfig.json",
+  "compilerOptions": {
+    "types": ["node", "vite/client"]
+  },
+  "include": ["test", "src"]
+}

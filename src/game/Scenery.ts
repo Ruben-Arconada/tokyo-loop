@@ -221,7 +221,7 @@ export class Scenery {
     cableGeo.setAttribute('position', new THREE.Float32BufferAttribute(cablePts, 3))
     const cables = new THREE.LineSegments(cableGeo, new THREE.LineBasicMaterial({ color: 0xcdd6e0, fog: false }))
     g.add(cables)
-    this.scene.add(g)
+    this.scene.add(tagGroup(g, 'rainbow-bridge'))
   }
 
   /**
@@ -260,7 +260,7 @@ export class Scenery {
     // nothing about determinism — hand the fingerprint the seed table that
     // the animation reads from instead (see worldHash.ts).
     this.petalsMesh.userData.seedTable = this.petalSeeds
-    this.scene.add(this.petalsMesh)
+    this.scene.add(tagGroup(this.petalsMesh, 'petal-drift'))
   }
 
   /**
@@ -331,7 +331,7 @@ export class Scenery {
     }
     ring.instanceMatrix.needsUpdate = true
     if (ring.instanceColor) ring.instanceColor.needsUpdate = true
-    this.scene.add(ring)
+    this.scene.add(tagGroup(ring, 'skyline-towers'))
   }
 
   /**
@@ -384,7 +384,7 @@ export class Scenery {
     peaks.count = pi
     peaks.instanceMatrix.needsUpdate = true
     if (peaks.instanceColor) peaks.instanceColor.needsUpdate = true
-    this.scene.add(peaks)
+    this.scene.add(tagGroup(peaks, 'horizon-peaks'))
     // The horizon votes with the season too: ochre koyo ridges in autumn,
     // deep summer green, snowed-in winter (the panel caught spring peaks
     // photobombing the autumn postcard).
@@ -445,7 +445,7 @@ export class Scenery {
     const fuji = new THREE.Mesh(new THREE.LatheGeometry(bodyPts, 48), this.fujiBodyMat)
     const fujiPos = new THREE.Vector3(-3650, -60, 2600) // base sunk under the plain
     fuji.position.copy(fujiPos)
-    this.scene.add(fuji)
+    this.scene.add(tagGroup(fuji, 'fuji-body'))
     // Snow cap: same profile pushed 4% proud (coplanar cones shimmered), and
     // with a JAGGED lower edge — vertices near the snowline wobble with the
     // angle so it reads as fingers of snow, not a clean ring. Built twice:
@@ -471,7 +471,7 @@ export class Scenery {
       snowGeo.computeVertexNormals()
       const snow = new THREE.Mesh(snowGeo, this.fujiSnowMat)
       snow.position.copy(fujiPos)
-      this.scene.add(snow)
+      this.scene.add(tagGroup(snow, 'fuji-snow'))
       return snow
     }
     this.fujiSnowRegular = makeSnowCap(0.55)
@@ -505,7 +505,7 @@ export class Scenery {
     const spire = new THREE.Mesh(new THREE.CylinderGeometry(1.2, 6, 90, 6), this.towerGlowMat)
     spire.position.y = 285
     tower.add(spire)
-    this.scene.add(tower)
+    this.scene.add(tagGroup(tower, 'kobe-tower'))
 
     // ——— A Skytree-like broadcast spire beyond the northeast rim: slender lattice, cool white at night.
     this.skytreeMat = new THREE.MeshStandardMaterial({ color: 0xb8c4cc, roughness: 0.45, metalness: 0.3, fog: false })
@@ -530,7 +530,7 @@ export class Scenery {
     const stSpire = new THREE.Mesh(new THREE.CylinderGeometry(0.8, 3, 90, 6), this.skytreeGlowMat)
     stSpire.position.y = 415
     skytree.add(stSpire)
-    this.scene.add(skytree)
+    this.scene.add(tagGroup(skytree, 'kanazawa-spire'))
   }
 
   private buildVegetation() {
@@ -1171,11 +1171,27 @@ export class Scenery {
     awnings.count = iAwning
     paths.count = iPath
     tufts.count = houseIdx * TUFTS_PER_HOUSE
-    const pools = [walls, gables, hips, ridgeCaps, doors, fences, gatePosts, decks, deckPosts, awnings, paths, tufts]
-    for (const mesh of pools) {
+    // Named one by one rather than as a bare list: these twelve are the pools
+    // the ring sectorisation will split, and the name is the contract that
+    // keeps the semantic hash steady across the split.
+    const pools: [THREE.InstancedMesh, string][] = [
+      [walls, 'house-walls'],
+      [gables, 'house-gables'],
+      [hips, 'house-hips'],
+      [ridgeCaps, 'house-ridge-caps'],
+      [doors, 'house-doors'],
+      [fences, 'house-fences'],
+      [gatePosts, 'house-gate-posts'],
+      [decks, 'house-decks'],
+      [deckPosts, 'house-deck-posts'],
+      [awnings, 'house-awnings'],
+      [paths, 'house-paths'],
+      [tufts, 'house-tufts'],
+    ]
+    for (const [mesh, group] of pools) {
       mesh.instanceMatrix.needsUpdate = true
       if (mesh.instanceColor) mesh.instanceColor.needsUpdate = true
-      this.scene.add(mesh)
+      this.scene.add(tagGroup(mesh, group))
     }
     // Winter snow-caps every roof surface; the foundation tufts dry with the fields.
     this.seasonalPools.push(registerPool('roof', gables.instanceColor!))
@@ -1232,7 +1248,7 @@ export class Scenery {
     }
     poles.instanceMatrix.needsUpdate = true
     arms.instanceMatrix.needsUpdate = true
-    this.scene.add(poles, arms)
+    this.scene.add(tagGroup(poles, 'utility-poles'), tagGroup(arms, 'utility-arms'))
 
     // Sagging wires: 4 spans-per-pair polyline points, two parallel wires.
     const wirePts: number[] = []
@@ -1257,7 +1273,7 @@ export class Scenery {
     const wireGeo = new THREE.BufferGeometry()
     wireGeo.setAttribute('position', new THREE.Float32BufferAttribute(wirePts, 3))
     const wires = new THREE.LineSegments(wireGeo, new THREE.LineBasicMaterial({ color: 0x14161a }))
-    this.scene.add(wires)
+    this.scene.add(tagGroup(wires, 'utility-wires'))
   }
 
   /**
@@ -1324,7 +1340,10 @@ export class Scenery {
     meshes.forEach((mesh, i) => {
       mesh.count = counters[i]
       mesh.instanceMatrix.needsUpdate = true
-      this.scene.add(mesh)
+      // One group per DESIGN, not one for all the neon: the designs share a
+      // geometry and differ only by texture, so a single name would let an
+      // instance move between designs without the hash noticing.
+      this.scene.add(tagGroup(mesh, `neon-signs-${i}`))
     })
   }
 
@@ -1437,7 +1456,7 @@ export class Scenery {
       polygonOffsetUnits: -2,
     }))
     road.receiveShadow = true
-    this.scene.add(road)
+    this.scene.add(tagGroup(road, 'mountain-road'))
 
     // ——— The little mountain range the road runs off to: a handful of low-poly
     // cones past the plain, hazed by distance fog like the rest of the world.
@@ -1473,7 +1492,7 @@ export class Scenery {
     })
     mountains.instanceMatrix.needsUpdate = true
     if (mountains.instanceColor) mountains.instanceColor.needsUpdate = true
-    this.scene.add(mountains)
+    this.scene.add(tagGroup(mountains, 'road-mountains'))
     this.seasonalPools.push(registerPool('mountain', mountains.instanceColor!))
   }
 
@@ -1562,7 +1581,7 @@ export class Scenery {
     walls.count = wi
     walls.instanceMatrix.needsUpdate = true
     if (walls.instanceColor) walls.instanceColor.needsUpdate = true
-    this.scene.add(walls)
+    this.scene.add(tagGroup(walls, 'hill-walls'))
 
     // ——— Garden wood on the flanks: trunks + layered canopies, some pines,
     // a few maples for warmth. Everything stands on the shared terrain profile.
@@ -1775,11 +1794,13 @@ export class Scenery {
     }
     poles.count = pi
     poles.instanceMatrix.needsUpdate = true
-    this.scene.add(poles)
+    this.scene.add(tagGroup(poles, 'approach-poles'))
     boardMeshes.forEach((mesh, di) => {
       mesh.count = boardCounts[di]
       mesh.instanceMatrix.needsUpdate = true
-      this.scene.add(mesh)
+      // By distance, not by index: the three boards share a geometry and the
+      // name should survive someone reordering DISTANCES.
+      this.scene.add(tagGroup(mesh, `approach-boards-${DISTANCES[di]}m`))
     })
   }
 
@@ -1855,7 +1876,7 @@ export class Scenery {
       const lampR = new THREE.Mesh(new THREE.SphereGeometry(0.13, 8, 8), lights.b)
       lampR.position.set(0.45, 2.55, 0.08)
       g.add(lampR)
-      this.scene.add(g)
+      this.scene.add(tagGroup(g, 'level-crossings'))
     }
   }
 
@@ -1973,7 +1994,7 @@ export class Scenery {
       const u = (i * (spanUnits / RINGS)) / 14
       stripUvs.push(u, 0, u, 1)
     }
-    const strip = (positions: number[]) => {
+    const strip = (positions: number[], group: string) => {
       const idx: number[] = []
       for (let i = 0; i < RINGS; i++) {
         const a = i * 2, b = i * 2 + 1, c = (i + 1) * 2, d = (i + 1) * 2 + 1
@@ -1989,12 +2010,12 @@ export class Scenery {
       // override in Game (cheaper and weather-proof), so paying the shadow
       // pass for 400 units of lining would buy nothing (Marco's budget).
       mesh.receiveShadow = true
-      this.scene.add(mesh)
+      this.scene.add(tagGroup(mesh, group))
       return mesh
     }
-    strip(wallL)
-    strip(wallR)
-    strip(ceil)
+    strip(wallL, 'tunnel-wall-left')
+    strip(wallR, 'tunnel-wall-right')
+    strip(ceil, 'tunnel-ceiling')
 
     // Sodium lamps along the ceiling: MeshBasicMaterial ignores lighting, so
     // they stay lit inside without costing a single real light source.
@@ -2018,7 +2039,7 @@ export class Scenery {
     }
     lamps.count = lampCount
     lamps.instanceMatrix.needsUpdate = true
-    this.scene.add(lamps)
+    this.scene.add(tagGroup(lamps, 'tunnel-lamps'))
 
     // Portals: header beam over the opening, flanking pillars, splayed wing
     // walls, and a small 隧道 name plate — the concrete face that makes the
@@ -2085,11 +2106,11 @@ export class Scenery {
       // inside depth-buffer noise at approach distances and could blink.
       plate.position.set(0, CLEAR_H + 1.0, 1.0)
       g.add(plate)
-      this.scene.add(g)
+      this.scene.add(tagGroup(g, 'tunnel-portals'))
     }
     portalBoxes.count = pbI
     portalBoxes.instanceMatrix.needsUpdate = true
-    this.scene.add(portalBoxes)
+    this.scene.add(tagGroup(portalBoxes, 'tunnel-portal-boxes'))
 
     // The cutting's retaining walls: short concrete panels flanking the
     // approach on both sides of both portals, leaning gently into the fill.
@@ -2121,7 +2142,7 @@ export class Scenery {
     }
     panels.count = pi
     panels.instanceMatrix.needsUpdate = true
-    this.scene.add(panels)
+    this.scene.add(tagGroup(panels, 'trench-panels'))
   }
 
   /**
@@ -2187,7 +2208,11 @@ export class Scenery {
       return idx
     })()
 
-    const ribbon = (positions: number[], uvs: number[] | null, mat: THREE.Material) => {
+    // The group name is required, not optional: a raw BufferGeometry has no
+    // parameters to derive a fallback name from, so sea and foam would both
+    // land in one `untagged:BufferGeometry` bucket together with every other
+    // hand-built mesh in the world.
+    const ribbon = (positions: number[], uvs: number[] | null, mat: THREE.Material, group: string) => {
       const geo = new THREE.BufferGeometry()
       geo.setAttribute('position', new THREE.Float32BufferAttribute(positions, 3))
       if (uvs) geo.setAttribute('uv', new THREE.Float32BufferAttribute(uvs, 2))
@@ -2195,7 +2220,7 @@ export class Scenery {
       geo.computeVertexNormals()
       const mesh = new THREE.Mesh(geo, mat)
       mesh.receiveShadow = true
-      this.scene.add(mesh)
+      this.scene.add(tagGroup(mesh, group))
       return mesh
     }
 
@@ -2223,10 +2248,10 @@ export class Scenery {
       sandGeo.computeVertexNormals()
       const sand = new THREE.Mesh(sandGeo, sandMat)
       sand.receiveShadow = true
-      this.scene.add(sand)
+      this.scene.add(tagGroup(sand, 'beach-sand'))
       this.seasonalPools.push(registerPool('terrain', sandGeo.getAttribute('color') as THREE.BufferAttribute))
-      ribbon(seaPos[c], seaUv[c], seaMat)
-      ribbon(foamPos[c], null, this.foamMat)
+      ribbon(seaPos[c], seaUv[c], seaMat, 'sea')
+      ribbon(foamPos[c], null, this.foamMat, 'sea-foam')
     }
 
     // ——— Enoshima on the horizon: a wooded hump and its little lighthouse.
@@ -2240,13 +2265,13 @@ export class Scenery {
     )
     island.scale.set(1, 0.32, 0.8)
     island.position.copy(islandBase)
-    this.scene.add(island)
+    this.scene.add(tagGroup(island, 'enoshima-island'))
     const lighthouse = new THREE.Mesh(
       new THREE.CylinderGeometry(4, 6, 42, 8),
       new THREE.MeshStandardMaterial({ color: 0xe8ecf0, roughness: 0.6 }),
     )
     lighthouse.position.set(islandBase.x, 82, islandBase.z)
-    this.scene.add(lighthouse)
+    this.scene.add(tagGroup(lighthouse, 'enoshima-lighthouse'))
 
     // ——— Rocks at the waterline: dark, half-drowned.
     const rockMat = new THREE.MeshStandardMaterial({ color: 0x3d4148, roughness: 1, flatShading: true })
@@ -2265,7 +2290,7 @@ export class Scenery {
       rocks.setMatrixAt(i, dummy.matrix)
     }
     rocks.instanceMatrix.needsUpdate = true
-    this.scene.add(rocks)
+    this.scene.add(tagGroup(rocks, 'coast-rocks'))
 
     // ——— Sailboats: white sails scattered over the near water. Nothing
     // says "this is the sea" faster, and seven quads cost nothing.
@@ -2290,7 +2315,7 @@ export class Scenery {
     }
     sails.instanceMatrix.needsUpdate = true
     hulls.instanceMatrix.needsUpdate = true
-    this.scene.add(sails, hulls)
+    this.scene.add(tagGroup(sails, 'boat-sails'), tagGroup(hulls, 'boat-hulls'))
 
     // ——— Coastal pines: the Shonan signature — leaning inland, shaped by
     // the sea wind, strung loosely along the top of the beach.
@@ -2330,7 +2355,7 @@ export class Scenery {
     trunks.instanceMatrix.needsUpdate = true
     crowns.instanceMatrix.needsUpdate = true
     if (crowns.instanceColor) crowns.instanceColor.needsUpdate = true
-    this.scene.add(trunks, crowns)
+    this.scene.add(tagGroup(trunks, 'coast-pine-trunks'), tagGroup(crowns, 'coast-pine-crowns'))
     this.seasonalPools.push(registerPool('pine', crowns.instanceColor!))
   }
 
@@ -2350,6 +2375,15 @@ export class Scenery {
     })
     this.cloudsMesh = new THREE.InstancedMesh(new THREE.PlaneGeometry(1, 1), this.cloudMat, CLOUD_COUNT)
     this.cloudsMesh.frustumCulled = false
+    // NOT part of the static world, however much it looks like scenery: the
+    // ring is reseeded on every weather change, and the draws come off the
+    // 'clouds' stream in the order the weather happened to change — so going
+    // to storm and back to clear does NOT restore the previous sky. That is
+    // correct behaviour (the director asked for it: "rain can't be the same
+    // clouds as fair weather") and it is also exactly why they cannot sit in
+    // a hash whose whole job is "same seed, same number". They still show up
+    // under dynamicParts, so the day they need pinning it is visible there.
+    this.cloudsMesh.userData.dynamic = true
     // Drawn after the stars (which sit at the camera's own position and so
     // sort "nearest"): otherwise star points paint straight over cloud
     // bodies at dawn/dusk, reading as speckly noise on the clouds.

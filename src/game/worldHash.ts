@@ -1,5 +1,10 @@
 import * as THREE from 'three'
-import { WORLD_SEED } from './Rng'
+// Explicit `.ts` on this one specifier (the rest of the codebase goes
+// extensionless, bundler-style): it is the only runtime import this module
+// has, and node's ESM resolver — which runs the partition tests in test/ —
+// will not guess an extension. Vite resolves it either way.
+import { DEFAULT_WORLD_SEED } from './Rng.ts'
+import type { Season, Weather } from './Seasons'
 
 // ————————————————————————————————————————————————————————————————
 // Fingerprints of the GENERATED world, for checking that seeding actually
@@ -16,6 +21,65 @@ import { WORLD_SEED } from './Rng'
 
 /** Positions/scales to the millimetre, colours to ~1/1000 of a channel. */
 const QUANT = 1000
+
+// ————————————————————————————————————————————————————————————————
+// WHICH world a fingerprint describes.
+//
+// The seed alone does not pin it down, and believing it did cost us a
+// reference hash: season and weather are restored from localStorage at
+// startup, and the season rewrites twelve instanceColor buffers on the way
+// in. The same build, the same seed and a browser profile left on winter
+// gives a different number than one left on spring — so a bare hash written
+// down in a doc means nothing without the dress it was wearing.
+//
+// Hence: every fingerprint carries the scenario it was taken in, and there is
+// one CANONICAL scenario that references are quoted in.
+// ————————————————————————————————————————————————————————————————
+
+export interface WorldScenario {
+  seed: string
+  season: Season
+  weather: Weather
+  /** Auto fronts OFF for a capture: a front rolling in mid-session would move the sky under the measurement. */
+  weatherAuto: boolean
+}
+
+/** The scenario every reference hash in the docs is quoted in. */
+export const CANONICAL_SCENARIO: WorldScenario = {
+  seed: DEFAULT_WORLD_SEED,
+  season: 'spring',
+  weather: 'clear',
+  weatherAuto: false,
+}
+
+/**
+ * `?canon` starts the game in the canonical scenario whatever this browser
+ * profile has stored. Without it, capturing a reference means remembering to
+ * clear three localStorage keys by hand first — which is exactly the step that
+ * gets skipped, and the reason a winter capture once got written down as the
+ * spring reference.
+ *
+ * It only seeds the INITIAL state; changing season from the panel afterwards
+ * still persists as usual.
+ */
+export const FORCE_CANONICAL: boolean =
+  typeof window !== 'undefined' && new URLSearchParams(window.location.search).has('canon')
+
+export function isCanonicalScenario(s: WorldScenario | null): boolean {
+  return (
+    !!s &&
+    s.seed === CANONICAL_SCENARIO.seed &&
+    s.season === CANONICAL_SCENARIO.season &&
+    s.weather === CANONICAL_SCENARIO.weather &&
+    s.weatherAuto === CANONICAL_SCENARIO.weatherAuto
+  )
+}
+
+/** One line for logs and docs: `japan-loop-0.5-world-1 · spring · clear · auto:off`. */
+export function describeScenario(s: WorldScenario | null): string {
+  if (!s) return 'sin escenario (escena sintética)'
+  return `${s.seed} · ${s.season} · ${s.weather} · auto:${s.weatherAuto ? 'on' : 'off'}`
+}
 
 /**
  * Is this object placed by something that moves during play? Checked up the
@@ -64,17 +128,22 @@ class Digest {
 }
 
 export interface WorldFingerprint {
-  seed: string
+  /** What was on when this was taken. `null` for synthetic scenes built by the tests. */
+  scenario: WorldScenario | null
+  /** False means "do not write this number down as a reference" — see CANONICAL_SCENARIO. */
+  canonical: boolean
   /** One hash per generated mesh of the STATIC world, keyed by creation order + what it is. */
   parts: Record<string, string>
   /** Everything static folded together — the single number to compare between loads. */
   total: string
   /**
-   * Meshes tagged `userData.dynamic`: passengers and the precipitation
-   * curtain. They are placed by live systems that are deliberately still on
-   * Math.random(), so they change between loads BY DESIGN and must stay out
-   * of the total — otherwise the world's determinism check would never pass.
-   * Reported anyway, so the day they get seeded it is visible here.
+   * Meshes tagged `userData.dynamic`: passengers, the precipitation curtain,
+   * the consist, the camera-following sky dome and the cloud ring. They are
+   * placed by live systems — some deliberately still on Math.random(), the
+   * clouds reseeded per weather change — so they change between loads BY
+   * DESIGN and must stay out of the total; otherwise the world's determinism
+   * check could never pass. Reported anyway, so the day one of them gets
+   * pinned down it is visible here.
    */
   dynamicParts: Record<string, string>
 }
@@ -89,7 +158,7 @@ export interface WorldFingerprint {
  * "did THIS pool move?", which is the question when checking that touching one
  * system left the others alone.
  */
-export function worldFingerprint(scene: THREE.Scene): WorldFingerprint {
+export function worldFingerprint(scene: THREE.Scene, scenario: WorldScenario | null = null): WorldFingerprint {
   const parts: Record<string, string> = {}
   const dynamicParts: Record<string, string> = {}
   const totalDigest = new Digest()
@@ -163,7 +232,7 @@ export function worldFingerprint(scene: THREE.Scene): WorldFingerprint {
     index++
   })
 
-  return { seed: WORLD_SEED, parts, total: totalDigest.hex, dynamicParts }
+  return { scenario, canonical: isCanonicalScenario(scenario), parts, total: totalDigest.hex, dynamicParts }
 }
 
 // ————————————————————————————————————————————————————————————————
@@ -208,7 +277,10 @@ function fallbackGroup(geo: THREE.BufferGeometry): string {
 }
 
 export interface SemanticFingerprint {
-  seed: string
+  /** What was on when this was taken. `null` for synthetic scenes built by the tests. */
+  scenario: WorldScenario | null
+  /** False means "do not write this number down as a reference" — see CANONICAL_SCENARIO. */
+  canonical: boolean
   /** group name → hash of its instances as an unordered set. */
   groups: Record<string, string>
   /** group name → how many instances it holds. A split that loses or duplicates one shows up here. */
@@ -218,7 +290,7 @@ export interface SemanticFingerprint {
   untagged: string[]
 }
 
-export function semanticFingerprint(scene: THREE.Scene): SemanticFingerprint {
+export function semanticFingerprint(scene: THREE.Scene, scenario: WorldScenario | null = null): SemanticFingerprint {
   /** group → one quantized record per instance, as strings so they can be sorted as a set. */
   const records = new Map<string, string[]>()
   const push = (group: string, parts: number[], prefix: string) => {
@@ -298,7 +370,8 @@ export function semanticFingerprint(scene: THREE.Scene): SemanticFingerprint {
   }
 
   return {
-    seed: WORLD_SEED,
+    scenario,
+    canonical: isCanonicalScenario(scenario),
     groups,
     counts,
     total: totalDigest.hex,

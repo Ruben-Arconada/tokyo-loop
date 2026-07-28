@@ -115,37 +115,56 @@ semilla: dos vueltas solo son comparables si coincide.
 `__semanticHash()` es el gemelo **ciego a la partición**: agrupa las
 instancias por el nombre que declara el builder (`tagGroup`), las ordena como
 CONJUNTO y digiere con el recuento dentro, así que da igual si un pool está
-entero o repartido en ocho sectores. Es el que tiene que referear la
+entero o repartido en ocho sectores. Es el que tiene que referenciar la
 sectorización; el estructural cambiará entonces y eso es correcto.
 
-### ⚠️ Antes de fiarte de un hash del mundo, lee esto
+### Cómo se comprueba que un refactor no cambió el mundo
 
-Ninguno de los dos hashes es todavía un contrato cerrado. Tres cosas
-verificadas que hay que arreglar antes de usarlos como puerta de un refactor:
+Los tres huecos que había aquí (escenario sin fijar, nubes contaminando el
+mundo estático, ~110 grupos sin etiquetar) están **cerrados**. El contrato hoy:
 
-1. **No dependen solo de la semilla**: la estación y el clima guardados en
-   `localStorage` los mueven. Con `yamanote-season=winter` el semántico da
-   `9b1ba8bb` donde con primavera da `e7cdb9f8`. Hace falta fijar y REGISTRAR
-   un escenario canónico (semilla por defecto, primavera, despejado, clima
-   automático apagado).
-2. **Las nubes están dentro del «mundo estático»** y se resiembran con el
-   clima consumiendo del flujo `clouds` — ir a tormenta y volver NO devuelve
-   el hash. Hay que marcarlas dinámicas o darles fingerprint aparte.
-3. **Los ~110 grupos `untagged:` agrupan por geometría**, así que pueden
-   mezclar sistemas distintos. Solo son de fiar los que llevan `tagGroup`
-   explícito (hoy los diez de vegetación). Etiqueta antes de refactorizar.
+- **Escenario canónico** (`CANONICAL_SCENARIO` en `worldHash.ts`): semilla por
+  defecto + primavera + despejado + clima automático APAGADO. Cárgalo con
+  **`?canon`**, que lo fija ignorando lo que haya en `localStorage` — sin él,
+  un perfil dejado en invierno da otro número y parece un cambio del mundo.
+  Los dos fingerprints llevan dentro el escenario y avisan por consola si no
+  es el canónico.
+- **`__checkWorld()`** en la consola de dev recorre las CUATRO estaciones,
+  compara con la tabla de `src/game/worldReferences.ts` y deja el mundo como
+  estaba. Las cuatro hacen falta: una partición puede conservar primavera y
+  romper el repintado estacional, que reescribe doce búferes de color.
+- **`npm test`** ejecuta las propiedades de partición sin navegador
+  (`test/worldHash.test.ts`, runner nativo de node, sin dependencias nuevas):
+  las mismas instancias en 1, 2 y 8 sectores dan un solo hash, contiguas o
+  repartidas en round-robin.
 
-Y la rama de `Points` digiere el buffer entero como un registro: si algún día
-se sectorizan estrellas o partículas, deja de ser independiente de la
-partición.
+Al sectorizar: **el semántico DEBE seguir igual, el estructural cambiará** y
+eso es correcto — re-captura el estructural cuando el refactor esté cerrado.
+
+Dos avisos que siguen vivos:
+
+- **La rama de `Points` digiere el buffer entero como UN registro**: si algún
+  día se sectorizan estrellas o pétalos, deja de ser independiente de la
+  partición. Hay que aplanarla como las instancias.
+- **Una referencia escrita a mano se pudre.** El número viejo `e7cdb9f8` se
+  anotó como «el semántico de la semilla por defecto» y al re-medirlo en el
+  mismo commit con almacenamiento limpio daba `851a0eed`; nunca se supo por
+  qué. Por eso la tabla vive en el repo y la compara `__checkWorld()`, no el
+  ojo.
 
 ## Publicar
 
-Ritual completo en la memoria del proyecto. Resumen: `npx tsc --noEmit` +
-`npm run build`, y bump de versión solo en `package.json` (nada más la lleva;
-lo decide Rubén). **Nada de tocar cachés a mano**: el `sw.js` y su generación
-se generan solos en cada build, ver la sección de arriba. Push a `main`
-dispara `.github/workflows/deploy.yml` → Pages. Verificar con
-`gh run list --repo Ruben-Arconada/tokyo-loop --limit 1`.
+Ritual completo en la memoria del proyecto. Resumen: `npm test` +
+`npx tsc --noEmit` + `npm run build`, y bump de versión solo en
+`package.json` (nada más la lleva; lo decide Rubén). **Nada de tocar cachés a
+mano**: el `sw.js` y su generación se generan solos en cada build, ver la
+sección de arriba. Push a `main` dispara `.github/workflows/deploy.yml` →
+Pages. Verificar con `gh run list --repo Ruben-Arconada/tokyo-loop --limit 1`.
+
+**Numeración (decisión de Rubén, 2026-07-28)**: la etiqueta de sus chats y la
+versión del código son **la misma** desde la 0.1.8 — antes iban por separado
+(el código estaba en `0.2.0-rc.2`) y eso confundía. El camino es
+0.1.8 → … → **0.4.9** → **0.5.0**, que será la primera para testers internos
+y algún beta tester externo.
 
 `assets/` y `experiments/` están fuera de git a propósito: **nunca `git add -A`**.

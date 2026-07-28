@@ -12,7 +12,8 @@ import { PerfLog, setActivePerfLog, perfMark } from './PerfLog'
 import { PassengerFlow, TRAIN_CAPACITY } from './PassengerFlow'
 import { Schedule, ON_TIME_TOLERANCE, LATE_TOLERANCE, type ScheduleLevel } from './Schedule'
 import { registerPool, applySeasonToPool, overcastTarget, precipProfile, type Season, type Weather, type SeasonalPool } from './Seasons'
-import { worldStream } from './Rng'
+import { WORLD_SEED, worldStream } from './Rng'
+import { CANONICAL_SCENARIO, FORCE_CANONICAL, tagGroup, type WorldScenario } from './worldHash'
 import { Scenery } from './Scenery'
 import { DayNightCycle } from './DayNightCycle'
 import { audio } from '../audio/AudioEngine'
@@ -174,8 +175,11 @@ export class Game {
    * always did.
    */
   private cameraMode: CameraMode = (localStorage.getItem(CAMERA_KEY) as CameraMode) || 'cab'
-  private season: Season = (localStorage.getItem(SEASON_KEY) as Season) || 'spring'
-  private weather: Weather = (localStorage.getItem(WEATHER_KEY) as Weather) || 'clear'
+  // `?canon` pins season/weather/auto to the scenario the reference hashes are
+  // quoted in, so a capture cannot silently inherit whatever this browser
+  // profile was last left on. See CANONICAL_SCENARIO in worldHash.
+  private season: Season = FORCE_CANONICAL ? CANONICAL_SCENARIO.season : (localStorage.getItem(SEASON_KEY) as Season) || 'spring'
+  private weather: Weather = FORCE_CANONICAL ? CANONICAL_SCENARIO.weather : (localStorage.getItem(WEATHER_KEY) as Weather) || 'clear'
   /** Last rain/wind levels actually pushed to the audio engine — the per-frame profile only reaches it when they have moved. */
   private lastRainAudioLevel = -1
   private lastWindAudioLevel = -1
@@ -187,8 +191,8 @@ export class Game {
   /** What the windshield overlay needs from the last precipitation profile. */
   private wsIntensity = 0
   private wsSnow = false
-  /** H3 auto weather: on by default for a sky with a life of its own. */
-  private weatherAuto = localStorage.getItem(WEATHER_AUTO_KEY) !== '0'
+  /** H3 auto weather: on by default for a sky with a life of its own — off under `?canon`, where a front arriving mid-capture would move the sky under the measurement. */
+  private weatherAuto = FORCE_CANONICAL ? CANONICAL_SCENARIO.weatherAuto : localStorage.getItem(WEATHER_AUTO_KEY) !== '0'
   private frontTimer = 50 + Math.random() * 60
   /** Atmosphere-panel discovery: pulse + one hint until the player opens it once. */
   private atmoSeen = localStorage.getItem(ATMO_SEEN_KEY) === '1'
@@ -252,6 +256,28 @@ export class Game {
   } | null = null
   private perfectStreak = 0
   private bestScore = Number(localStorage.getItem(BEST_SCORE_KEY) ?? 0)
+
+  /**
+   * Everything that decides WHICH world got built, for the fingerprint to
+   * record alongside the hash. The seed is only half of it: the season
+   * repaints twelve instance-colour buffers on the way in, so a hash without
+   * its scenario is a number nobody can reproduce.
+   */
+  get scenario(): WorldScenario {
+    return { seed: WORLD_SEED, season: this.season, weather: this.weather, weatherAuto: this.weatherAuto }
+  }
+
+  /**
+   * Dresses the world in a season WITHOUT storing the preference — for the
+   * reference capture, which walks all four and must leave the browser as it
+   * found it. A capture that persisted its last season would hand the next
+   * clean load a different world, which is how a winter capture once got
+   * written down as the spring reference.
+   */
+  setSeasonForCapture(season: Season) {
+    this.season = season
+    this.applyAtmosphere()
+  }
 
   constructor(mount: HTMLElement) {
     this.renderer = new THREE.WebGLRenderer({
@@ -962,7 +988,7 @@ export class Game {
     this.ballastMat = bedMat
     const bed = new THREE.Mesh(bedGeo, bedMat)
     bed.receiveShadow = true
-    this.scene.add(bed)
+    this.scene.add(tagGroup(bed, 'ballast-bed'))
 
     // Sleepers: individual boards with air between them (they used to be
     // longer than their spacing and fused into a dark ribbon), each with a
@@ -1042,7 +1068,7 @@ export class Game {
     sleepers.instanceMatrix.needsUpdate = true
     sleeperShadows.instanceMatrix.needsUpdate = true
     if (sleepers.instanceColor) sleepers.instanceColor.needsUpdate = true
-    this.scene.add(sleepers, sleeperShadows)
+    this.scene.add(tagGroup(sleepers, 'sleepers'), tagGroup(sleeperShadows, 'sleeper-shadows'))
 
     // Wide ground plane so the world doesn't feel like it ends at the ballast
     // edge — with a faint city-block texture so it reads as streets from the
@@ -1150,7 +1176,7 @@ export class Game {
     ground.rotation.x = -Math.PI / 2
     ground.position.y = -0.5
     ground.receiveShadow = true
-    this.scene.add(ground)
+    this.scene.add(tagGroup(ground, 'ground-plane'))
 
     // Trackside embankment: a ribbon that follows the rails and carries the
     // ground up and over the hill in the quiet green zone. On flat stretches its
@@ -1247,7 +1273,7 @@ export class Game {
     embankment.receiveShadow = true
     // No castShadow: a ribbon this large self-shadows into acne across the
     // slope, and the ground plane it blends into doesn't cast either.
-    this.scene.add(embankment)
+    this.scene.add(tagGroup(embankment, 'embankment'))
 
     // Worn corridor beside the rails: a wider, alpha-edged band of beaten
     // earth riding just above the ground plane, so the trackside looks used
@@ -1279,7 +1305,7 @@ export class Game {
     this.wearMat = wearMat
     const wear = new THREE.Mesh(wearGeo, wearMat)
     wear.receiveShadow = true
-    this.scene.add(wear)
+    this.scene.add(tagGroup(wear, 'trackside-wear'))
 
     const railMat = new THREE.MeshStandardMaterial({ color: 0x9aa0a8, roughness: 0.35, metalness: 0.85 })
     for (const offset of [0.75, -0.75]) {
@@ -1288,7 +1314,7 @@ export class Game {
       const rail = new THREE.Mesh(railGeo, railMat)
       rail.castShadow = true
       rail.receiveShadow = true
-      this.scene.add(rail)
+      this.scene.add(tagGroup(rail, 'rails'))
     }
 
     this.buildCatenary()
@@ -1335,13 +1361,13 @@ export class Game {
     }
     poles.instanceMatrix.needsUpdate = true
     arms.instanceMatrix.needsUpdate = true
-    this.scene.add(poles, arms)
+    this.scene.add(tagGroup(poles, 'catenary-poles'), tagGroup(arms, 'catenary-arms'))
 
     const wireMat = new THREE.MeshStandardMaterial({ color: 0x1a1a1a, metalness: 0.6, roughness: 0.4 })
     const wireCurve = new CatenaryCurve(this.track, wireHeight, 0.18, poleCount)
     const wireGeo = new THREE.TubeGeometry(wireCurve, Math.max(600, poleCount * 8), 0.035, 5, true)
     const wire = new THREE.Mesh(wireGeo, wireMat)
-    this.scene.add(wire)
+    this.scene.add(tagGroup(wire, 'catenary-wire'))
   }
 
   /**
