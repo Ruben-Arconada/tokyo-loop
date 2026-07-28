@@ -66,6 +66,10 @@ export class UI {
   private menuOpen = false
   private atmoOpen = false
   private paused = false
+  /** The dialog currently holding focus, and how to dismiss it (Escape / trap). */
+  private activeModal: { el: HTMLElement; close: () => void } | null = null
+  /** What had focus before the dialog opened, so closing gives it back. */
+  private modalReturnFocus: HTMLElement | null = null
   private atmoChip!: HTMLButtonElement
   private atmoGlyphEl!: HTMLSpanElement
   private perfChip!: HTMLDivElement
@@ -137,6 +141,59 @@ export class UI {
 
     this.teleportOverlay = this.buildTeleportOverlay()
     mount.appendChild(this.teleportOverlay)
+
+    // One listener for every dialog: Escape dismisses, Tab cannot walk out
+    // behind the card. Registered in CAPTURE so it wins before the driving
+    // keys — Escape must never reach the train.
+    window.addEventListener('keydown', (e) => this.onModalKey(e), true)
+  }
+
+  /**
+   * Keyboard contract for the overlays. Without this a dialog was a visual
+   * trap only: the panel covered the screen while Tab kept cycling the HUD
+   * buttons underneath it, and there was no way out except the mouse.
+   */
+  private onModalKey(e: KeyboardEvent) {
+    const modal = this.activeModal
+    if (!modal) return
+    if (e.key === 'Escape') {
+      e.preventDefault()
+      e.stopPropagation()
+      modal.close()
+      return
+    }
+    if (e.key !== 'Tab') return
+    const focusable = [...modal.el.querySelectorAll<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')].filter(
+      (n) => !n.hasAttribute('disabled') && n.offsetParent !== null,
+    )
+    if (!focusable.length) return
+    const first = focusable[0]
+    const last = focusable[focusable.length - 1]
+    const active = document.activeElement as HTMLElement | null
+    // Wrap at both ends, and catch the case where focus escaped the card
+    // entirely (it starts on <body> the first time a dialog opens).
+    if (e.shiftKey && (active === first || !modal.el.contains(active))) {
+      e.preventDefault()
+      last.focus()
+    } else if (!e.shiftKey && (active === last || !modal.el.contains(active))) {
+      e.preventDefault()
+      first.focus()
+    }
+  }
+
+  /** Registers/clears the focused dialog and hands focus over and back. */
+  private setModalOpen(el: HTMLElement, open: boolean, close: () => void) {
+    if (open) {
+      this.modalReturnFocus = document.activeElement as HTMLElement | null
+      this.activeModal = { el, close }
+      el.querySelector<HTMLElement>('button, [href], input, select, textarea, [tabindex]:not([tabindex="-1"])')?.focus()
+    } else if (this.activeModal?.el === el) {
+      this.activeModal = null
+      // Back to the chip that opened it — losing focus to <body> strands a
+      // keyboard or switch-control user at the top of the document.
+      this.modalReturnFocus?.focus()
+      this.modalReturnFocus = null
+    }
   }
 
   private buildHud() {
@@ -282,7 +339,7 @@ export class UI {
     const el = document.createElement('div')
     el.className = 'overlay atmo-overlay hidden'
     el.innerHTML = `
-      <div class="overlay-card atmo-card" role="dialog" aria-label="Atmósfera">
+      <div class="overlay-card atmo-card" role="dialog" aria-modal="true" aria-label="Atmósfera">
         <h2>Atmósfera</h2>
         <p class="atmo-hint">Se aplica al instante — el mundo sigue rodando detrás.</p>
         <div class="atmo-sections">
@@ -338,7 +395,7 @@ export class UI {
     const el = document.createElement('div')
     el.className = 'overlay teleport-overlay hidden'
     el.innerHTML = `
-      <div class="overlay-card teleport-card" role="dialog" aria-label="Teletransporte">
+      <div class="overlay-card teleport-card" role="dialog" aria-modal="true" aria-label="Teletransporte">
         <h2>Ir a una estación</h2>
         <p class="atmo-hint">Apareces a 300 m del andén, en marcha. El horario se resincroniza — es un salto, no un retraso.</p>
         <div class="teleport-grid">
@@ -362,6 +419,7 @@ export class UI {
 
   private toggleTeleport(open: boolean) {
     this.teleportOverlay.classList.toggle('hidden', !open)
+    this.setModalOpen(this.teleportOverlay, open, () => this.toggleTeleport(false))
   }
 
   /** Feedback after the jump lands. */
@@ -373,6 +431,7 @@ export class UI {
     this.atmoOpen = force ?? !this.atmoOpen
     this.atmoOverlay.classList.toggle('hidden', !this.atmoOpen)
     this.atmoChip.setAttribute('aria-expanded', String(this.atmoOpen))
+    this.setModalOpen(this.atmoOverlay, this.atmoOpen, () => this.toggleAtmo(false))
     if (this.atmoOpen && this.atmoChip.classList.contains('pulse')) {
       this.atmoChip.classList.remove('pulse')
       this.cb.onAtmoOpened()
@@ -511,7 +570,7 @@ export class UI {
     const el = document.createElement('div')
     el.className = 'overlay menu-overlay hidden'
     el.innerHTML = `
-      <div class="overlay-card">
+      <div class="overlay-card" role="dialog" aria-modal="true" aria-label="Pausa">
         <h2>Pausa</h2>
         <button class="btn-resume">Reanudar</button>
         <div class="time-scale-row">
@@ -590,7 +649,7 @@ export class UI {
     const el = document.createElement('div')
     el.className = 'overlay credits-overlay'
     el.innerHTML = `
-      <div class="overlay-card credits-card">
+      <div class="overlay-card credits-card" role="dialog" aria-modal="true" aria-label="El equipo">
         <h2>El equipo</h2>
         <p class="credits-intro">Japan Loop lo hacemos siete personas a las que nos obsesionan los trenes japoneses y Japón entero. Nos pusimos de acuerdo en una sola cosa antes de escribir una línea de código: si no es entretenido, inmersivo y bonito de ver y de oír, no sale de la sala de pruebas.</p>
         <ul class="team-list">
@@ -600,8 +659,15 @@ export class UI {
         <button class="btn-close">Volver</button>
       </div>
     `
-    el.querySelector('.btn-close')!.addEventListener('click', () => el.remove())
+    const close = () => {
+      this.setModalOpen(el, false, close)
+      el.remove()
+    }
+    el.querySelector('.btn-close')!.addEventListener('click', close)
     this.mount.appendChild(el)
+    // Appended AFTER mounting: focusing an element outside the document does
+    // nothing, and the trap needs to measure real visibility.
+    this.setModalOpen(el, true, close)
   }
 
   /** How full the train is. Turns amber as it fills and red once nobody else fits. */
@@ -757,6 +823,7 @@ export class UI {
     this.menuOverlay.classList.toggle('hidden', !this.menuOpen)
     this.paused = this.menuOpen
     this.cb.onPauseToggle(this.paused)
+    this.setModalOpen(this.menuOverlay, this.menuOpen, () => this.toggleMenu())
   }
 
   updateClock(timeOfDay: number, phaseLabel: string) {
