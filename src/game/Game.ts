@@ -12,6 +12,7 @@ import { PerfLog, setActivePerfLog, perfMark } from './PerfLog'
 import { PassengerFlow, TRAIN_CAPACITY } from './PassengerFlow'
 import { Schedule, ON_TIME_TOLERANCE, LATE_TOLERANCE, type ScheduleLevel } from './Schedule'
 import { registerPool, applySeasonToPool, overcastTarget, precipProfile, type Season, type Weather, type SeasonalPool } from './Seasons'
+import { worldStream } from './Rng'
 import { Scenery } from './Scenery'
 import { DayNightCycle } from './DayNightCycle'
 import { audio } from '../audio/AudioEngine'
@@ -131,6 +132,12 @@ const NORMAL_FOV = 68
 /** Shared read-only up vector for camera solves — never mutated. */
 const WORLD_UP = new THREE.Vector3(0, 1, 0)
 /**
+ * Sleeper jitter comes from the seed like the rest of the built world. The
+ * weather-front timers in this file deliberately stay on Math.random(): they
+ * are gameplay, not layout, and a front you can predict is a worse front.
+ */
+const tracksideRnd = worldStream('trackside')
+/**
  * How far ahead of the cab the tunnel looks when deciding to restore the
  * far plane (world units). Restored this early the whole ring is drawing
  * again ~3.5 s before the portal at line speed — while the cab is still
@@ -148,7 +155,8 @@ const TUNNEL_FOG = new THREE.Color(0x16120d)
 
 export class Game {
   private renderer: THREE.WebGLRenderer
-  private scene = new THREE.Scene()
+  /** Readable so the dev fingerprint harness can walk the built world. */
+  readonly scene = new THREE.Scene()
   private camera: THREE.PerspectiveCamera
   private track: Track
   private train: Train
@@ -998,16 +1006,16 @@ export class Game {
       const tangent = this.track.tangentAt(t)
       // Just a whisper of irregularity — boards laid by hand, not scattered.
       sleeperDummy.position.set(
-        p.x + (Math.random() - 0.5) * 0.05,
+        p.x + (tracksideRnd() - 0.5) * 0.05,
         p.y - 0.02,
-        p.z + (Math.random() - 0.5) * 0.05,
+        p.z + (tracksideRnd() - 0.5) * 0.05,
       )
       // Pitch each board along the grade: the lookAt target must carry the
       // tangent's vertical component, or on a slope the sleepers stay level and
       // read as a staircase instead of a ramp.
       sleeperDummy.lookAt(p.x + tangent.x, p.y - 0.02 + tangent.y, p.z + tangent.z)
-      sleeperDummy.rotateY((Math.random() - 0.5) * 0.018)
-      sleeperDummy.scale.set(0.97 + Math.random() * 0.06, 1, 0.95 + Math.random() * 0.1)
+      sleeperDummy.rotateY((tracksideRnd() - 0.5) * 0.018)
+      sleeperDummy.scale.set(0.97 + tracksideRnd() * 0.06, 1, 0.95 + tracksideRnd() * 0.1)
       sleeperDummy.updateMatrix()
       sleepers.setMatrixAt(i, sleeperDummy.matrix)
 
@@ -1018,7 +1026,7 @@ export class Game {
       sleeperDummy.rotation.set(0, 0, 0)
 
       // Dark creosote wood with slight per-board variation…
-      sleeperTint.setHSL(0.075 + Math.random() * 0.015, 0.26 + Math.random() * 0.1, 0.085 + Math.random() * 0.035)
+      sleeperTint.setHSL(0.075 + tracksideRnd() * 0.015, 0.26 + tracksideRnd() * 0.1, 0.085 + tracksideRnd() * 0.035)
       // …shifted toward honey inside a stop zone: the braking guide.
       let minDist = Infinity
       for (const mt of markerTs) {

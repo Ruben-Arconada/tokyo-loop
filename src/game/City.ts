@@ -2,6 +2,7 @@ import * as THREE from 'three'
 import type { Track } from './Track'
 import { groundHeightAt, mountainRoadPath } from './Track'
 import { STATIONS, prevStationIndex, nextStationIndex, type ZoneTier } from '../data/stations'
+import { worldStream } from './Rng'
 import { makeStationSignTexture, makePlatformTileTexture, makeTactilePavingTexture, makeWindowGridTexture, applyProgressiveWindows, LOOP_LINE_COLOR } from './signage'
 import { registerPool, applySeasonToPool, type Season, type SeasonalPool } from './Seasons'
 
@@ -98,6 +99,8 @@ export class City {
   private time = 0
   /** Platform canopy colors, snow-capped in winter alongside the house roofs. */
   private canopyPools: SeasonalPool[] = []
+  /** The city's own draw sequence — see Rng.ts. Vegetation cannot move a tower. */
+  private rngCity = worldStream('city')
 
   constructor(scene: THREE.Scene, track: Track) {
     this.scene = scene
@@ -190,7 +193,7 @@ export class City {
         // a tower standing in the surf would be the first thing every eye
         // found. Seaward = the side pointing away from the loop's center.
         const seaward = station.theme.district === 'bay' && (normal.x * point.x + normal.z * point.z) * side > 0
-        let offset = seaward ? 30 + Math.random() * 40 : 34 + Math.random() * 70
+        let offset = seaward ? 30 + this.rngCity() * 40 : 34 + this.rngCity() * 70
         // Over the Shibuya trench the ground plane has a HOLE out to ±26
         // measured from the CHORD, and the track bows 16.61 units off that
         // chord: a corner reaching 15.6 needs offset − 16.61 − 15.6 > 26,
@@ -200,9 +203,9 @@ export class City {
         // that reads at any hour), with landmark stations getting an extra
         // flourish within their own tier's range rather than overriding it.
         const heightSpan = zone.maxH - zone.minH
-        const height = zone.minH + Math.random() * heightSpan * (station.landmark ? 1.25 : 1)
-        const width = 10 + Math.random() * 12
-        const depth = 10 + Math.random() * 12
+        const height = zone.minH + this.rngCity() * heightSpan * (station.landmark ? 1.25 : 1)
+        const width = 10 + this.rngCity() * 12
+        const depth = 10 + this.rngCity() * 12
 
         const pos = point.clone().add(normal.clone().multiplyScalar(side * offset))
         // Half-DIAGONAL, not half-side: buildings get a random yaw below, so a
@@ -213,13 +216,13 @@ export class City {
         // half-swallowed by the hill (and floating a hair over the plain).
         dummy.position.set(pos.x, groundHeightAt(point.y, side * offset) + height / 2, pos.z)
         dummy.scale.set(width, height, depth)
-        dummy.rotation.y = Math.random() * Math.PI
+        dummy.rotation.y = this.rngCity() * Math.PI
         dummy.updateMatrix()
 
         const globalIdx = counters.get(station.theme.district)!
         if (globalIdx < perTheme) {
           group.instanced.setMatrixAt(globalIdx, dummy.matrix)
-          const shade = 0.85 + Math.random() * 0.3
+          const shade = 0.85 + this.rngCity() * 0.3
           tintColor.setHex(0xffffff).multiplyScalar(shade)
           group.instanced.setColorAt(globalIdx, tintColor)
           counters.set(station.theme.district, globalIdx + 1)
@@ -549,9 +552,9 @@ export class City {
       case 'nara': {
         for (let i = 0; i < 10; i++) {
           const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.7, 4), new THREE.MeshStandardMaterial({ color: 0x4a3527 }))
-          const canopy = new THREE.Mesh(new THREE.SphereGeometry(3 + Math.random() * 2, 8, 6), new THREE.MeshStandardMaterial({ color: 0x5f8a4a, roughness: 1 }))
-          const gx = -30 - Math.random() * 30
-          const gz = 20 + Math.random() * 20
+          const canopy = new THREE.Mesh(new THREE.SphereGeometry(3 + this.rngCity() * 2, 8, 6), new THREE.MeshStandardMaterial({ color: 0x5f8a4a, roughness: 1 }))
+          const gx = -30 - this.rngCity() * 30
+          const gz = 20 + this.rngCity() * 20
           trunk.position.set(gx, 2, gz)
           canopy.position.set(gx, 5.5, gz)
           trunk.castShadow = canopy.castShadow = true
@@ -577,9 +580,9 @@ export class City {
         // skyscraper straight across the tracks.
         const towerXs = [-88, -60, -34, 34, 62, 90]
         for (let i = 0; i < towerXs.length; i++) {
-          const h = 90 + Math.random() * 90
+          const h = 90 + this.rngCity() * 90
           const tower = new THREE.Mesh(
-            new THREE.BoxGeometry(14 + Math.random() * 10, h, 14 + Math.random() * 10),
+            new THREE.BoxGeometry(14 + this.rngCity() * 10, h, 14 + this.rngCity() * 10),
             new THREE.MeshStandardMaterial({ color: 0x3d4658, emissive: 0x223355, emissiveIntensity: 0, metalness: 0.4, roughness: 0.35 }),
           )
           tower.position.set(towerXs[i], h / 2, -60 - (i % 2) * 25)
@@ -632,7 +635,7 @@ export class City {
         // x=0, where the rails run.
         const shopXs = [-60, -38, -18, 20, 42]
         for (let i = 0; i < shopXs.length; i++) {
-          const shopH = 8 + Math.random() * 6
+          const shopH = 8 + this.rngCity() * 6
           const shop = new THREE.Mesh(
             new THREE.BoxGeometry(8, shopH, 8),
             new THREE.MeshStandardMaterial({ color: [0xff5da2, 0xffc857, 0x5ad1e0, 0x8fce6a][i % 4], emissive: 0x111111, emissiveIntensity: 0 }),

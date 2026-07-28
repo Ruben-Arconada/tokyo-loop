@@ -744,6 +744,9 @@ export class Passengers {
     })
     const sprites = new THREE.Mesh(makeInstancedGeo(plane), spriteMat)
     sprites.frustumCulled = false // instances span the whole loop
+    // Dynamic: passengers are placed by live flow, not by the world seed —
+    // tagged so the determinism fingerprint reports them apart (see worldHash).
+    sprites.userData.dynamic = true
     scene.add(sprites)
 
     // Contact-shadow blobs: billboards cast no real shadows, and without a
@@ -792,6 +795,7 @@ export class Passengers {
     })
     const shadows = new THREE.Mesh(makeInstancedGeo(shadowPlane), shadowMat)
     shadows.frustumCulled = false
+    shadows.userData.dynamic = true
     scene.add(shadows)
 
     this.refreshAmbient()

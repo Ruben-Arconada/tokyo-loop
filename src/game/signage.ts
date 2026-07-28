@@ -1,4 +1,13 @@
 import * as THREE from 'three'
+import { mulberry32 } from './Rng'
+
+// Everything in this file bakes ARTWORK — grime, window grids, tile noise —
+// so it runs on a fixed seed rather than a world stream: the textures should
+// look the same in every world, and identical between two loads so screenshot
+// comparisons mean something. One shared sequence for the module keeps the
+// old behaviour exactly (two calls to the same maker still differ, which is
+// what gives the ground plane and the embankment their own grain).
+const rnd = mulberry32(0x51_6e_a6)
 
 /** Worn metal/plastic panel texture for the cab console and pillars. */
 export function makeScuffedPanelTexture(base = '#1c1f26'): THREE.CanvasTexture {
@@ -10,13 +19,13 @@ export function makeScuffedPanelTexture(base = '#1c1f26'): THREE.CanvasTexture {
   ctx.fillStyle = base
   ctx.fillRect(0, 0, size, size)
   for (let i = 0; i < 500; i++) {
-    const x = Math.random() * size
-    const y = Math.random() * size
-    const len = 2 + Math.random() * 10
-    const angle = Math.random() * Math.PI * 2
-    const shade = Math.random() < 0.5 ? 255 : 0
-    ctx.strokeStyle = `rgba(${shade},${shade},${shade},${(0.08 + Math.random() * 0.12).toFixed(3)})`
-    ctx.lineWidth = 0.6 + Math.random()
+    const x = rnd() * size
+    const y = rnd() * size
+    const len = 2 + rnd() * 10
+    const angle = rnd() * Math.PI * 2
+    const shade = rnd() < 0.5 ? 255 : 0
+    ctx.strokeStyle = `rgba(${shade},${shade},${shade},${(0.08 + rnd() * 0.12).toFixed(3)})`
+    ctx.lineWidth = 0.6 + rnd()
     ctx.beginPath()
     ctx.moveTo(x, y)
     ctx.lineTo(x + Math.cos(angle) * len, y + Math.sin(angle) * len)
@@ -157,7 +166,7 @@ export function makePlatformTileTexture(): THREE.CanvasTexture {
   const tile = 32
   for (let y = 0; y < size; y += tile) {
     for (let x = 0; x < size; x += tile) {
-      const shade = 4 + Math.floor(Math.random() * 10)
+      const shade = 4 + Math.floor(rnd() * 10)
       ctx.fillStyle = `rgba(0,0,0,${(shade / 255).toFixed(3)})`
       ctx.fillRect(x + 1, y + 1, tile - 2, tile - 2)
     }
@@ -198,15 +207,15 @@ export function makeBallastTexture(): { map: THREE.CanvasTexture; roughnessMap: 
   rCtx.fillRect(0, 0, size, size)
 
   for (let i = 0; i < 2200; i++) {
-    const x = Math.random() * size
-    const y = Math.random() * size
-    const r = 1 + Math.random() * 2.2
-    const shade = 40 + Math.floor(Math.random() * 70)
+    const x = rnd() * size
+    const y = rnd() * size
+    const r = 1 + rnd() * 2.2
+    const shade = 40 + Math.floor(rnd() * 70)
     ctx.fillStyle = `rgb(${shade + 20},${shade + 14},${shade})`
     ctx.beginPath()
     ctx.arc(x, y, r, 0, Math.PI * 2)
     ctx.fill()
-    const rough = 140 + Math.floor(Math.random() * 100)
+    const rough = 140 + Math.floor(rnd() * 100)
     rCtx.fillStyle = `rgb(${rough},${rough},${rough})`
     rCtx.beginPath()
     rCtx.arc(x, y, r, 0, Math.PI * 2)
@@ -288,12 +297,12 @@ export function makeWindowGridTexture(cols: number, rows: number, opts: WindowGr
       const h = stepY * 0.64
       ctx.fillStyle = glass
       ctx.fillRect(x, y, w, h)
-      if (Math.random() < litChance) {
-        const hex = litColors[Math.floor(Math.random() * litColors.length)]
+      if (rnd() < litChance) {
+        const hex = litColors[Math.floor(rnd() * litColors.length)]
         const rr = parseInt(hex.slice(1, 3), 16)
         const gg = parseInt(hex.slice(3, 5), 16)
         const bb = parseInt(hex.slice(5, 7), 16)
-        const key = 0.08 + Math.random() * 0.9
+        const key = 0.08 + rnd() * 0.9
         emCtx.fillStyle = `rgba(${rr},${gg},${bb},${key.toFixed(3)})`
         emCtx.fillRect(x, y, w, h)
       }
@@ -332,7 +341,7 @@ export function makeRoofTileTexture(): THREE.CanvasTexture {
     const offset = (r % 2) * (colW / 2)
     for (let c = -1; c < cols; c++) {
       // Per-tile tonal wobble.
-      const shade = 128 + Math.floor((Math.random() - 0.5) * 34)
+      const shade = 128 + Math.floor((rnd() - 0.5) * 34)
       ctx.fillStyle = `rgb(${shade},${shade},${Math.min(255, shade + 3)})`
       ctx.fillRect(c * colW + offset + 1, r * rowH + 1, colW - 2, rowH - 2)
       // Rounded tile-cap hint at the course edge.
@@ -364,14 +373,14 @@ export function makeTracksideWearTexture(): THREE.CanvasTexture {
   ctx.clearRect(0, 0, w, h)
   const tones = ['#3d3a32', '#46423a', '#38352c', '#4a443a', '#403c30', '#35322b']
   for (let i = 0; i < 240; i++) {
-    const x = Math.random() * w
-    const y = Math.random() * h
-    const r = 10 + Math.random() * 42
+    const x = rnd() * w
+    const y = rnd() * h
+    const r = 10 + rnd() * 42
     // Fade strength by distance from horizontal center so blobs thin out
     // toward the edges before the hard alpha ramp even kicks in.
     const centerFade = 1 - Math.abs(x / w - 0.5) * 2
     const g = ctx.createRadialGradient(x, y, 0, x, y, r)
-    const tone = tones[Math.floor(Math.random() * tones.length)]
+    const tone = tones[Math.floor(rnd() * tones.length)]
     g.addColorStop(0, tone + Math.round(200 * centerFade).toString(16).padStart(2, '0'))
     g.addColorStop(1, tone + '00')
     ctx.fillStyle = g
@@ -587,11 +596,11 @@ export function makeGroundTexture(): THREE.CanvasTexture {
   // asphalt and scrub from a distance without any recognizable pattern.
   const tones = ['#71776a', '#666c5e', '#747a6c', '#6b7168', '#787e69', '#687062']
   for (let i = 0; i < 260; i++) {
-    const x = Math.random() * size
-    const y = Math.random() * size
-    const r = 30 + Math.random() * 110
+    const x = rnd() * size
+    const y = rnd() * size
+    const r = 30 + rnd() * 110
     const g = ctx.createRadialGradient(x, y, 0, x, y, r)
-    const tone = tones[Math.floor(Math.random() * tones.length)]
+    const tone = tones[Math.floor(rnd() * tones.length)]
     g.addColorStop(0, tone + 'cc')
     g.addColorStop(1, tone + '00')
     ctx.fillStyle = g
@@ -601,9 +610,9 @@ export function makeGroundTexture(): THREE.CanvasTexture {
   }
   // Fine speckle for a little texture up close.
   for (let i = 0; i < 1600; i++) {
-    const shade = Math.random() < 0.5 ? 0 : 255
-    ctx.fillStyle = `rgba(${shade},${shade},${shade},${(0.02 + Math.random() * 0.04).toFixed(3)})`
-    ctx.fillRect(Math.random() * size, Math.random() * size, 2 + Math.random() * 3, 2 + Math.random() * 3)
+    const shade = rnd() < 0.5 ? 0 : 255
+    ctx.fillStyle = `rgba(${shade},${shade},${shade},${(0.02 + rnd() * 0.04).toFixed(3)})`
+    ctx.fillRect(rnd() * size, rnd() * size, 2 + rnd() * 3, 2 + rnd() * 3)
   }
   const tex = new THREE.CanvasTexture(canvas)
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping

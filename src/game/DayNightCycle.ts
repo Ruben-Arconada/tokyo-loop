@@ -1,5 +1,10 @@
 import * as THREE from 'three'
 import { makeSunTexture, makeMoonTexture } from './signage'
+import { worldStream } from './Rng'
+
+// The star field is world layout, so it comes from the seed. The lightning
+// timers further down deliberately do NOT: a storm should surprise you.
+const skyRnd = worldStream('sky')
 
 // One full 24h cycle every REAL_SECONDS_PER_DAY seconds of play.
 const REAL_SECONDS_PER_DAY = 8 * 60
@@ -237,9 +242,9 @@ export class DayNightCycle {
       const geo = new THREE.BufferGeometry()
       const positions = new Float32Array(count * 3)
       for (let i = 0; i < count; i++) {
-        const r = 1800 + Math.random() * 1500
-        const theta = Math.random() * Math.PI * 2
-        const phi = Math.acos(THREE.MathUtils.lerp(0.05, 0.95, Math.random()))
+        const r = 1800 + skyRnd() * 1500
+        const theta = skyRnd() * Math.PI * 2
+        const phi = Math.acos(THREE.MathUtils.lerp(0.05, 0.95, skyRnd()))
         positions[i * 3] = r * Math.sin(phi) * Math.cos(theta)
         positions[i * 3 + 1] = Math.abs(r * Math.cos(phi)) + 100
         positions[i * 3 + 2] = r * Math.sin(phi) * Math.sin(theta)

@@ -7,6 +7,7 @@ import { STATIONS, type ZoneTier } from '../data/stations'
 import { makeCloudTexture, makeNeonSignTexture, makeWindowGridTexture, makeRoofTileTexture, applyProgressiveWindows } from './signage'
 import { registerPool, applySeasonToPool, type Season, type SeasonalPool, type Weather } from './Seasons'
 import { SakuraCanopyCloud, PetalCarpet, makeLumpySphereGeometry, type CarpetSpot } from './SakuraCanopy'
+import { worldStream, mulberry32 } from './Rng'
 
 const N = STATIONS.length
 
@@ -114,6 +115,22 @@ export class Scenery {
   crossingBellActive = false
   crossingBlinkPhase = false
 
+  // One draw sequence per SYSTEM, all derived from the world seed. Separate
+  // streams are the whole point: adding a random call to the vegetation can
+  // no longer shift where a house or a neon sign lands. Field initializers
+  // run before the constructor body, so the builders below already have them.
+  private rngTerrain = worldStream('terrain')
+  private rngSkyline = worldStream('skyline')
+  private rngHouses = worldStream('houses')
+  private rngVeg = worldStream('vegetation')
+  private rngCanopy = worldStream('canopy')
+  private rngSignage = worldStream('signage')
+  // No 'trackside' field: poles, distance boards and crossings are placed
+  // purely from track geometry — not a single random draw between them.
+  private rngCoast = worldStream('coast')
+  private rngTunnel = worldStream('tunnel')
+  private rngSky = worldStream('sky')
+
   constructor(scene: THREE.Scene, track: Track) {
     this.scene = scene
     this.track = track
@@ -219,15 +236,15 @@ export class Scenery {
     let i = 0
     for (const c of this.sakuraClusters) {
       for (let k = 0; k < PETALS_PER_CLUSTER; k++) {
-        const ox = (Math.random() - 0.5) * 26
-        const oz = (Math.random() - 0.5) * 26
+        const ox = (this.rngCanopy() - 0.5) * 26
+        const oz = (this.rngCanopy() - 0.5) * 26
         positions[i * 3] = c.x + ox
-        positions[i * 3 + 1] = 1 + Math.random() * 7
+        positions[i * 3 + 1] = 1 + this.rngCanopy() * 7
         positions[i * 3 + 2] = c.z + oz
         this.petalSeeds[i * 4] = c.x + ox
         this.petalSeeds[i * 4 + 1] = c.z + oz
-        this.petalSeeds[i * 4 + 2] = Math.random() * Math.PI * 2
-        this.petalSeeds[i * 4 + 3] = 0.55 + Math.random() * 0.7
+        this.petalSeeds[i * 4 + 2] = this.rngCanopy() * Math.PI * 2
+        this.petalSeeds[i * 4 + 3] = 0.55 + this.rngCanopy() * 0.7
         i++
       }
     }
@@ -270,9 +287,9 @@ export class Scenery {
       // band), so the belt hugs the loop's shape at any LOOP_SCALE instead
       // of relying on hand-tuned ellipse radii.
       const outer = i < outerCount
-      const h = 45 + Math.random() * 130
-      const w = 30 + Math.random() * 45
-      const d = 30 + Math.random() * 45
+      const h = 45 + this.rngSkyline() * 130
+      const w = 30 + this.rngSkyline() * 45
+      const d = 30 + this.rngSkyline() * 45
       // Resample-not-skip (identity matrices render at the origin): the road's
       // veer crosses this outer band for its last ~400 units, and these towers
       // get random yaw — clearance must cover the rotated half-diagonal.
@@ -281,7 +298,7 @@ export class Scenery {
       const clearance = 6 + Math.hypot(w, d) / 2
       let y = h / 2 - 2
       for (let attempt = 0; attempt < 6; attempt++) {
-        const t = (outer ? i / outerCount : (i - outerCount) / innerCount) + Math.random() * 0.004
+        const t = (outer ? i / outerCount : (i - outerCount) / innerCount) + this.rngSkyline() * 0.004
         const tt = ((t % 1) + 1) % 1
         const p = this.track.pointAt(t)
         dir.set(p.x, 0, p.z).normalize()
@@ -289,10 +306,10 @@ export class Scenery {
         // across the water instead: the industrial far shore of the bay.
         const bayArc = outer && tt > 0.76 && tt < 0.96
         const off = bayArc
-          ? 3000 + Math.random() * 700
-          : (outer ? 1 : -1) * (260 + Math.random() * (outer ? 950 : 700))
-        x = p.x + dir.x * off + (Math.random() - 0.5) * 200
-        z = p.z + dir.z * off + (Math.random() - 0.5) * 200
+          ? 3000 + this.rngSkyline() * 700
+          : (outer ? 1 : -1) * (260 + this.rngSkyline() * (outer ? 950 : 700))
+        x = p.x + dir.x * off + (this.rngSkyline() - 0.5) * 200
+        z = p.z + dir.z * off + (this.rngSkyline() - 0.5) * 200
         // Terrain 2.0: the far plain rolls, so far towers ride the same
         // relief the ground plane does (the bay's far shore stays flat —
         // the plane's relief is masked there too).
@@ -301,10 +318,10 @@ export class Scenery {
       }
       dummy.position.set(x, y, z)
       dummy.scale.set(w, h, d)
-      dummy.rotation.set(0, Math.random() * Math.PI, 0)
+      dummy.rotation.set(0, this.rngSkyline() * Math.PI, 0)
       dummy.updateMatrix()
       ring.setMatrixAt(i, dummy.matrix)
-      tint.setHSL(0.6, 0.04 + Math.random() * 0.05, 0.55 + Math.random() * 0.2)
+      tint.setHSL(0.6, 0.04 + this.rngSkyline() * 0.05, 0.55 + this.rngSkyline() * 0.2)
       ring.setColorAt(i, tint)
     }
     ring.instanceMatrix.needsUpdate = true
@@ -331,30 +348,30 @@ export class Scenery {
     const dir = new THREE.Vector3()
     let pi = 0
     for (let c = 0; c < CLUSTERS; c++) {
-      const t = c / CLUSTERS + (Math.random() - 0.5) * 0.04
+      const t = c / CLUSTERS + (this.rngTerrain() - 0.5) * 0.04
       const tt = ((t % 1) + 1) % 1
       if (tt > 0.70 && tt < 0.95) continue // bay arc: keep the horizon open for the sea
       if (tt > 0.19 && tt < 0.31) continue // hill arc: the road's own range lives here
       const p = this.track.pointAt(tt)
       dir.set(p.x, 0, p.z).normalize()
-      const peaksHere = 2 + Math.floor(Math.random() * 2)
+      const peaksHere = 2 + Math.floor(this.rngTerrain() * 2)
       for (let k = 0; k < peaksHere && pi < PEAKS_MAX; k++) {
-        const out = 1600 + Math.random() * 900
-        const alongJitter = (Math.random() - 0.5) * 700
+        const out = 1600 + this.rngTerrain() * 900
+        const alongJitter = (this.rngTerrain() - 0.5) * 700
         const side = new THREE.Vector3(-dir.z, 0, dir.x)
         const base = new THREE.Vector3(p.x, 0, p.z)
           .addScaledVector(dir, out)
           .addScaledVector(side, alongJitter)
-        const h = 200 + Math.random() * 230
-        const r = 420 + Math.random() * 380
+        const h = 200 + this.rngTerrain() * 230
+        const r = 420 + this.rngTerrain() * 380
         // Buried 15 deep: the plain now rolls ±14 (terrain 2.0), and a
         // floating mountain skirt is worse than losing a few meters of cone.
         dummy.position.set(base.x, h * 0.5 - 15, base.z)
         dummy.scale.set(r, h, r)
-        dummy.rotation.set(0, Math.random() * Math.PI, 0)
+        dummy.rotation.set(0, this.rngTerrain() * Math.PI, 0)
         dummy.updateMatrix()
         peaks.setMatrixAt(pi, dummy.matrix)
-        tint.setHSL(0.4 + Math.random() * 0.04, 0.2, 0.16 + Math.random() * 0.06)
+        tint.setHSL(0.4 + this.rngTerrain() * 0.04, 0.2, 0.16 + this.rngTerrain() * 0.06)
         peaks.setColorAt(pi, tint)
         pi++
       }
@@ -396,10 +413,10 @@ export class Scenery {
   private sampleTierWeightedT(): number {
     const TIER_VEG_WEIGHT: Record<ZoneTier, number> = { quiet: 1, mid: 0.35, urban: 0.05 }
     for (let attempt = 0; attempt < 8; attempt++) {
-      const t = Math.random()
-      if (Math.random() < TIER_VEG_WEIGHT[this.tierAtT(t)]) return t
+      const t = this.rngTerrain()
+      if (this.rngTerrain() < TIER_VEG_WEIGHT[this.tierAtT(t)]) return t
     }
-    return Math.random()
+    return this.rngTerrain()
   }
 
   private buildHorizonLandmarks() {
@@ -543,16 +560,16 @@ export class Scenery {
       let sumZ = 0
       for (let k = 0; k < sakuraPerStation; k++) {
         // Spread along the approach to the station, on the side opposite the platform.
-        const t = marker.tFraction + (Math.random() - 0.35) * 0.012
+        const t = marker.tFraction + (this.rngVeg() - 0.35) * 0.012
         const p = this.track.pointAt(t)
         const tangent = this.track.tangentAt(t)
         const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize()
         // `normal` here points to the driver's RIGHT, so the platform side
         // (where the park behind the station lives) is -normal for 'left'.
         const side = STATIONS[i].doorSide === 'left' ? -1 : 1
-        const off = 17 + Math.random() * 24
+        const off = 17 + this.rngVeg() * 24
         const pos = p.clone().addScaledVector(normal, side * off)
-        const scale = 0.8 + Math.random() * 0.7
+        const scale = 0.8 + this.rngVeg() * 0.7
         sumX += pos.x
         sumZ += pos.z
 
@@ -560,18 +577,18 @@ export class Scenery {
 
         dummy.position.set(pos.x, groundY + 1.6 * scale - 0.1, pos.z)
         dummy.scale.setScalar(scale)
-        dummy.rotation.set(0, Math.random() * Math.PI, 0)
+        dummy.rotation.set(0, this.rngVeg() * Math.PI, 0)
         dummy.updateMatrix()
         sakuraTrunks.setMatrixAt(ti++, dummy.matrix)
 
         for (let b = 0; b < 3; b++) {
           // ×1.2 over the visible-era size: the card crowns grew, and the
           // shadow should keep pace with the fluff it grounds.
-          const br = (2.4 + Math.random() * 1.4) * scale
+          const br = (2.4 + this.rngVeg() * 1.4) * scale
           dummy.position.set(
-            pos.x + (Math.random() - 0.5) * 2.4 * scale,
-            groundY + (3.8 + Math.random() * 1.4) * scale,
-            pos.z + (Math.random() - 0.5) * 2.4 * scale,
+            pos.x + (this.rngVeg() - 0.5) * 2.4 * scale,
+            groundY + (3.8 + this.rngVeg() * 1.4) * scale,
+            pos.z + (this.rngVeg() - 0.5) * 2.4 * scale,
           )
           dummy.scale.set(br, br * 0.8, br)
           dummy.rotation.set(0, 0, 0)
@@ -580,7 +597,7 @@ export class Scenery {
           ci++
         }
         this.sakuraCloud.addTree(pos.x, groundY, pos.z, scale, 'sakura', isHill)
-        this.carpetSpots.push({ x: pos.x, y: groundY, z: pos.z, radius: (1.7 + Math.random()) * scale, evergreen: isHill })
+        this.carpetSpots.push({ x: pos.x, y: groundY, z: pos.z, radius: (1.7 + this.rngVeg()) * scale, evergreen: isHill })
       }
       this.sakuraClusters.push({ x: sumX / sakuraPerStation, z: sumZ / sakuraPerStation, always: isHill })
       // The hill garden's cluster blooms all year; the rest follow spring.
@@ -618,15 +635,15 @@ export class Scenery {
 
         dummy.position.set(pos.x, groundY + 1.6 * scale - 0.1, pos.z)
         dummy.scale.setScalar(scale)
-        dummy.rotation.set(0, Math.random() * Math.PI, 0)
+        dummy.rotation.set(0, this.rngVeg() * Math.PI, 0)
         dummy.updateMatrix()
         sakuraTrunks.setMatrixAt(ti++, dummy.matrix)
         for (let b = 0; b < 3; b++) {
-          const br = (2.3 + Math.random() * 1.3) * scale
+          const br = (2.3 + this.rngVeg() * 1.3) * scale
           dummy.position.set(
-            pos.x + (Math.random() - 0.5) * 2.6 * scale,
-            groundY + (3.6 + Math.random() * 1.5) * scale,
-            pos.z + (Math.random() - 0.5) * 2.6 * scale,
+            pos.x + (this.rngVeg() - 0.5) * 2.6 * scale,
+            groundY + (3.6 + this.rngVeg() * 1.5) * scale,
+            pos.z + (this.rngVeg() - 0.5) * 2.6 * scale,
           )
           dummy.scale.set(br, br * 0.78, br)
           dummy.rotation.set(0, 0, 0)
@@ -638,12 +655,12 @@ export class Scenery {
         // The grove sheds heavier than anyone: a disc under the crown and a
         // second one thrown toward the platform, so the drift reads as
         // covering the station and not just ringing the trunks.
-        this.carpetSpots.push({ x: pos.x, y: groundY, z: pos.z, radius: (1.9 + Math.random()) * scale, evergreen: true })
+        this.carpetSpots.push({ x: pos.x, y: groundY, z: pos.z, radius: (1.9 + this.rngVeg()) * scale, evergreen: true })
         this.carpetSpots.push({
-          x: pos.x + (Math.random() - 0.5) * 7,
+          x: pos.x + (this.rngVeg() - 0.5) * 7,
           y: groundY,
-          z: pos.z + (Math.random() - 0.5) * 7,
-          radius: 1.3 + Math.random() * 1.2,
+          z: pos.z + (this.rngVeg() - 0.5) * 7,
+          radius: 1.3 + this.rngVeg() * 1.2,
           evergreen: true,
         })
       }
@@ -677,8 +694,8 @@ export class Scenery {
         p = this.track.pointAt(t)
         const tangent = this.track.tangentAt(t)
         const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize()
-        side = Math.random() < 0.5 ? 1 : -1
-        off = 14 + Math.random() * 55
+        side = this.rngVeg() < 0.5 ? 1 : -1
+        off = 14 + this.rngVeg() * 55
         pos = p.clone().addScaledVector(normal, side * off)
         // The hole is centred on the CHORD, not the track: with the curve
         // 16.61 units off the chord, a plant at track-offset 30 could still
@@ -686,7 +703,7 @@ export class Scenery {
         if (this.track.trenchDepthAt(t) > 0.25 && off < 44) continue // over the trench hole
         if (!this.isNearRoad(pos.x, pos.z, 6.5)) break
       }
-      const scale = 0.7 + Math.random() * 0.9
+      const scale = 0.7 + this.rngVeg() * 0.9
 
       const groundY = groundHeightAt(p.y, side * off)
 
@@ -700,7 +717,7 @@ export class Scenery {
       dummy.scale.setScalar(scale)
       dummy.updateMatrix()
       pineFoliage.setMatrixAt(k, dummy.matrix)
-      tint.setHSL(0.32 + Math.random() * 0.05, 0.32, 0.2 + Math.random() * 0.1)
+      tint.setHSL(0.32 + this.rngVeg() * 0.05, 0.32, 0.2 + this.rngVeg() * 0.1)
       pineFoliage.setColorAt(k, tint)
     }
     pineTrunks.instanceMatrix.needsUpdate = true
@@ -729,19 +746,19 @@ export class Scenery {
         p = this.track.pointAt(t)
         const tangent = this.track.tangentAt(t)
         const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize()
-        side = Math.random() < 0.5 ? 1 : -1
+        side = this.rngVeg() < 0.5 ? 1 : -1
         // Bias density toward the track: sqrt pushes samples inward.
-        off = 12 + Math.sqrt(Math.random()) * 55
+        off = 12 + Math.sqrt(this.rngVeg()) * 55
         pos = p.clone().addScaledVector(normal, side * off)
         if (this.track.trenchDepthAt(t) > 0.25 && off < 44) continue // over the trench hole (chord-measured, see Game.ts)
         if (!this.isNearRoad(pos.x, pos.z, 5.5)) break
       }
       dummy.position.set(pos.x, groundHeightAt(p.y, side * off) + 0.1, pos.z)
-      dummy.scale.set(0.5 + Math.random() * 0.9, 0.2 + Math.random() * 0.3, 0.5 + Math.random() * 0.9)
-      dummy.rotation.set(0, Math.random() * Math.PI, 0)
+      dummy.scale.set(0.5 + this.rngVeg() * 0.9, 0.2 + this.rngVeg() * 0.3, 0.5 + this.rngVeg() * 0.9)
+      dummy.rotation.set(0, this.rngVeg() * Math.PI, 0)
       dummy.updateMatrix()
       scrub.setMatrixAt(k, dummy.matrix)
-      tint.setHSL(0.22 + Math.random() * 0.13, 0.3 + Math.random() * 0.18, 0.18 + Math.random() * 0.14)
+      tint.setHSL(0.22 + this.rngVeg() * 0.13, 0.3 + this.rngVeg() * 0.18, 0.18 + this.rngVeg() * 0.14)
       scrub.setColorAt(k, tint)
     }
     scrub.instanceMatrix.needsUpdate = true
@@ -848,8 +865,8 @@ export class Scenery {
       for (const [x, y] of [[10, 22], [38, 22]]) {
         ctx.fillStyle = '#3a3f46'
         ctx.fillRect(x, y, 16, 20)
-        if (Math.random() < 0.75) {
-          emCtx.fillStyle = `rgba(255,223,158,${(0.08 + Math.random() * 0.9).toFixed(3)})`
+        if (this.rngHouses() < 0.75) {
+          emCtx.fillStyle = `rgba(255,223,158,${(0.08 + this.rngHouses() * 0.9).toFixed(3)})`
           emCtx.fillRect(x, y, 16, 20)
         }
       }
@@ -945,17 +962,17 @@ export class Scenery {
         const tangent = this.track.tangentAt(t)
         const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize()
         const side = k % 2 === 0 ? 1 : -1
-        const off = 16.5 + Math.random() * 16
+        const off = 16.5 + this.rngHouses() * 16
         const pos = p.clone().addScaledVector(normal, side * off)
         if (this.isNearRoad(pos.x, pos.z, 10)) continue
-        const w = 5 + Math.random() * 3.5
-        const d = 5 + Math.random() * 3.5
+        const w = 5 + this.rngHouses() * 3.5
+        const d = 5 + this.rngHouses() * 3.5
         // Most entrances FACE THE TRACK (local +Z toward the rails) — the
         // fences, gates and engawa exist to be seen from the cab — but ~30%
         // turn their backs, because from a real Tokyo train you mostly see
         // rears and laundry lines, not a parade of front doors (Haruto).
-        const backTurned = Math.random() < 0.3
-        const yaw = Math.atan2(-side * normal.x, -side * normal.z) + (Math.random() - 0.5) * 0.24 + (backTurned ? Math.PI : 0)
+        const backTurned = this.rngHouses() < 0.3
+        const yaw = Math.atan2(-side * normal.x, -side * normal.z) + (this.rngHouses() - 0.5) * 0.24 + (backTurned ? Math.PI : 0)
         const sinY = Math.sin(yaw)
         const cosY = Math.cos(yaw)
         // On the hill flanks a footprint this size spans real height: probe
@@ -989,17 +1006,17 @@ export class Scenery {
           mesh.setMatrixAt(index, dummy.matrix)
         }
 
-        const wallTone = wallTones[Math.floor(Math.random() * wallTones.length)]
-        const roofTone = roofTones[Math.floor(Math.random() * roofTones.length)]
+        const wallTone = wallTones[Math.floor(this.rngHouses() * wallTones.length)]
+        const roofTone = roofTones[Math.floor(this.rngHouses() * roofTones.length)]
         const setRoofTint = (mesh: THREE.InstancedMesh, i: number, mul = 1.7) => {
           mesh.setColorAt(i, tint.setHex(roofTone).multiplyScalar(mul))
         }
 
         // ——— Archetype mix ———
-        const archRoll = Math.random()
+        const archRoll = this.rngHouses()
         const arch = archRoll < 0.42 ? 'gable' : archRoll < 0.62 ? 'lplan' : archRoll < 0.78 ? 'nikai' : 'engawa'
         const twoStory = arch === 'nikai'
-        const h = (3.1 + Math.random() * 1.0) * (twoStory ? 1.72 : 1)
+        const h = (3.1 + this.rngHouses() * 1.0) * (twoStory ? 1.72 : 1)
         const mainW = arch === 'nikai' ? w * 0.86 : w
         const mainD = arch === 'nikai' ? d * 0.86 : d
 
@@ -1013,7 +1030,7 @@ export class Scenery {
         iWall++
 
         // Roof + ridge for the main volume.
-        const roofScaleY = (twoStory ? h * 0.3 : h * 0.55) * (0.9 + Math.random() * 0.2)
+        const roofScaleY = (twoStory ? h * 0.3 : h * 0.55) * (0.9 + this.rngHouses() * 0.2)
         if (arch === 'gable' || arch === 'lplan') {
           put(gables, iGable, 0, h - 0.12, 0, mainW, roofScaleY, mainD)
           setRoofTint(gables, iGable)
@@ -1039,7 +1056,7 @@ export class Scenery {
 
         // L-plan wing: a lower volume to one flank, ridge turned 90°.
         if (arch === 'lplan') {
-          const wingSide = Math.random() < 0.5 ? 1 : -1
+          const wingSide = this.rngHouses() < 0.5 ? 1 : -1
           const wingW = mainW * 0.55
           const wingH = h * 0.74
           const wingD = mainD * 0.62
@@ -1056,7 +1073,7 @@ export class Scenery {
 
         // Engawa porch: raised wooden deck along the front, posts, and a
         // lean-to awning hanging off the wall above it.
-        if (arch === 'engawa' || (arch === 'nikai' && Math.random() < 0.5)) {
+        if (arch === 'engawa' || (arch === 'nikai' && this.rngHouses() < 0.5)) {
           const deckW = mainW * 0.86
           const deckZ = mainD / 2 + 0.62
           put(decks, iDeck, 0, 0.42, deckZ, deckW, 1, 1)
@@ -1089,8 +1106,8 @@ export class Scenery {
         const fz = mainD / 2 + 1.9
         const gateHalf = 0.85
         const frontLen = fx - gateHalf
-        const fenceTone = Math.random() < 0.25 ? woodFence : fenceTones[Math.floor(Math.random() * fenceTones.length)]
-        const fenceH = 0.75 + Math.random() * 0.25
+        const fenceTone = this.rngHouses() < 0.25 ? woodFence : fenceTones[Math.floor(this.rngHouses() * fenceTones.length)]
+        const fenceH = 0.75 + this.rngHouses() * 0.25
         const fenceHEff = fenceH + spread // walls of the yard follow the house underground
         // Front-left / front-right of the gate.
         put(fences, iFence, -(gateHalf + frontLen / 2), fenceH - fenceHEff / 2, fz, frontLen, fenceHEff, 0.14)
@@ -1118,14 +1135,14 @@ export class Scenery {
         // Scruffy grass ring at the foundation.
         for (let g = 0; g < TUFTS_PER_HOUSE; g++) {
           const ti2 = houseIdx * TUFTS_PER_HOUSE + g
-          const ang = Math.random() * Math.PI * 2
+          const ang = this.rngHouses() * Math.PI * 2
           put(
             tufts, ti2,
             (mainW / 2 + 0.35) * Math.cos(ang), 0.12, (mainD / 2 + 0.35) * Math.sin(ang),
-            0.3 + Math.random() * 0.35, 0.14 + Math.random() * 0.16, 0.3 + Math.random() * 0.35,
-            Math.random() * Math.PI,
+            0.3 + this.rngHouses() * 0.35, 0.14 + this.rngHouses() * 0.16, 0.3 + this.rngHouses() * 0.35,
+            this.rngHouses() * Math.PI,
           )
-          tint.setHSL(0.25 + Math.random() * 0.09, 0.32 + Math.random() * 0.15, 0.2 + Math.random() * 0.12)
+          tint.setHSL(0.25 + this.rngHouses() * 0.09, 0.32 + this.rngHouses() * 0.15, 0.2 + this.rngHouses() * 0.12)
           tufts.setColorAt(ti2, tint)
         }
         houseIdx++
@@ -1270,20 +1287,20 @@ export class Scenery {
       const marker = this.track.markerFor(s)
       const signsHere = station.landmark ? Math.round(base * 1.4) : base
       for (let k = 0; k < signsHere; k++) {
-        const design = Math.floor(Math.random() * NEON_SIGNS.length)
+        const design = Math.floor(this.rngSignage() * NEON_SIGNS.length)
         if (counters[design] + 2 > perDesign) continue
-        const t = marker.tFraction + (Math.random() - 0.3) * 0.014
+        const t = marker.tFraction + (this.rngSignage() - 0.3) * 0.014
         // A sign floating over the trench hole would hang in mid-air.
         if (this.track.trenchDepthAt(t) > 0.25) continue
         const p = this.track.pointAt(t)
         const tangent = this.track.tangentAt(t)
         const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize()
-        const side = Math.random() < 0.5 ? 1 : -1
-        const off = 13 + Math.random() * 24
+        const side = this.rngSignage() < 0.5 ? 1 : -1
+        const off = 13 + this.rngSignage() * 24
         const pos = p.clone().addScaledVector(normal, side * off)
-        const yaw = Math.atan2(normal.x, normal.z) + (side < 0 ? Math.PI : 0) + (Math.random() - 0.5) * 0.5
-        const scale = 0.85 + Math.random() * 0.6
-        const y = 4.5 + Math.random() * 5
+        const yaw = Math.atan2(normal.x, normal.z) + (side < 0 ? Math.PI : 0) + (this.rngSignage() - 0.5) * 0.5
+        const scale = 0.85 + this.rngSignage() * 0.6
+        const y = 4.5 + this.rngSignage() * 5
         // Face roughly across the track so the driver reads them straight on.
         for (const flip of [0, Math.PI]) {
           dummy.position.set(pos.x, y, pos.z)
@@ -1351,8 +1368,8 @@ export class Scenery {
       ctx.fillStyle = '#5b5e63'
       ctx.fillRect(0, 0, 64, 128)
       for (let i = 0; i < 260; i++) {
-        ctx.fillStyle = Math.random() < 0.5 ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.08)'
-        ctx.fillRect(Math.random() * 64, Math.random() * 128, 1.5, 1.5)
+        ctx.fillStyle = this.rngTerrain() < 0.5 ? 'rgba(255,255,255,0.05)' : 'rgba(0,0,0,0.08)'
+        ctx.fillRect(this.rngTerrain() * 64, this.rngTerrain() * 128, 1.5, 1.5)
       }
       // Japanese country road markings: solid white edge lines, dashed center.
       ctx.fillStyle = '#e8e6da'
@@ -1437,11 +1454,11 @@ export class Scenery {
       const base = end.clone().addScaledVector(endDir, m.fwd).addScaledVector(perp, m.side)
       mDummy.position.set(base.x, m.h * 0.5 - 15, base.z)
       mDummy.scale.set(m.r, m.h, m.r)
-      mDummy.rotation.set(0, Math.random() * Math.PI, 0)
+      mDummy.rotation.set(0, this.rngTerrain() * Math.PI, 0)
       mDummy.updateMatrix()
       mountains.setMatrixAt(i, mDummy.matrix)
       // Dark cool forest-green — distant wooded ranges, not pastel paper.
-      mTint.setHSL(0.39 + Math.random() * 0.03, 0.22, 0.16 + i * 0.02)
+      mTint.setHSL(0.39 + this.rngTerrain() * 0.03, 0.22, 0.16 + i * 0.02)
       mountains.setColorAt(i, mTint)
     })
     mountains.instanceMatrix.needsUpdate = true
@@ -1527,7 +1544,7 @@ export class Scenery {
         dummy.rotateZ(-side * 0.08)
         dummy.updateMatrix()
         walls.setMatrixAt(wi, dummy.matrix)
-        const shade = 0.88 + Math.random() * 0.18
+        const shade = 0.88 + this.rngVeg() * 0.18
         walls.setColorAt(wi, tint.setRGB(shade, shade, shade))
         wi++
       }
@@ -1563,12 +1580,12 @@ export class Scenery {
     for (let k = 0; k < TREES; k++) {
       let placed: { pos: THREE.Vector3; groundY: number } | null = null
       for (let attempt = 0; attempt < 6 && !placed; attempt++) {
-        const t = center + (Math.random() * 2 - 1) * 0.052
+        const t = center + (this.rngVeg() * 2 - 1) * 0.052
         const p = this.track.pointAt(t)
         const tangent = this.track.tangentAt(t)
         const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize()
-        const side = Math.random() < 0.5 ? 1 : -1
-        const off = 12 + Math.random() * 50
+        const side = this.rngVeg() < 0.5 ? 1 : -1
+        const off = 12 + this.rngVeg() * 50
         const arcToStation = Math.abs(t - center) * len
         const arcToCross = Math.abs(t - crossT) * len
         if (arcToStation < 44 && off < 18) continue // platform zone
@@ -1579,31 +1596,31 @@ export class Scenery {
       }
       if (!placed) continue
       const { pos, groundY } = placed
-      const scale = 0.75 + Math.random() * 0.8
-      const kind = Math.random()
+      const scale = 0.75 + this.rngVeg() * 0.8
+      const kind = this.rngVeg()
       if (kind < 0.3 && pi < hillPines.count) {
         // Pine: reuse the trackside pine silhouette, denser green.
         dummy.position.set(pos.x, groundY + 2.3 * scale - 0.1, pos.z)
         dummy.scale.setScalar(scale)
-        dummy.rotation.set(0, Math.random() * Math.PI, 0)
+        dummy.rotation.set(0, this.rngVeg() * Math.PI, 0)
         dummy.updateMatrix()
         hillPines.setMatrixAt(pi, dummy.matrix)
-        tint.setHSL(0.33 + Math.random() * 0.04, 0.35, 0.18 + Math.random() * 0.09)
+        tint.setHSL(0.33 + this.rngVeg() * 0.04, 0.35, 0.18 + this.rngVeg() * 0.09)
         hillPines.setColorAt(pi, tint)
         pi++
         continue
       }
       dummy.position.set(pos.x, groundY + 1.2 * scale - 0.1, pos.z)
       dummy.scale.setScalar(scale)
-      dummy.rotation.set(0, Math.random() * Math.PI, 0)
+      dummy.rotation.set(0, this.rngVeg() * Math.PI, 0)
       dummy.updateMatrix()
       trunks.setMatrixAt(ti++, dummy.matrix)
       for (let b = 0; b < 2; b++) {
-        const br = (1.7 + Math.random() * 1.1) * scale
+        const br = (1.7 + this.rngVeg() * 1.1) * scale
         dummy.position.set(
-          pos.x + (Math.random() - 0.5) * 1.6 * scale,
-          groundY + (2.6 + b * 1.1 + Math.random() * 0.5) * scale,
-          pos.z + (Math.random() - 0.5) * 1.6 * scale,
+          pos.x + (this.rngVeg() - 0.5) * 1.6 * scale,
+          groundY + (2.6 + b * 1.1 + this.rngVeg() * 0.5) * scale,
+          pos.z + (this.rngVeg() - 0.5) * 1.6 * scale,
         )
         dummy.scale.set(br, br * 0.78, br)
         dummy.rotation.set(0, 0, 0)
@@ -1615,7 +1632,7 @@ export class Scenery {
       // are the maples/broadleafs that go full momiji in autumn. Lightness
       // ×1.2 over the sphere era: the cards are unlit, and the sun used
       // to do that part of the brightening (×1.35 read minty).
-      tint.setHSL(0.27 + Math.random() * 0.09, 0.42, (0.26 + Math.random() * 0.1) * 1.2)
+      tint.setHSL(0.27 + this.rngVeg() * 0.09, 0.42, (0.26 + this.rngVeg() * 0.1) * 1.2)
       this.sakuraCloud.addTree(pos.x, groundY, pos.z, scale, 'broadleaf', false, tint)
     }
     // The momiji witnesses: guaranteed broadleafs framing the last ~80 units
@@ -1630,15 +1647,15 @@ export class Scenery {
       const groundY = groundHeightAt(p.y, lat)
       dummy.position.set(pos.x, groundY + 1.2 * scale - 0.1, pos.z)
       dummy.scale.setScalar(scale)
-      dummy.rotation.set(0, Math.random() * Math.PI, 0)
+      dummy.rotation.set(0, this.rngVeg() * Math.PI, 0)
       dummy.updateMatrix()
       trunks.setMatrixAt(ti++, dummy.matrix)
       for (let b = 0; b < 2; b++) {
-        const br = (1.9 + Math.random() * 1.0) * scale
+        const br = (1.9 + this.rngVeg() * 1.0) * scale
         dummy.position.set(
-          pos.x + (Math.random() - 0.5) * 1.6 * scale,
-          groundY + (2.6 + b * 1.1 + Math.random() * 0.5) * scale,
-          pos.z + (Math.random() - 0.5) * 1.6 * scale,
+          pos.x + (this.rngVeg() - 0.5) * 1.6 * scale,
+          groundY + (2.6 + b * 1.1 + this.rngVeg() * 0.5) * scale,
+          pos.z + (this.rngVeg() - 0.5) * 1.6 * scale,
         )
         dummy.scale.set(br, br * 0.78, br)
         dummy.rotation.set(0, 0, 0)
@@ -1646,7 +1663,7 @@ export class Scenery {
         canopies.setMatrixAt(ci, dummy.matrix)
         ci++
       }
-      tint.setHSL(0.26 + Math.random() * 0.06, 0.45, (0.3 + Math.random() * 0.08) * 1.2)
+      tint.setHSL(0.26 + this.rngVeg() * 0.06, 0.45, (0.3 + this.rngVeg() * 0.08) * 1.2)
       this.sakuraCloud.addTree(pos.x, groundY, pos.z, scale, 'broadleaf', false, tint)
     }
     trunks.count = ti
@@ -1875,9 +1892,9 @@ export class Scenery {
       ctx.fillRect(0, 0, 256, 128)
       // Water stains bleeding down from the joints.
       for (let i = 0; i < 34; i++) {
-        const x = Math.random() * 256
-        const w = 3 + Math.random() * 10
-        const h = 24 + Math.random() * 80
+        const x = this.rngTunnel() * 256
+        const w = 3 + this.rngTunnel() * 10
+        const h = 24 + this.rngTunnel() * 80
         const grad = ctx.createLinearGradient(0, 0, 0, h)
         grad.addColorStop(0, 'rgba(38,40,36,0.34)')
         grad.addColorStop(1, 'rgba(38,40,36,0)')
@@ -1889,9 +1906,9 @@ export class Scenery {
       }
       // Speckle.
       for (let i = 0; i < 500; i++) {
-        const shade = Math.random() < 0.5 ? 0 : 255
-        ctx.fillStyle = `rgba(${shade},${shade},${shade},${(0.03 + Math.random() * 0.05).toFixed(3)})`
-        ctx.fillRect(Math.random() * 256, Math.random() * 128, 1.5, 1.5)
+        const shade = this.rngTunnel() < 0.5 ? 0 : 255
+        ctx.fillStyle = `rgba(${shade},${shade},${shade},${(0.03 + this.rngTunnel() * 0.05).toFixed(3)})`
+        ctx.fillRect(this.rngTunnel() * 256, this.rngTunnel() * 128, 1.5, 1.5)
       }
       const tex = new THREE.CanvasTexture(canvas)
       tex.wrapS = tex.wrapT = THREE.RepeatWrapping
@@ -2223,14 +2240,14 @@ export class Scenery {
     const rocks = new THREE.InstancedMesh(new THREE.DodecahedronGeometry(1, 0), rockMat, 14)
     const dummy = new THREE.Object3D()
     for (let i = 0; i < 14; i++) {
-      const t = T0 + 0.015 + Math.random() * (T1 - T0 - 0.03)
+      const t = T0 + 0.015 + this.rngCoast() * (T1 - T0 - 0.03)
       this.track.pointAt(t, p)
       out.set(p.x, p.z).normalize()
       const S = shoreAt(t)
-      const off = S + (Math.random() - 0.3) * 16
-      dummy.position.set(p.x + out.x * off, -0.5 + Math.random() * 0.5, p.z + out.y * off)
-      dummy.scale.set(2 + Math.random() * 4, 1.2 + Math.random() * 2.4, 2 + Math.random() * 3.5)
-      dummy.rotation.set(0, Math.random() * Math.PI, 0)
+      const off = S + (this.rngCoast() - 0.3) * 16
+      dummy.position.set(p.x + out.x * off, -0.5 + this.rngCoast() * 0.5, p.z + out.y * off)
+      dummy.scale.set(2 + this.rngCoast() * 4, 1.2 + this.rngCoast() * 2.4, 2 + this.rngCoast() * 3.5)
+      dummy.rotation.set(0, this.rngCoast() * Math.PI, 0)
       dummy.updateMatrix()
       rocks.setMatrixAt(i, dummy.matrix)
     }
@@ -2244,15 +2261,15 @@ export class Scenery {
     const sails = new THREE.InstancedMesh(makeSailGeometry(), sailMat, 7)
     const hulls = new THREE.InstancedMesh(new THREE.BoxGeometry(0.9, 0.5, 3.4), hullMat, 7)
     for (let i = 0; i < 7; i++) {
-      const t = T0 + 0.02 + Math.random() * (T1 - T0 - 0.04)
+      const t = T0 + 0.02 + this.rngCoast() * (T1 - T0 - 0.04)
       this.track.pointAt(t, p)
       out.set(p.x, p.z).normalize()
-      const off = shoreAt(t) + 90 + Math.random() * 420
+      const off = shoreAt(t) + 90 + this.rngCoast() * 420
       const x = p.x + out.x * off
       const z = p.z + out.y * off
-      const scale = 1.6 + Math.random() * 1.6
+      const scale = 1.6 + this.rngCoast() * 1.6
       dummy.position.set(x, -0.45, z)
-      dummy.rotation.set(0, Math.random() * Math.PI * 2, 0)
+      dummy.rotation.set(0, this.rngCoast() * Math.PI * 2, 0)
       dummy.scale.setScalar(scale)
       dummy.updateMatrix()
       sails.setMatrixAt(i, dummy.matrix)
@@ -2273,14 +2290,14 @@ export class Scenery {
     trunks.castShadow = crowns.castShadow = true
     const tint = new THREE.Color()
     for (let i = 0; i < PINES; i++) {
-      const t = T0 + ((i + 0.5) / PINES) * (T1 - T0) + (Math.random() - 0.5) * 0.004
+      const t = T0 + ((i + 0.5) / PINES) * (T1 - T0) + (this.rngCoast() - 0.5) * 0.004
       this.track.pointAt(t, p)
       out.set(p.x, p.z).normalize()
-      const off = shoreAt(t) - 28 - Math.random() * 18
+      const off = shoreAt(t) - 28 - this.rngCoast() * 18
       const x = p.x + out.x * off
       const z = p.z + out.y * off
-      const scale = 0.85 + Math.random() * 0.75
-      const lean = 0.14 + Math.random() * 0.2 // tops pushed inland by the onshore wind
+      const scale = 0.85 + this.rngCoast() * 0.75
+      const lean = 0.14 + this.rngCoast() * 0.2 // tops pushed inland by the onshore wind
       // Lean axis: tilt around the shoreline direction, away from the sea.
       const yaw = Math.atan2(out.x, out.y)
       dummy.position.set(x, BASE_GROUND_Y + 1.6 * scale, z)
@@ -2294,7 +2311,7 @@ export class Scenery {
       dummy.position.set(x - out.x * lean * 4.4 * scale, BASE_GROUND_Y + (3.4 + 1.7) * scale, z - out.y * lean * 4.4 * scale)
       dummy.updateMatrix()
       crowns.setMatrixAt(i, dummy.matrix)
-      tint.setHSL(0.33 + Math.random() * 0.05, 0.34, 0.19 + Math.random() * 0.09)
+      tint.setHSL(0.33 + this.rngCoast() * 0.05, 0.34, 0.19 + this.rngCoast() * 0.09)
       crowns.setColorAt(i, tint)
     }
     trunks.instanceMatrix.needsUpdate = true
@@ -2339,15 +2356,15 @@ export class Scenery {
     const mid = this.weatherLook === 'cloudy'
     const dummy = new THREE.Object3D()
     for (let i = 0; i < CLOUD_COUNT; i++) {
-      const angle = (i / CLOUD_COUNT) * Math.PI * 2 + Math.random() * 0.4
+      const angle = (i / CLOUD_COUNT) * Math.PI * 2 + this.rngSky() * 0.4
       // Kept far out, with width capped relative to distance, so no single
       // transparent quad ever eats a huge slice of mobile fill rate.
-      const radius = heavy ? 1100 + Math.random() * 1900 : mid ? 1300 + Math.random() * 2100 : 1500 + Math.random() * 2400
+      const radius = heavy ? 1100 + this.rngSky() * 1900 : mid ? 1300 + this.rngSky() * 2100 : 1500 + this.rngSky() * 2400
       const w = Math.min(
-        heavy ? 520 + Math.random() * 520 : mid ? 400 + Math.random() * 500 : 320 + Math.random() * 480,
+        heavy ? 520 + this.rngSky() * 520 : mid ? 400 + this.rngSky() * 500 : 320 + this.rngSky() * 480,
         radius * (heavy ? 0.4 : 0.28),
       )
-      const y = heavy ? 200 + Math.random() * 220 : mid ? 250 + Math.random() * 300 : 300 + Math.random() * 380
+      const y = heavy ? 200 + this.rngSky() * 220 : mid ? 250 + this.rngSky() * 300 : 300 + this.rngSky() * 380
       dummy.position.set(Math.cos(angle) * radius, y, Math.sin(angle) * radius)
       // Storm slabs flatten out; fair-weather puffs stay rounder.
       dummy.scale.set(w, w * (heavy ? 0.3 : 0.42), 1)
@@ -2507,6 +2524,9 @@ function makeSailGeometry(): THREE.BufferGeometry {
  * pattern would moiré at the grazing angle the cab sees it from.
  */
 function makeSeaTexture(): THREE.CanvasTexture {
+  // Fixed seed, not a world stream: the sea's streaks are ARTWORK, and the
+  // texture should look the same in every world — only its layout is seeded.
+  const rnd = mulberry32(0x5ea7)
   const size = 256
   const canvas = document.createElement('canvas')
   canvas.width = size
@@ -2519,17 +2539,17 @@ function makeSeaTexture(): THREE.CanvasTexture {
   ctx.fillRect(0, 0, size, size)
   // Wave streaks: soft bright bands with darker troughs between them.
   for (let i = 0; i < 46; i++) {
-    const y = Math.random() * size
-    const w = 30 + Math.random() * 110
-    const x = Math.random() * size
-    const bright = Math.random() < 0.6
+    const y = rnd() * size
+    const w = 30 + rnd() * 110
+    const x = rnd() * size
+    const bright = rnd() < 0.6
     ctx.fillStyle = bright ? 'rgba(180,220,235,0.10)' : 'rgba(8,24,34,0.14)'
-    ctx.fillRect(x - w / 2, y, w, 1.5 + Math.random() * 2)
+    ctx.fillRect(x - w / 2, y, w, 1.5 + rnd() * 2)
   }
   // A scatter of sun glints.
   for (let i = 0; i < 90; i++) {
-    ctx.fillStyle = `rgba(210,235,245,${(0.04 + Math.random() * 0.08).toFixed(3)})`
-    ctx.fillRect(Math.random() * size, Math.random() * size, 1 + Math.random() * 2, 1)
+    ctx.fillStyle = `rgba(210,235,245,${(0.04 + rnd() * 0.08).toFixed(3)})`
+    ctx.fillRect(rnd() * size, rnd() * size, 1 + rnd() * 2, 1)
   }
   const tex = new THREE.CanvasTexture(canvas)
   tex.wrapS = tex.wrapT = THREE.RepeatWrapping

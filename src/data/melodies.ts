@@ -9,6 +9,8 @@
 // stations feel related in style yet none repeats identically or sounds
 // perfectly mechanical.
 
+import { mulberry32 } from '../game/Rng'
+
 const MAJOR_PENTATONIC = [0, 2, 4, 7, 9] // bright, "ekimelo"-style scale
 const PASSING_SEMITONES = [5, 11] // color tones used sparingly, off the main scale, on weak beats
 const A4 = 440
@@ -41,17 +43,11 @@ function hashString(s: string): number {
   return h
 }
 
-/** Small deterministic PRNG (mulberry32), seeded per station so humanization is stable across replays. */
-function mulberry32(seed: number): () => number {
-  let s = seed
-  return () => {
-    s |= 0
-    s = (s + 0x6d2b79f5) | 0
-    let t = Math.imul(s ^ (s >>> 15), 1 | s)
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
-  }
-}
+// The PRNG is the shared one now, but the SEED stays local and per-station:
+// a melody belongs to its station, not to the world seed. Changing worlds
+// with ?seed= must never change what Kiyomizu plays. The hashString above is
+// deliberately NOT the shared one either — it picks the template and the root,
+// so swapping it would rewrite all thirty melodies.
 
 export interface PlayableNote {
   freq: number | null

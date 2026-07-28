@@ -1,5 +1,6 @@
 import * as THREE from 'three'
 import type { Season } from './Seasons'
+import { mulberry32, Rng } from './Rng'
 
 // ————————————————————————————————————————————————————————————————
 // Billboard-cloud sakura canopies (Rubén: the sphere blobs "se ven bastante
@@ -32,6 +33,11 @@ const FAMILY_ROW_BASE: Record<CanopyFamily, number> = { sakura: 0, broadleaf: 4 
 // (0xf5c9dc); the cards' atlas is near-white, so that factor lives in the
 // tint now — without it the crowns read white, not sakura.
 const BLOSSOM_BASE = new THREE.Color(0xf5c9dc)
+
+// One stream for the whole canopy system: where the cards and the fallen
+// petals sit in the world. The atlas below is artwork, not world layout, so
+// it keeps a FIXED seed — the sprites must look the same in every world.
+const canopyRng = new Rng('canopy')
 
 /**
  * The clump sprites are painted near-white with value jitter; the instance
@@ -200,17 +206,8 @@ export function makeLumpySphereGeometry(radius: number, widthSegs: number, heigh
   return geo
 }
 
-/** Deterministic PRNG so the atlas (and card layout noise) is identical every load. */
-function mulberry32(seed: number): () => number {
-  let a = seed >>> 0
-  return () => {
-    a |= 0
-    a = (a + 0x6d2b79f5) | 0
-    let t = Math.imul(a ^ (a >>> 15), 1 | a)
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
-  }
-}
+// The atlas PRNG is the shared mulberry32 with a FIXED seed, not a world
+// stream: the blossom sprites are artwork, identical in every world.
 
 interface PendingCard {
   x: number
@@ -262,23 +259,23 @@ export class SakuraCanopyCloud {
       // a skirt so the silhouette never reads as an egg.
       const core = i < cores
       const skirt = i >= cards - 2
-      const a = Math.random() * Math.PI * 2
-      const shell = sakura ? 0.5 + Math.random() * 1.2 : 0.4 + Math.random() * 0.9
+      const a = canopyRng.random() * Math.PI * 2
+      const shell = sakura ? 0.5 + canopyRng.random() * 1.2 : 0.4 + canopyRng.random() * 0.9
       const rXZ = (core ? 0.25 : skirt ? (sakura ? 1.5 : 1.1) : shell) * scale
       const yOff = core
-        ? (Math.random() - 0.4) * 0.7 * scale
+        ? (canopyRng.random() - 0.4) * 0.7 * scale
         : skirt
           ? (sakura ? -1.2 : -0.85) * scale
-          : (Math.random() - 0.38) * (sakura ? 2.1 : 1.5) * scale
-      if (sakura) this.tint.setHSL(0.93 + Math.random() * 0.03, 0.55, 0.82 + Math.random() * 0.08).multiply(BLOSSOM_BASE)
+          : (canopyRng.random() - 0.38) * (sakura ? 2.1 : 1.5) * scale
+      if (sakura) this.tint.setHSL(0.93 + canopyRng.random() * 0.03, 0.55, 0.82 + canopyRng.random() * 0.08).multiply(BLOSSOM_BASE)
       else this.tint.copy(tint!)
       this.pending.push({
         x: x + Math.cos(a) * rXZ,
         y: crownY + yOff,
         z: z + Math.sin(a) * rXZ,
-        size: (core ? (sakura ? 4.4 : 3.3) : sakura ? 3.2 + Math.random() * 1.7 : 2.5 + Math.random() * 1.2) * scale,
-        col: Math.floor(Math.random() * COLS),
-        phase: Math.random() * Math.PI * 2,
+        size: (core ? (sakura ? 4.4 : 3.3) : sakura ? 3.2 + canopyRng.random() * 1.7 : 2.5 + canopyRng.random() * 1.2) * scale,
+        col: Math.floor(canopyRng.random() * COLS),
+        phase: canopyRng.random() * Math.PI * 2,
         r: this.tint.r,
         g: this.tint.g,
         b: this.tint.b,
@@ -464,7 +461,7 @@ export class PetalCarpet {
     this.evergreenFlags = new Uint8Array(spots.length)
     spots.forEach((s, i) => {
       this.dummy.position.set(s.x, s.y + 0.06, s.z)
-      this.dummy.rotation.set(-Math.PI / 2, 0, Math.random() * Math.PI * 2)
+      this.dummy.rotation.set(-Math.PI / 2, 0, canopyRng.random() * Math.PI * 2)
       this.dummy.scale.setScalar(s.radius)
       this.dummy.updateMatrix()
       this.mesh!.setMatrixAt(i, this.dummy.matrix)

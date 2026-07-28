@@ -161,6 +161,8 @@ export class Precipitation {
     this.mesh.frustumCulled = false
     this.mesh.renderOrder = 3 // over the clouds, under nothing that matters
     this.mesh.visible = false
+    // Dynamic: the curtain reshuffles every frame.
+    this.mesh.userData.dynamic = true
     scene.add(this.mesh)
   }
 

@@ -1,3 +1,5 @@
+import { WORLD_SEED } from './Rng'
+
 // ————————————————————————————————————————————————————————————————
 // Frame-time recorder for real-device sessions.
 //
@@ -322,7 +324,11 @@ export class PerfLog {
   /** The payload to hand back: compact arrays, not objects — a full lap has to fit in a paste. */
   export(): string {
     return JSON.stringify({
-      v: 1,
+      v: 2,
+      // Which world this lap was driven through. Two laps are only comparable
+      // if this matches — before seeding, every reload dealt a different Japan
+      // and draw counts could not be told apart from layout luck.
+      seed: WORLD_SEED,
       ctx: this.context,
       summary: this.summary,
       // [tSec, frames, meanMs, maxMs, draws, kTris, kmh, progress‰]

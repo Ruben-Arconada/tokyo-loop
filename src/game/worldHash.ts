@@ -1,0 +1,141 @@
+import * as THREE from 'three'
+import { WORLD_SEED } from './Rng'
+
+// ————————————————————————————————————————————————————————————————
+// Fingerprints of the GENERATED world, for checking that seeding actually
+// works. Deliberately NOT pixel comparison: WebGL output legitimately differs
+// between GPUs, drivers, antialiasing settings and font rasterizers even when
+// the world is byte-identical, so "same screenshot" is not a determinism test.
+// What must be reproducible is the DATA we generate — where every instance
+// sits, how big it is, what colour it was given.
+//
+// Everything is quantized before hashing: float noise in the last bits of a
+// matrix (from an FMA reordering, say) must not change the answer, while a
+// millimetre of real displacement must.
+// ————————————————————————————————————————————————————————————————
+
+/** Positions/scales to the millimetre, colours to ~1/1000 of a channel. */
+const QUANT = 1000
+
+/** FNV-1a over a stream of quantized integers, returned as 8 hex chars. */
+class Digest {
+  private h = 0x811c9dc5
+
+  push(value: number) {
+    // Quantize first, then fold the integer in four bytes at a time.
+    let q = Math.round(value * QUANT) | 0
+    for (let i = 0; i < 4; i++) {
+      this.h ^= q & 0xff
+      this.h = Math.imul(this.h, 0x01000193)
+      q >>>= 8
+    }
+    return this
+  }
+
+  pushText(text: string) {
+    for (let i = 0; i < text.length; i++) {
+      this.h ^= text.charCodeAt(i)
+      this.h = Math.imul(this.h, 0x01000193)
+    }
+    return this
+  }
+
+  get hex(): string {
+    return (this.h >>> 0).toString(16).padStart(8, '0')
+  }
+}
+
+export interface WorldFingerprint {
+  seed: string
+  /** One hash per generated mesh of the STATIC world, keyed by creation order + what it is. */
+  parts: Record<string, string>
+  /** Everything static folded together — the single number to compare between loads. */
+  total: string
+  /**
+   * Meshes tagged `userData.dynamic`: passengers and the precipitation
+   * curtain. They are placed by live systems that are deliberately still on
+   * Math.random(), so they change between loads BY DESIGN and must stay out
+   * of the total — otherwise the world's determinism check would never pass.
+   * Reported anyway, so the day they get seeded it is visible here.
+   */
+  dynamicParts: Record<string, string>
+}
+
+/**
+ * Walks the scene in creation order and fingerprints every mesh that carries
+ * generated placement: instance matrices and instance colours for instanced
+ * pools, and the world transform for plain meshes.
+ *
+ * The keys are `NN.GeometryType.count`, where NN is traversal order. That is
+ * stable for a given build, which is all the comparison needs — it answers
+ * "did THIS pool move?", which is the question when checking that touching one
+ * system left the others alone.
+ */
+export function worldFingerprint(scene: THREE.Scene): WorldFingerprint {
+  const parts: Record<string, string> = {}
+  const dynamicParts: Record<string, string> = {}
+  const totalDigest = new Digest()
+  let index = 0
+
+  scene.traverse((obj) => {
+    const mesh = obj as THREE.Mesh & { isInstancedMesh?: boolean; count?: number; instanceMatrix?: THREE.BufferAttribute; instanceColor?: THREE.BufferAttribute | null }
+    if (!(mesh as unknown as { isMesh?: boolean }).isMesh || !mesh.geometry) return
+
+    const d = new Digest()
+    const kind = mesh.geometry.type
+    d.pushText(kind)
+    const bucket = mesh.userData?.dynamic ? dynamicParts : parts
+
+    if (mesh.isInstancedMesh && mesh.instanceMatrix) {
+      const count = mesh.count ?? 0
+      d.push(count)
+      const m = mesh.instanceMatrix.array as Float32Array
+      // Only the live instances: the buffer is allocated to a cap and the
+      // tail is uninitialised, which is not part of the world.
+      for (let i = 0; i < count * 16; i++) d.push(m[i])
+      if (mesh.instanceColor) {
+        const c = mesh.instanceColor.array as Float32Array
+        for (let i = 0; i < count * 3; i++) d.push(c[i])
+      }
+      bucket[`${String(index).padStart(2, "0")}.${kind}.${count}`] = d.hex
+    } else if ((mesh.geometry as THREE.InstancedBufferGeometry).isInstancedBufferGeometry) {
+      // The blossom cards live here: an InstancedBufferGeometry carries its
+      // per-instance data in ATTRIBUTES, not in an instanceMatrix, so the
+      // branch above would have missed the whole canopy system.
+      const geo = mesh.geometry as THREE.InstancedBufferGeometry
+      const count = geo.instanceCount
+      d.push(count)
+      for (const name of Object.keys(geo.attributes).sort()) {
+        const attr = geo.attributes[name] as THREE.BufferAttribute
+        if (!(attr as THREE.InstancedBufferAttribute).isInstancedBufferAttribute) continue
+        d.pushText(name)
+        const arr = attr.array as Float32Array
+        const used = Math.min(arr.length, count * attr.itemSize)
+        for (let i = 0; i < used; i++) d.push(arr[i])
+      }
+      bucket[`${String(index).padStart(2, "0")}.instanced.${count}`] = d.hex
+    } else {
+      // A plain mesh contributes its placement, not its vertices: the
+      // geometry is authored, only where it ended up is generated.
+      mesh.updateWorldMatrix(false, false)
+      const e = mesh.matrixWorld.elements
+      for (let i = 0; i < 16; i++) d.push(e[i])
+      bucket[`${String(index).padStart(2, "0")}.${kind}`] = d.hex
+    }
+    // Only the static world folds into the total: a dynamic mesh in there
+    // would make the number change on every load and prove nothing.
+    if (bucket === parts) totalDigest.pushText(d.hex)
+    index++
+  })
+
+  return { seed: WORLD_SEED, parts, total: totalDigest.hex, dynamicParts }
+}
+
+/**
+ * Names the parts that differ between two fingerprints — the readable form of
+ * "changing the vegetation must not move the city".
+ */
+export function fingerprintDiff(a: WorldFingerprint, b: WorldFingerprint): string[] {
+  const keys = new Set([...Object.keys(a.parts), ...Object.keys(b.parts)])
+  return [...keys].filter((k) => a.parts[k] !== b.parts[k]).sort()
+}
