@@ -8,7 +8,7 @@ import { Passengers } from './Passengers'
 import { Precipitation } from './Precipitation'
 import { TrainConsist, CAB_OFFSET } from './TrainConsist'
 import type { CameraMode } from './cameraModes'
-import { PerfLog, setActivePerfLog, perfMark } from './PerfLog'
+import { PerfLog, setActivePerfLog, perfMark, perfPhase } from './PerfLog'
 import { PassengerFlow, TRAIN_CAPACITY } from './PassengerFlow'
 import { Schedule, ON_TIME_TOLERANCE, LATE_TOLERANCE, type ScheduleLevel } from './Schedule'
 import { registerPool, applySeasonToPool, overcastTarget, precipProfile, type Season, type Weather, type SeasonalPool } from './Seasons'
@@ -1915,11 +1915,17 @@ export class Game {
     // Below ~20fps, a variable dt clamped at the frame level would silently
     // run the simulation in slow motion instead; this catches up instead.
     this.physicsAccumulator = Math.min(this.physicsAccumulator + frameDt, FIXED_DT * MAX_CATCHUP_STEPS)
-    while (this.physicsAccumulator >= FIXED_DT) {
-      this.train.update(FIXED_DT)
-      this.physicsAccumulator -= FIXED_DT
-    }
-    this.step(frameDt)
+    // Timed as phases so the frame adds up: physics + step + render should
+    // account for frameMs. Whatever is left over is NOT our code — and after
+    // the probe found 320 ms stalls with a 5 ms render, knowing that is the
+    // whole question.
+    perfPhase('f:physics', () => {
+      while (this.physicsAccumulator >= FIXED_DT) {
+        this.train.update(FIXED_DT)
+        this.physicsAccumulator -= FIXED_DT
+      }
+    })
+    perfPhase('f:step', () => this.step(frameDt))
     // Timed around the call itself. `rawDt` above is the interval BEFORE this
     // frame, so pairing it with resources read after this render mis-attributes
     // a stall by exactly one frame — the render that compiled would look fast
@@ -2018,42 +2024,44 @@ export class Game {
       this.lastMarkedStation = this.train.targetStationIndex
       perfMark('station')
     }
-    this.city.update(dt, this.dayNight.nightFactor, this.train.targetStationIndex)
+    perfPhase('f:city', () => this.city.update(dt, this.dayNight.nightFactor, this.train.targetStationIndex))
     // Real seconds, not clock-scaled: the train runs in real time, so if
     // arrivals followed the accelerated day the platform would win by default.
-    this.flow.update(dt, this.dayNight.timeOfDay)
+    perfPhase('f:flow', () => this.flow.update(dt, this.dayNight.timeOfDay))
     const dwelling = this.train.state === 'stopped' || this.train.state === 'doors_open' || this.train.state === 'doors_closing'
-    this.schedule.update(dt, dwelling)
+    perfPhase('f:schedule', () => this.schedule.update(dt, dwelling))
     this.waitingRefresh += dt
     if (this.waitingRefresh > 1.4) {
       this.waitingRefresh = 0
       this.passengers.setWaitingCounts(this.flow.waiting)
     }
     const prevMarkerT = this.track.markerFor(this.train.currentStationIndex).tFraction
-    this.passengers.update(dt, this.dayNight.nightFactor, {
+    perfPhase('f:passengers', () => this.passengers.update(dt, this.dayNight.nightFactor, {
       targetStation: this.train.targetStationIndex,
       distanceToTarget: this.train.distanceToTarget,
       distanceBehind: ((((this.train.progressFraction - prevMarkerT) % 1) + 1) % 1) * this.track.getLength(),
       stopped: this.train.state === 'stopped' || this.train.state === 'doors_open',
       doorsOpen: this.train.doorsOpenAmount,
       speed01: this.train.speed01,
-    })
-    this.scenery.update(dt, this.dayNight, this.train.progressFraction)
+    }))
+    perfPhase('f:scenery', () => this.scenery.update(dt, this.dayNight, this.train.progressFraction))
     // Kan-kan: one bell strike per blink flip while the crossing is active.
     if (this.scenery.crossingBlinkPhase !== this.lastCrossingPhase) {
       this.lastCrossingPhase = this.scenery.crossingBlinkPhase
       if (this.scenery.crossingBellActive) audio.crossingTick(0.7)
     }
-    this.updateTransfer(dt)
+    perfPhase('f:transfer', () => this.updateTransfer(dt))
     // The doors only ever open at the station being served, and while stopped
     // that is the TARGET: currentStationIndex still names the previous one
     // until the doors finish closing, which opened the wrong side wherever
     // two consecutive platforms disagreed.
-    this.consist.update(
-      this.train.progressFraction,
-      this.train.doorsOpenAmount,
-      STATIONS[this.train.targetStationIndex].doorSide,
-      this.dayNight.nightFactor,
+    perfPhase('f:consist', () =>
+      this.consist.update(
+        this.train.progressFraction,
+        this.train.doorsOpenAmount,
+        STATIONS[this.train.targetStationIndex].doorSide,
+        this.dayNight.nightFactor,
+      ),
     )
     this.applyPrecipitation()
     // The railhead dries on its own clock, not the weather's.
@@ -2064,8 +2072,8 @@ export class Game {
         this.applyRailCondition()
       }
     }
-    this.precipitation.update(dt, this.camera.position, this.dayNight.nightFactor)
-    this.windshield.update(dt, this.wsIntensity, this.wsSnow, this.train.speed01, this.cameraMode === 'cab')
+    perfPhase('f:precip', () => this.precipitation.update(dt, this.camera.position, this.dayNight.nightFactor))
+    perfPhase('f:windshield', () => this.windshield.update(dt, this.wsIntensity, this.wsSnow, this.train.speed01, this.cameraMode === 'cab'))
     this.updateHeadlight()
 
     // H5: the sea is audible along the bay arc — loudest standing at a
@@ -2110,10 +2118,10 @@ export class Game {
       murmurLevel = levelBehind
       murmurPan = behind.doorSide === 'left' ? -0.55 : 0.55
     }
-    audio.updateAmbient(this.train.speed01, this.train.brakeAmount01, this.dayNight.timeOfDay, this.train.doorsOpenAmount, murmurLevel, murmurPan)
+    perfPhase('f:audio', () => audio.updateAmbient(this.train.speed01, this.train.brakeAmount01, this.dayNight.timeOfDay, this.train.doorsOpenAmount, murmurLevel, murmurPan))
     this.controls.syncNotch(this.train.notch)
-    this.updateCameraFromTrain()
-    this.updateLever()
+    perfPhase('f:camera', () => this.updateCameraFromTrain())
+    perfPhase('f:lever', () => this.updateLever())
     this.ui.updateClock(this.dayNight.timeOfDay, this.dayNight.phaseLabel)
     if (this.cameraMode === 'platform') this.ui.setCctvLabel(STATIONS[this.platformStation].nameEn)
     this.ui.updateAtmoPhase(this.season, this.weather, this.dayNight.timeOfDay)

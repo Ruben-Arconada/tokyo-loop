@@ -310,6 +310,22 @@ shader» de «subió una textura». Medido en escritorio, al entrar en una estac
 nueva pasan LAS DOS cosas (Kiyomizu: +25 programas y +9 texturas), así que en
 el móvil hará falta el dato real para decidir.
 
+### Fases del frame (`f:*` en `costs`)
+
+`perfPhase()` mide un bloque **sin dejar marca**, al revés que `perfTime()`.
+La diferencia importa: el anillo de marcas tiene 48 huecos y sirve para que un
+tirón nombre lo que pasó justo antes; marcar doce fases a 60 Hz lo reescribiría
+dieciséis veces por segundo y **todos los tirones volverían etiquetados con la
+última fase**, borrando justo la evidencia que el anillo existe para guardar.
+Verificado: una marca real sobrevive a 4.800 mediciones de fase.
+
+Hoy están medidas `f:physics`, `f:step`, `f:daynight`, `f:city`, `f:flow`,
+`f:schedule`, `f:passengers`, `f:scenery`, `f:transfer`, `f:consist`,
+`f:precip`, `f:windshield`, `f:audio`, `f:camera`, `f:lever` y `f:hud`.
+**`f:physics + f:step + renderMs` deberían dar cuenta de `frameMs`**; lo que
+sobre no es código nuestro (GC, hilo de audio, el propio iOS), y saber eso es
+la mitad de la respuesta.
+
 ### 🧪 Prueba de tirones automática (menú de pausa)
 
 El diagnóstico de las congelaciones por estación se lanza solo. Botón

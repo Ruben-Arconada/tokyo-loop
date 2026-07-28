@@ -343,6 +343,24 @@ export class PerfLog {
 
   /** Runs `fn` and books how long it blocked, under `tag`. Also leaves a mark. */
   time<T>(tag: string, fn: () => T): T {
+    return this.book(tag, fn, true)
+  }
+
+  /**
+   * Same, but WITHOUT leaving a mark — for things that run every frame.
+   *
+   * The mark ring holds 48 entries so a hitch can name what happened just
+   * before it. Marking a dozen per-frame phases at 60 Hz would overwrite the
+   * whole ring sixteen times a second, and every hitch would come back tagged
+   * with whatever phase ran last: the instrument would erase the evidence it
+   * exists to preserve. The cost still lands in `costs`, where a phase that
+   * blocks 320 ms shows up as a max of 320.
+   */
+  phase<T>(tag: string, fn: () => T): T {
+    return this.book(tag, fn, false)
+  }
+
+  private book<T>(tag: string, fn: () => T, leaveMark: boolean): T {
     if (!this.recording) return fn()
     const t0 = performance.now()
     try {
@@ -357,7 +375,7 @@ export class PerfLog {
       } else {
         this.costs.set(tag, [1, ms, ms])
       }
-      this.mark(tag)
+      if (leaveMark) this.mark(tag)
     }
   }
 
@@ -547,4 +565,16 @@ export function perfMark(tag: string) {
 
 export function perfTime<T>(tag: string, fn: () => T): T {
   return active ? active.time(tag, fn) : fn()
+}
+
+/**
+ * For per-frame phases: books the cost without touching the mark ring.
+ *
+ * Added after the automated probe came back with eight ~320 ms stalls that had
+ * `renderMs` of 4-6 ms and zero new shaders or textures — so the stall is CPU
+ * work outside the render, and the only way to find it without guessing again
+ * is to time the frame's own phases and see which one's max is 320.
+ */
+export function perfPhase<T>(tag: string, fn: () => T): T {
+  return active ? active.phase(tag, fn) : fn()
 }
