@@ -47,6 +47,19 @@ const DOOR_LABELS: Record<DoorPhase, string> = {
   closing: 'CERRANDO…',
 }
 
+/**
+ * Is the primary pointer a finger? Asked as a CAPABILITY, never by device
+ * brand or user-agent string: a Surface with a pen, an iPad with a trackpad
+ * and a phone all answer honestly, and the answer stays right when the
+ * hardware changes. On a hybrid the welcome screen speaks to the finger —
+ * that is the one input every player there definitely has — and the keyboard
+ * stays fully documented one tap away, in the pause menu's Controles block.
+ */
+const TOUCH_FIRST = window.matchMedia?.('(pointer: coarse)').matches ?? false
+
+/** The keyboard reference, shown on the start screen only when there IS a keyboard. */
+const KEYBOARD_HELP = '↑/W acelera, ↓/S frena, espacio = freno de emergencia, D = puertas.'
+
 /** Presets offered when tapping the HUD clock. */
 const TIME_PRESETS: { label: string; hour: number }[] = [
   { label: '🌅 Amanecer', hour: 6.2 },
@@ -554,10 +567,10 @@ export class UI {
         <h1><span class="title-ja" lang="ja">ジャパンループ</span> <span class="title-en">Japan Loop</span></h1>
         <p class="tagline">Sé el maquinista. Una vuelta completa a un Japón en miniatura — templos, aldeas, neón y mar — de madrugada a madrugada.</p>
         <ul class="howto">
-          <li><strong>Palanca:</strong> arrástrala arriba para acelerar (P1–P5), abajo para frenar (B1–B7/EB).</li>
-          <li><strong>Teclado:</strong> ↑/W acelera, ↓/S frena, espacio = freno de emergencia, D = puertas.</li>
           <li><strong>Objetivo:</strong> detén el tren justo en el andén de cada estación.</li>
+          <li><strong>Palanca:</strong> arrástrala arriba para acelerar (P1–P5), abajo para frenar (B1–B7/EB).</li>
           <li><strong>Puertas:</strong> ábrelas al parar y ciérralas cuando acabe el embarque — hay bonus por reflejos.</li>
+          ${TOUCH_FIRST ? '' : `<li><strong>Teclado:</strong> ${KEYBOARD_HELP}</li>`}
         </ul>
         <button class="btn-start">Subir a la cabina 🚃</button>
         <button class="btn-credits">Sobre el equipo</button>
@@ -600,6 +613,15 @@ export class UI {
             <button data-pa="es"><span lang="ja">日本語</span> + Español</button>
             <button data-pa="en"><span lang="ja">日本語</span> + English</button>
           </div>
+        </div>
+        <div class="perf-block">
+          <span class="perf-title">Controles</span>
+          <ul class="controls-help">
+            <li><strong>Palanca:</strong> arriba acelera (P1–P5), abajo frena (B1–B7/EB).</li>
+            <li><strong>Puertas:</strong> el botón PUERTAS abre al parar y cierra tras el embarque.</li>
+            <li><strong>Vista:</strong> el chip de cámara alterna cabina, exterior y andén.</li>
+            <li><strong>Teclado:</strong> ${KEYBOARD_HELP}</li>
+          </ul>
         </div>
         <div class="perf-block">
           <span class="perf-title">Rendimiento</span>

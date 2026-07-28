@@ -711,6 +711,34 @@ canvas.game-canvas {
 .overlay-card h2 { margin-top: 0; }
 .tagline { color: var(--text-secondary); font-size: var(--text-body); margin: var(--space-3) 0 var(--space-5); }
 .howto { text-align: left; font-size: var(--text-body); line-height: 1.6; color: var(--text-secondary); padding-left: var(--space-4); margin-bottom: var(--space-5); }
+/* The pause menu's full reference — including the keyboard the start screen
+   hides on touch devices, so a hybrid never loses it. Tighter than .howto:
+   it is a reference you consult, not an onboarding you read once. */
+.controls-help { text-align: left; font-size: var(--text-label); line-height: 1.5; color: var(--text-secondary); padding-left: var(--space-4); margin: var(--space-2) 0 0; }
+.controls-help li + li { margin-top: 4px; }
+
+/* Short screens (a 568px-tall iPhone SE, or any phone held sideways): the
+   welcome has to fit without scrolling to reach the button that starts the
+   audio. Only spacing is squeezed — no text is hidden and no font drops
+   below the readable floor. */
+@media (max-height: 700px) {
+  .start-overlay .overlay-card { padding: var(--space-4) var(--space-4); }
+  .start-overlay h1 { font-size: 22px; }
+  .start-overlay .tagline { margin: var(--space-2) 0 var(--space-3); line-height: 1.45; }
+  .start-overlay .howto { line-height: 1.45; margin-bottom: var(--space-3); }
+  .start-overlay .btn-start, .start-overlay .btn-credits { margin-top: var(--space-2); }
+  .start-overlay .disclaimer { margin-top: var(--space-3); }
+}
+/* The 568px-tall phones (an SE of the iPhone 5 era) need one more step. 12px
+   is the floor — below that this stops being onboarding and starts being
+   small print. */
+@media (max-height: 600px) {
+  .start-overlay .tagline, .start-overlay .howto { font-size: var(--text-label); }
+  .start-overlay h1 { font-size: 20px; }
+  /* Spacing gets squeezed, the TOUCH TARGET does not: trimming the padding
+     here first dropped these to 37px, under the 44px floor. */
+  .start-overlay .btn-start, .start-overlay .btn-credits { padding: var(--space-2) var(--space-3); min-height: 44px; }
+}
 
 .btn-start, .btn-resume, .btn-close, .btn-credits {
   display: block;
