@@ -68,8 +68,24 @@ export function mulberry32(seed: number): () => number {
  * ```
  */
 export function worldStream(name: WorldStream): () => number {
+  // Two callers asking for the same name get the SAME sequence, which is the
+  // subtlest way to break this design: the systems look independent and their
+  // numbers march in lockstep. It happened twice before this guard existed
+  // ('city' between Scenery and City; 'sky' and 'canopy' between Scenery and
+  // its neighbours), so the mistake is now loud instead of invisible.
+  if (import.meta.env.DEV) {
+    if (claimedStreams.has(name)) {
+      console.error(
+        `[Rng] El flujo '${name}' ya estaba pedido por otro módulo. Dos consumidores del mismo nombre sortean LOS MISMOS números: dale un nombre propio en WorldStream.`,
+      )
+    }
+    claimedStreams.add(name)
+  }
   return mulberry32(hashString(`${WORLD_SEED}::${name}`))
 }
+
+/** Names handed out so far — dev-only bookkeeping for the guard above. */
+const claimedStreams = new Set<string>()
 
 /**
  * Every stream in the static world. Named as a union so a typo is a compile
@@ -83,12 +99,14 @@ export type WorldStream =
   //            would draw the exact same numbers as 'city' and correlate
   | 'houses' // the shitamachi rows
   | 'vegetation' // pines, scrub, the hill's wood
-  | 'canopy' // blossom/leaf cards and the petal carpet
+  | 'canopy' // SakuraCanopy.ts: the blossom cards and the fallen-petal carpet
+  | 'petals' // Scenery.ts: the drifting petal cloud — its OWN stream
   | 'signage' // neon, boards, textures baked at build time
   | 'trackside' // sleepers, poles, crossings, station furniture
   | 'coast' // sea, sand, boats, the island
   | 'tunnel' // the bore's concrete grime
-  | 'sky' // star field and cloud slabs
+  | 'sky' // DayNightCycle.ts: the star field
+  | 'clouds' // Scenery.ts: the cloud slabs — its OWN stream
 
 /**
  * A seeded stand-in for `Math.random` that also carries the small helpers the

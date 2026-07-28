@@ -78,15 +78,32 @@ export function worldFingerprint(scene: THREE.Scene): WorldFingerprint {
   let index = 0
 
   scene.traverse((obj) => {
-    const mesh = obj as THREE.Mesh & { isInstancedMesh?: boolean; count?: number; instanceMatrix?: THREE.BufferAttribute; instanceColor?: THREE.BufferAttribute | null }
-    if (!(mesh as unknown as { isMesh?: boolean }).isMesh || !mesh.geometry) return
+    const mesh = obj as THREE.Mesh & { isInstancedMesh?: boolean; isPoints?: boolean; count?: number; instanceMatrix?: THREE.BufferAttribute; instanceColor?: THREE.BufferAttribute | null }
+    const isDrawable = (mesh as unknown as { isMesh?: boolean }).isMesh || mesh.isPoints
+    if (!isDrawable || !mesh.geometry) return
 
     const d = new Digest()
     const kind = mesh.geometry.type
     d.pushText(kind)
     const bucket = mesh.userData?.dynamic ? dynamicParts : parts
 
-    if (mesh.isInstancedMesh && mesh.instanceMatrix) {
+    if (mesh.userData?.seedTable) {
+      // Point clouds whose rendered positions are rewritten every frame (the
+      // drifting petals): hashing the live buffer would just measure what
+      // second it is. The SEED TABLE behind the animation is the generated
+      // data, so that is what gets fingerprinted.
+      const seeds = mesh.userData.seedTable as Float32Array
+      d.pushText('seedTable')
+      for (let i = 0; i < seeds.length; i++) d.push(seeds[i])
+      bucket[`${String(index).padStart(2, '0')}.seeded.${seeds.length}`] = d.hex
+    } else if (mesh.isPoints) {
+      // A static point cloud — the star field. Its positions ARE the data.
+      const pos = mesh.geometry.getAttribute('position') as THREE.BufferAttribute
+      const arr = pos.array as Float32Array
+      d.push(arr.length)
+      for (let i = 0; i < arr.length; i++) d.push(arr[i])
+      bucket[`${String(index).padStart(2, '0')}.points.${pos.count}`] = d.hex
+    } else if (mesh.isInstancedMesh && mesh.instanceMatrix) {
       const count = mesh.count ?? 0
       d.push(count)
       const m = mesh.instanceMatrix.array as Float32Array

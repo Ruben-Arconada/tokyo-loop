@@ -123,13 +123,13 @@ export class Scenery {
   private rngSkyline = worldStream('skyline')
   private rngHouses = worldStream('houses')
   private rngVeg = worldStream('vegetation')
-  private rngCanopy = worldStream('canopy')
+  private rngPetals = worldStream('petals')
   private rngSignage = worldStream('signage')
   // No 'trackside' field: poles, distance boards and crossings are placed
   // purely from track geometry — not a single random draw between them.
   private rngCoast = worldStream('coast')
   private rngTunnel = worldStream('tunnel')
-  private rngSky = worldStream('sky')
+  private rngClouds = worldStream('clouds')
 
   constructor(scene: THREE.Scene, track: Track) {
     this.scene = scene
@@ -236,15 +236,15 @@ export class Scenery {
     let i = 0
     for (const c of this.sakuraClusters) {
       for (let k = 0; k < PETALS_PER_CLUSTER; k++) {
-        const ox = (this.rngCanopy() - 0.5) * 26
-        const oz = (this.rngCanopy() - 0.5) * 26
+        const ox = (this.rngPetals() - 0.5) * 26
+        const oz = (this.rngPetals() - 0.5) * 26
         positions[i * 3] = c.x + ox
-        positions[i * 3 + 1] = 1 + this.rngCanopy() * 7
+        positions[i * 3 + 1] = 1 + this.rngPetals() * 7
         positions[i * 3 + 2] = c.z + oz
         this.petalSeeds[i * 4] = c.x + ox
         this.petalSeeds[i * 4 + 1] = c.z + oz
-        this.petalSeeds[i * 4 + 2] = this.rngCanopy() * Math.PI * 2
-        this.petalSeeds[i * 4 + 3] = 0.55 + this.rngCanopy() * 0.7
+        this.petalSeeds[i * 4 + 2] = this.rngPetals() * Math.PI * 2
+        this.petalSeeds[i * 4 + 3] = 0.55 + this.rngPetals() * 0.7
         i++
       }
     }
@@ -255,6 +255,10 @@ export class Scenery {
       new THREE.PointsMaterial({ color: 0xf9cede, size: 0.22, sizeAttenuation: true, transparent: true, opacity: 0.9 }),
     )
     this.petalsMesh.frustumCulled = false
+    // update() rewrites every position each frame, so the live buffer says
+    // nothing about determinism — hand the fingerprint the seed table that
+    // the animation reads from instead (see worldHash.ts).
+    this.petalsMesh.userData.seedTable = this.petalSeeds
     this.scene.add(this.petalsMesh)
   }
 
@@ -2356,15 +2360,15 @@ export class Scenery {
     const mid = this.weatherLook === 'cloudy'
     const dummy = new THREE.Object3D()
     for (let i = 0; i < CLOUD_COUNT; i++) {
-      const angle = (i / CLOUD_COUNT) * Math.PI * 2 + this.rngSky() * 0.4
+      const angle = (i / CLOUD_COUNT) * Math.PI * 2 + this.rngClouds() * 0.4
       // Kept far out, with width capped relative to distance, so no single
       // transparent quad ever eats a huge slice of mobile fill rate.
-      const radius = heavy ? 1100 + this.rngSky() * 1900 : mid ? 1300 + this.rngSky() * 2100 : 1500 + this.rngSky() * 2400
+      const radius = heavy ? 1100 + this.rngClouds() * 1900 : mid ? 1300 + this.rngClouds() * 2100 : 1500 + this.rngClouds() * 2400
       const w = Math.min(
-        heavy ? 520 + this.rngSky() * 520 : mid ? 400 + this.rngSky() * 500 : 320 + this.rngSky() * 480,
+        heavy ? 520 + this.rngClouds() * 520 : mid ? 400 + this.rngClouds() * 500 : 320 + this.rngClouds() * 480,
         radius * (heavy ? 0.4 : 0.28),
       )
-      const y = heavy ? 200 + this.rngSky() * 220 : mid ? 250 + this.rngSky() * 300 : 300 + this.rngSky() * 380
+      const y = heavy ? 200 + this.rngClouds() * 220 : mid ? 250 + this.rngClouds() * 300 : 300 + this.rngClouds() * 380
       dummy.position.set(Math.cos(angle) * radius, y, Math.sin(angle) * radius)
       // Storm slabs flatten out; fair-weather puffs stay rounder.
       dummy.scale.set(w, w * (heavy ? 0.3 : 0.42), 1)
