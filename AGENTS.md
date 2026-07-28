@@ -112,6 +112,33 @@ el driver y el antialiasing aunque el mundo sea idéntico. `__fingerprintDiff(a,
 dice qué partes se movieron. El informe de rendimiento (`PerfLog` v2) lleva la
 semilla: dos vueltas solo son comparables si coincide.
 
+`__semanticHash()` es el gemelo **ciego a la partición**: agrupa las
+instancias por el nombre que declara el builder (`tagGroup`), las ordena como
+CONJUNTO y digiere con el recuento dentro, así que da igual si un pool está
+entero o repartido en ocho sectores. Es el que tiene que referear la
+sectorización; el estructural cambiará entonces y eso es correcto.
+
+### ⚠️ Antes de fiarte de un hash del mundo, lee esto
+
+Ninguno de los dos hashes es todavía un contrato cerrado. Tres cosas
+verificadas que hay que arreglar antes de usarlos como puerta de un refactor:
+
+1. **No dependen solo de la semilla**: la estación y el clima guardados en
+   `localStorage` los mueven. Con `yamanote-season=winter` el semántico da
+   `9b1ba8bb` donde con primavera da `e7cdb9f8`. Hace falta fijar y REGISTRAR
+   un escenario canónico (semilla por defecto, primavera, despejado, clima
+   automático apagado).
+2. **Las nubes están dentro del «mundo estático»** y se resiembran con el
+   clima consumiendo del flujo `clouds` — ir a tormenta y volver NO devuelve
+   el hash. Hay que marcarlas dinámicas o darles fingerprint aparte.
+3. **Los ~110 grupos `untagged:` agrupan por geometría**, así que pueden
+   mezclar sistemas distintos. Solo son de fiar los que llevan `tagGroup`
+   explícito (hoy los diez de vegetación). Etiqueta antes de refactorizar.
+
+Y la rama de `Points` digiere el buffer entero como un registro: si algún día
+se sectorizan estrellas o partículas, deja de ser independiente de la
+partición.
+
 ## Publicar
 
 Ritual completo en la memoria del proyecto. Resumen: `npx tsc --noEmit` +
