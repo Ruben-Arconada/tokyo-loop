@@ -339,6 +339,19 @@ a llamar). Los dos pertenecen al mismo intervalo que `frameMs`, así que
 callback: compositor, GC, temporizadores, callbacks de audio o trabajo del
 driver diferido más allá del swap.
 
+**`lag:<tag>` — víctima o culpable.** Un tirón recoge las marcas de una ventana
+que llega hasta 400 ms DESPUÉS de su propio inicio estimado, así que un
+temporizador que se ejecuta justo al terminar un bloqueo de 320 ms sale
+etiquetado exactamente igual que uno que lo hubiera provocado. El tag solo no
+puede distinguirlos. `perfTimeout()` apunta cuánto se retrasó cada callback
+respecto a su hora prevista:
+
+- **`lag` ≈ 320 ms** → estuvo atascado detrás del bloqueo. Es **testigo**.
+- **`lag` normal y el `gapMs` se abre después** → pudo ser el **detonante**.
+
+Verificado bloqueando el hilo 800 ms sobre un temporizador que vencía a 450:
+`lag:a:tmr-speak-start` salió 270 ms y el que se programó después, 1,3 ms.
+
 **Coste del propio instrumento**: envolver una fase asigna una closure por
 fase y fotograma (~16), se grabe o no. Es garbage que antes no existía, y con
 el GC entre los sospechosos hay que tenerlo presente — cuando la caza termine,

@@ -397,6 +397,20 @@ export class PerfLog {
     return this.book(tag, fn, false)
   }
 
+  /** Books how late a scheduled callback ran, under `lag:<tag>` — see perfTimeout. */
+  bookLag(tag: string, ms: number) {
+    if (!this.recording) return
+    const key = `lag:${tag}`
+    const c = this.costs.get(key)
+    if (c) {
+      c[0]++
+      c[1] += ms
+      if (ms > c[2]) c[2] = ms
+    } else {
+      this.costs.set(key, [1, ms, ms])
+    }
+  }
+
   private book<T>(tag: string, fn: () => T, leaveMark: boolean): T {
     if (!this.recording) return fn()
     const t0 = performance.now()
@@ -614,4 +628,28 @@ export function perfTime<T>(tag: string, fn: () => T): T {
  */
 export function perfPhase<T>(tag: string, fn: () => T): T {
   return active ? active.phase(tag, fn) : fn()
+}
+
+/**
+ * `setTimeout` that also books HOW LATE it ran, under `lag:<tag>`.
+ *
+ * This is what separates a culprit from a witness, and without it the tags
+ * lie by omission. A hitch takes the marks from a window that reaches 400 ms
+ * past its own estimated start, so a timer that fires the instant a 320 ms
+ * block ENDS gets tagged exactly like one that caused it. The lag tells them
+ * apart:
+ *
+ *   lag ≈ 320 ms  → the timer was stuck behind the block. It is a victim.
+ *   lag ≈ 0, and the gap opens after it → it plausibly started the block.
+ *
+ * The lag rides in `costs` (count / total / worst) like any other duration,
+ * so no log format changes to carry it.
+ */
+export function perfTimeout(tag: string, fn: () => void, delayMs: number): number {
+  const due = performance.now() + delayMs
+  return window.setTimeout(() => {
+    active?.bookLag(tag, performance.now() - due)
+    if (active) active.time(tag, fn)
+    else fn()
+  }, delayMs)
 }

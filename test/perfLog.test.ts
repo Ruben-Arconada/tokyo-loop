@@ -172,3 +172,28 @@ test('un parón DENTRO de nuestro callback no se confunde con uno de fuera', () 
   assert.equal(h[0][PREV_TICK_MS], 300)
   assert.ok(h[0][GAP_MS] < 50, 'el hueco pequeño dice que el tiempo se fue en nuestro código')
 })
+
+test('el retraso de un temporizador separa a la víctima del culpable', () => {
+  const log = recorder(60)
+  // A callback that ran when it was due: it cannot have been waiting behind
+  // a block, so if a stall follows it, it is a candidate for having caused it.
+  log.bookLag('a:tmr-culprit', 1.4)
+  // One that ran 320 ms late: it was stuck behind the block. Whatever the tag
+  // on the hitch says, this one is a witness.
+  log.bookLag('a:tmr-victim', 318)
+
+  const costs = JSON.parse(log.export()).costs
+  assert.equal(costs['lag:a:tmr-culprit'][2], 1.4)
+  assert.ok(costs['lag:a:tmr-victim'][2] > 300)
+  // The distinction is the whole point: a tag alone cannot make it, because a
+  // hitch collects marks from a window reaching past its own start.
+  assert.ok(costs['lag:a:tmr-victim'][2] > costs['lag:a:tmr-culprit'][2] * 100)
+})
+
+test('el retraso no se contabiliza si no se está grabando', () => {
+  const log = new PerfLog()
+  log.bookLag('a:tmr-x', 500)
+  log.start({ prueba: true }, { programs: 0, textures: 0, texUploads: 0 })
+  const costs = JSON.parse(log.export()).costs
+  assert.equal(costs['lag:a:tmr-x'], undefined)
+})

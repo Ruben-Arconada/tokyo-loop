@@ -1,6 +1,6 @@
 import type { PlayableNote } from '../data/melodies'
 import { ATTENTION_CHIME, RETRO_FANFARE } from '../data/melodies'
-import { perfMark, perfTime } from '../game/PerfLog'
+import { perfMark, perfTime, perfTimeout } from '../game/PerfLog'
 
 export type Timbre = 'bell' | 'chime' | 'attention' | 'retro'
 export type AnnounceLang = 'ja' | 'en' | 'es'
@@ -573,7 +573,7 @@ export class AudioEngine {
       })
     } else if (this.rainSources.length > 0 && this.rainStopHandle === null) {
       // Let the 1.2 s fade land first, then genuinely stop the loops.
-      this.rainStopHandle = window.setTimeout(() => perfTime('a:tmr-rain-stop', () => {
+      this.rainStopHandle = perfTimeout('a:tmr-rain-stop', () => {
         this.rainStopHandle = null
         if (this.rainLevel > 0) return // weather turned again while fading
         for (const src of this.rainSources) {
@@ -581,7 +581,7 @@ export class AudioEngine {
           src.disconnect()
         }
         this.rainSources.length = 0
-      }), 3000)
+      }, 3000)
     }
     // Slow fades: weather rolls in, it doesn't switch.
     this.rainWashGain.gain.setTargetAtTime(level01 * 0.05, t, 1.2)
@@ -629,13 +629,13 @@ export class AudioEngine {
     } else {
       this.windGain.gain.setTargetAtTime(0, ctx.currentTime, 1.4)
       if (this.windSource && this.windStopHandle === null) {
-        this.windStopHandle = window.setTimeout(() => perfTime('a:tmr-wind-stop', () => {
+        this.windStopHandle = perfTimeout('a:tmr-wind-stop', () => {
           this.windStopHandle = null
           if (this.windLevel > 0 || !this.windSource) return
           try { this.windSource.stop() } catch { /* already stopped */ }
           this.windSource.disconnect()
           this.windSource = null
-        }), 3600)
+        }, 3600)
       }
     }
   }
@@ -676,13 +676,13 @@ export class AudioEngine {
     } else {
       this.shoreGain.gain.setTargetAtTime(0, ctx.currentTime, 1.6)
       if (this.shoreSource && this.shoreStopHandle === null) {
-        this.shoreStopHandle = window.setTimeout(() => perfTime('a:tmr-shore-stop', () => {
+        this.shoreStopHandle = perfTimeout('a:tmr-shore-stop', () => {
           this.shoreStopHandle = null
           if (this.shoreLevel > 0 || !this.shoreSource) return
           try { this.shoreSource.stop() } catch { /* already stopped */ }
           this.shoreSource.disconnect()
           this.shoreSource = null
-        }), 4200)
+        }, 4200)
       }
     }
   }
@@ -1280,7 +1280,11 @@ export class AudioEngine {
     // chime and the PA bed and says nothing. That path never touches
     // speechSynthesis at all, which is also what isolates it as a suspect —
     // the per-station freezes all land on the announcement's teardown.
-    if (!this.ctx || !('speechSynthesis' in window) || this.muted) return
+    // The speech engine is only required when there is something to SAY: with
+    // announcements set to chime-only, a browser without Web Speech should
+    // still get its chime and its PA bed.
+    if (!this.ctx || this.muted) return
+    if (segments.length > 0 && !('speechSynthesis' in window)) return
     const item: QueuedAnnouncement = { segments, fanfare: !!opts.fanfare, kind: opts.kind ?? 'general', valid: opts.valid }
     if (this.announcing) {
       // A newer announcement of the same kind makes the playing one stale, so
@@ -1398,57 +1402,69 @@ export class AudioEngine {
     const chimeDuration = perfTime('chime', () => this.playMelody(ATTENTION_CHIME, 'attention', 0.32) || 0.3)
     perfTime('pa-bed', () => this.startPaBed())
 
-    window.setTimeout(() => {
-      if (epoch !== this.announceEpoch) return
-      // Clear only leftovers (e.g. the unlock primer) — by construction
-      // nothing of ours is speaking when a new sequence starts.
-      // Timed: on iOS this block is the prime suspect for the ~320 ms freezes
-      // that showed up once per station in the first real-device lap.
-      // Nothing to say: end here without going near the speech engine.
-      if (item.segments.length === 0) {
-        this.finishAnnouncement()
-        return
-      }
-      const utterances = perfTime('speak-init', () => {
-        speechSynthesis.cancel()
-        return item.segments.map((seg) => this.buildUtterance(seg.lang, seg.text))
-      })
-
-      const speakAt = (i: number) => {
-        // Epoch guard: an aborted announcement must not keep speaking from
-        // inside its own onend chain.
+    perfTimeout(
+      'a:tmr-speak-start',
+      () => {
         if (epoch !== this.announceEpoch) return
-        if (i >= utterances.length || (item.valid && !item.valid())) {
+        // Clear only leftovers (e.g. the unlock primer) — by construction
+        // nothing of ours is speaking when a new sequence starts.
+        //
+        // Every timer in this chain measures how LATE it ran (`lag:` in the
+        // log's costs), because the per-station freezes all carry the tags of
+        // this teardown and a tag alone cannot tell a culprit from a witness:
+        // a callback that fires the instant a 320 ms block ENDS lands inside
+        // the same window as one that caused it. A lag near 320 means this
+        // chain was stuck behind the block, not the reason for it.
+        //
+        // Nothing to say: end here without going near the speech engine.
+        if (item.segments.length === 0) {
           this.finishAnnouncement()
           return
         }
-        const utter = utterances[i]
-        let advanced = false
-        const advance = () => {
-          if (advanced) return
-          advanced = true
-          window.setTimeout(() => perfTime('a:tmr-segment', () => speakAt(i + 1)), SEGMENT_GAP_MS)
+        const utterances = perfTime('speak-init', () => {
+          speechSynthesis.cancel()
+          return item.segments.map((seg) => this.buildUtterance(seg.lang, seg.text))
+        })
+
+        const speakAt = (i: number) => {
+          // Epoch guard: an aborted announcement must not keep speaking from
+          // inside its own onend chain.
+          if (epoch !== this.announceEpoch) return
+          if (i >= utterances.length || (item.valid && !item.valid())) {
+            this.finishAnnouncement()
+            return
+          }
+          const utter = utterances[i]
+          let advanced = false
+          const advance = () => {
+            if (advanced) return
+            advanced = true
+            perfTimeout('a:tmr-segment', () => speakAt(i + 1), SEGMENT_GAP_MS)
+          }
+          utter.onend = advance
+          // Fallback in case `onend` never fires (a known flakiness in some browsers' queued-utterance handling).
+          window.setTimeout(advance, item.segments[i].text.length * 140 + 2200)
+          perfTime('speak', () => speechSynthesis.speak(utter))
         }
-        utter.onend = advance
-        // Fallback in case `onend` never fires (a known flakiness in some browsers' queued-utterance handling).
-        window.setTimeout(advance, item.segments[i].text.length * 140 + 2200)
-        perfTime('speak', () => speechSynthesis.speak(utter))
-      }
-      speakAt(0)
-    }, (fanfareDuration + chimeDuration) * 1000 + 150)
+        speakAt(0)
+      },
+      (fanfareDuration + chimeDuration) * 1000 + 150,
+    )
   }
 
   /** Breathing gap after an announcement, then the next queued one (if any) takes the mic. */
   private finishAnnouncement() {
     this.stopPaBed()
     this.currentItem = null
-    window.setTimeout(() => {
-      perfTime('a:tmr-announce-gap', () => {
+    perfTimeout(
+      'a:tmr-announce-gap',
+      () => {
         this.announcing = false
         const next = this.announceQueue.shift()
         if (next) this.playAnnouncement(next)
-      })
-    }, ANNOUNCEMENT_GAP_MS)
+      },
+      ANNOUNCEMENT_GAP_MS,
+    )
   }
 
   /**
