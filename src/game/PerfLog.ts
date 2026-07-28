@@ -31,8 +31,15 @@ const MAX_BINS = 1800
 /** Per-second slice of the ride: [tSec, frames, meanMs, maxMs, draws, tris, speedKmh, progress‰]. */
 type Bin = [number, number, number, number, number, number, number, number]
 
-/** One hitch: [tSec, ms, progress‰, station, draws, kTris, tagsRecientes]. */
-type Hitch = [number, number, number, number, number, number, string]
+/**
+ * One hitch: [tSec, ms, progress‰, station, draws, kTris, programasNuevos, tagsRecientes].
+ *
+ * `programasNuevos` is the decisive column. If a 320 ms frame linked a shader
+ * program, the stall is compilation and no amount of audio work explains it;
+ * if it linked none, compilation is ruled out and the remaining suspects are
+ * the ones that leave no JS cost behind.
+ */
+type Hitch = [number, number, number, number, number, number, number, string]
 /** How far back a hitch looks for game events that might have caused it. */
 const MARK_WINDOW_MS = 2000
 const MARK_RING = 48
@@ -45,6 +52,29 @@ export interface PerfSample {
   /** 0..1 around the loop — turns a stall into a PLACE, not just a moment. */
   progress: number
   stationIdx: number
+  /**
+   * How many shader programs the renderer has LINKED so far, and how many
+   * textures it holds. Both only ever grow during a lap, and the growth is
+   * the point: a program is linked the first frame a material is actually
+   * drawn, and on iOS that link is a synchronous main-thread stall of
+   * hundreds of milliseconds.
+   *
+   * This is here because the first real-device lap showed 22 freezes of
+   * 313-404 ms — a near-constant cost, once per station, at only 88-130 draws
+   * — and NONE of them had a speech call in the two seconds before. A fixed
+   * cost that happens once per place and never again is what first-draw work
+   * looks like; the previous suspect (the announcement path) fires at all
+   * thirty stations equally and would not skip the one we start at.
+   */
+  programs: number
+  textures: number
+  /**
+   * Whether the sun was ACTUALLY casting this frame. `shadows` in the context
+   * is only `renderer.shadowMap.enabled`, and under a closed sky the sun stops
+   * casting (DayNightCycle), so a rainy lap can report shadows on and never
+   * pay for the pass — which makes it useless as a worst case.
+   */
+  shadowPass: boolean
 }
 
 export interface PerfSummary {
@@ -65,6 +95,14 @@ export interface PerfSummary {
   maxTris: number
   /** Times the loop was suspended (pause menu, phone backgrounded) — excluded from the stats, counted here. */
   gaps: number
+  /** Shader programs linked BEFORE the lap and DURING it. A lap that compiles nothing cannot be stalling on compiles. */
+  programs0: number
+  programsEnd: number
+  /** Same for textures uploaded to the GPU. */
+  textures0: number
+  texturesEnd: number
+  /** Frames where the sun actually cast — 0 means this lap never exercised the shadow pass, whatever `ctx.shadows` says. */
+  shadowFrames: number
 }
 
 const STORE_KEY = 'tokyo-loop-perf-log'
@@ -107,6 +145,12 @@ export class PerfLog {
   private markHead = 0
   /** Synchronous cost per instrumented block: tag → [veces, msTotal, msPeor]. */
   private costs = new Map<string, [number, number, number]>()
+  /** GPU resource counts: baseline at the first frame (-1 = not set yet) and running totals. */
+  private programs0 = -1
+  private textures0 = -1
+  private programsSeen = 0
+  private texturesSeen = 0
+  private shadowFrames = 0
 
   /** Live frame rate for the on-screen counter, smoothed just enough to be readable. */
   fpsNow = 0
@@ -133,6 +177,11 @@ export class PerfLog {
     this.markTimes.fill(0)
     this.markHead = 0
     this.costs.clear()
+    this.programs0 = -1
+    this.textures0 = -1
+    this.programsSeen = 0
+    this.texturesSeen = 0
+    this.shadowFrames = 0
     this.context = context
     this.recording = true
   }
@@ -173,6 +222,20 @@ export class PerfLog {
     if (s.frameMs > this.maxMs) this.maxMs = s.frameMs
     if (s.draws > this.maxDraws) this.maxDraws = s.draws
     if (s.tris > this.maxTris) this.maxTris = s.tris
+    // First sample of the lap establishes the baseline: everything already
+    // linked and uploaded before the recording started does not belong to it.
+    if (this.programs0 < 0) {
+      this.programs0 = s.programs
+      this.textures0 = s.textures
+      // Seed the running counters too, or the first frame would report every
+      // program linked before the lap as if the lap had just compiled it.
+      this.programsSeen = s.programs
+      this.texturesSeen = s.textures
+    }
+    const newPrograms = Math.max(0, s.programs - this.programsSeen)
+    this.programsSeen = s.programs
+    this.texturesSeen = s.textures
+    if (s.shadowPass) this.shadowFrames++
 
     this.binFrames++
     this.binMs += s.frameMs
@@ -189,6 +252,7 @@ export class PerfLog {
         s.stationIdx,
         s.draws,
         Math.round(s.tris / 1000),
+        newPrograms,
         // What the game was doing in the run-up. A stall with a name is a bug
         // you can fix; a stall without one is a guess.
         this.recentMarks(now - s.frameMs),
@@ -198,7 +262,10 @@ export class PerfLog {
     if (now - this.binStart >= BIN_MS) this.closeBin(now, s.progress)
     // Survive an iOS tab kill mid-lap: the log is worthless if backgrounding
     // the PWA between the ride and the copy button throws it away.
-    if (now - this.lastPersist > 5000) this.persist()
+    // Timed like everything else now. It serializes the whole log and writes
+    // it synchronously, and being the one periodic job nobody had measured
+    // made it an unfalsifiable suspect for every unexplained stall.
+    if (now - this.lastPersist > 5000) this.time('perf-persist', () => this.persist())
   }
 
   /** Notes that a game event happened right now (cheap: two array writes). */
@@ -232,13 +299,27 @@ export class PerfLog {
   /** Tags seen in the window before `at` — the frame's own duration is subtracted by the caller so a mark made DURING the stall still counts. */
   private recentMarks(at: number): string {
     const out: string[] = []
+    let newest = ''
+    let newestAge = Infinity
     for (let i = 0; i < MARK_RING; i++) {
       const idx = (this.markHead - i + MARK_RING) % MARK_RING
       const t = this.markTimes[idx]
-      if (!t || at - t > MARK_WINDOW_MS || t > at + 400) continue
+      if (!t || t > at + 400) continue
+      const age = at - t
+      if (age < newestAge) {
+        newestAge = age
+        newest = this.markTags[idx]
+      }
+      if (age > MARK_WINDOW_MS) continue
       const tag = this.markTags[idx]
       if (!out.includes(tag)) out.push(tag)
     }
+    // An empty string used to mean two different things — "nothing was going
+    // on" and "whatever caused this happened more than two seconds ago" — and
+    // sixteen of the twenty-two big freezes in the first real lap came back
+    // empty. Naming the last event and its age makes the difference readable
+    // without widening the window and drowning every hitch in tags.
+    if (!out.length) return newest ? `~${newest}+${(newestAge / 1000).toFixed(1)}s` : ''
     return out.join(',')
   }
 
@@ -296,6 +377,11 @@ export class PerfLog {
       over17: this.countOver(16.7),
       over33: this.countOver(33.3),
       over50: this.countOver(HITCH_MS),
+      programs0: Math.max(0, this.programs0),
+      programsEnd: this.programsSeen,
+      textures0: Math.max(0, this.textures0),
+      texturesEnd: this.texturesSeen,
+      shadowFrames: this.shadowFrames,
       maxDraws: this.maxDraws,
       maxTris: this.maxTris,
       gaps: this.gaps,
@@ -324,7 +410,10 @@ export class PerfLog {
   /** The payload to hand back: compact arrays, not objects — a full lap has to fit in a paste. */
   export(): string {
     return JSON.stringify({
-      v: 2,
+      // v3: hitches gained a `programasNuevos` column and the summary gained
+      // the GPU-resource and shadow-pass counters. A v2 reader would silently
+      // read the new column as the tag string, so the number has to move.
+      v: 3,
       // Which world this lap was driven through. Two laps are only comparable
       // if this matches — before seeding, every reload dealt a different Japan
       // and draw counts could not be told apart from layout luck.
@@ -333,7 +422,7 @@ export class PerfLog {
       summary: this.summary,
       // [tSec, frames, meanMs, maxMs, draws, kTris, kmh, progress‰]
       bins: this.bins,
-      // [tSec, ms, progress‰, station, draws, kTris] — worst first, capped
+      // [tSec, ms, progress‰, station, draws, kTris, programasNuevos, tags] — worst first, capped
       hitches: this.hitches.slice().sort((a, b) => b[1] - a[1]).slice(0, MAX_HITCHES),
       // tag: [veces, msTotal, msPeor] — el bloqueo síncrono medido EN SU MÓVIL.
       costs: Object.fromEntries(

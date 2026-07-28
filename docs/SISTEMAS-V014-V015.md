@@ -269,19 +269,41 @@ minuto a minuto (que es lo que delata a un móvil estrangulándose por calor).
 Formato de exportación (JSON compacto, ~13 KB por vuelta completa de 7 min):
 
 ```
-ctx      { ua, gpu, dpr, cap, vw, vh, pwa, season, weather, hour, timeScale, shadows }
-summary  { seconds, frames, meanFps, p05, p50, p95, p99, maxMs, over17, over33, over50, maxDraws, maxTris, gaps }
-bins[]   [tSec, frames, meanMs, maxMs, draws, kTris, kmh, progress‰]   ← uno por segundo
-hitches[][tSec, ms, progress‰, station, draws, kTris, tags]            ← frames ≥50 ms, peores primero
-costs    { tag: [veces, msTotal, msPeor] }                             ← bloqueo SÍNCRONO medido en el móvil
+v        3
+ctx      { version, commit, ua, gpu, dpr, cap, vw, vh, pwa, season, weather,
+           weatherAuto, camera, hour, timeScale, shadows }
+summary  { seconds, frames, meanFps, p05, p50, p95, p99, maxMs, over17, over33,
+           over50, maxDraws, maxTris, gaps,
+           programs0, programsEnd, textures0, texturesEnd, shadowFrames }
+bins[]   [tSec, frames, meanMs, maxMs, draws, kTris, kmh, progress‰]        ← uno por segundo
+hitches[][tSec, ms, progress‰, station, draws, kTris, programasNuevos, tags] ← frames ≥50 ms, peores primero
+costs    { tag: [veces, msTotal, msPeor] }                                  ← bloqueo SÍNCRONO medido en el móvil
 ```
 
 `tags` son los eventos de juego marcados en los 2 s previos al tirón
 (`perfMark`), y `costs` mide bloques envueltos en `perfTime` — los hooks están
 al final de `PerfLog.ts` y son no-ops mientras no haya grabación. Hoy están
 instrumentados `announce`/`chime`/`pa-bed`/`speak-init`/`speak` (la locución
-trilingüe), `station`, `arriving` y `missed`. Sirve para no adivinar: un tirón
-con nombre es un bug, y sin nombre es una corazonada.
+trilingüe), `station`, `arriving`, `missed` y `perf-persist`. Sirve para no
+adivinar: un tirón con nombre es un bug, y sin nombre es una corazonada.
+
+**Si no hubo ningún evento en la ventana**, `tags` ya no viene vacío: trae
+`~<último evento>+<edad>s`. Un vacío significaba dos cosas distintas («no
+pasaba nada» y «lo que fuera pasó hace más de 2 s») y 16 de los 22 tirones
+grandes de la primera vuelta real volvían vacíos.
+
+**`programasNuevos` es la columna que decide** entre las dos hipótesis del
+tirón por estación. three enlaza un programa de shader la PRIMERA vez que se
+dibuja un material, y en iOS ese enlazado bloquea el hilo principal cientos de
+milisegundos. Si un frame de 320 ms enlazó programas, el parón es compilación;
+si no enlazó ninguno, la compilación queda descartada. Lo mismo cuentan
+`programs0/programsEnd` y `textures0/texturesEnd` para toda la vuelta: una
+vuelta que no compila nada no puede estar parándose a compilar.
+
+**`shadows` es el AJUSTE, `shadowFrames` es la realidad.** Bajo cielo cerrado
+el sol deja de proyectar (`DayNightCycle`), así que una vuelta con lluvia
+declara `shadows: true` y no paga el pase ni una vez. El caso peor (despejado
+a mediodía) exige `shadowFrames` alto, no `shadows: true`.
 
 `progress‰` es la posición en el anillo ×1000, así que un tirón se localiza en el
 mapa: cruzar ese número con `docs/vista-cenital-tokyo-loop.jpg` o con los markers

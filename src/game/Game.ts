@@ -515,6 +515,10 @@ export class Game {
       const gl = this.renderer.getContext()
       const dbg = gl.getExtension('WEBGL_debug_renderer_info')
       this.perf.start({
+        // Which BUILD produced this lap. Without it, two logs can only be
+        // compared by trusting that nothing changed in between.
+        version: __APP_VERSION__,
+        commit: __APP_COMMIT__,
         ua: navigator.userAgent,
         gpu: dbg ? gl.getParameter(dbg.UNMASKED_RENDERER_WEBGL) : 'n/d',
         dpr: window.devicePixelRatio,
@@ -526,8 +530,18 @@ export class Game {
         pwa: window.matchMedia('(display-mode: standalone)').matches || (navigator as any).standalone === true,
         season: this.season,
         weather: this.weather,
+        // A lap driven under auto fronts is not repeatable: the sky changes
+        // itself mid-measurement, so "same conditions" is not a claim you can
+        // make about it afterwards.
+        weatherAuto: this.weatherAuto,
+        // The view decides what gets drawn at all — the cab hides the consist
+        // entirely, the outside views build it.
+        camera: this.cameraMode,
         hour: Math.round(this.dayNight.timeOfDay * 10) / 10,
         timeScale: this.timeScale,
+        // The renderer SETTING. Whether the pass actually ran is `shadowFrames`
+        // in the summary: under a closed sky the sun stops casting, so a rainy
+        // lap reports `shadows: true` and never pays for one.
         shadows: this.renderer.shadowMap.enabled,
       })
     }
@@ -1748,6 +1762,11 @@ export class Game {
       speedKmh: this.train.speedKmh,
       progress: this.train.progressFraction,
       stationIdx: this.train.targetStationIndex,
+      // Cumulative, not per-frame: three links a program the first time a
+      // material is drawn, so growth here IS first-draw work happening.
+      programs: this.renderer.info.programs?.length ?? 0,
+      textures: this.renderer.info.memory.textures,
+      shadowPass: this.dayNight.sunLight.castShadow,
     })
     this.ui.updatePerfChip(this.perf.fpsNow, this.perf.recording)
   }
