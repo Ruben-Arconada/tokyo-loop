@@ -89,9 +89,12 @@ const claimedStreams = new Set<string>()
 
 // Hot reload re-executes a consumer module, which re-claims its stream while
 // this registry survives — so every edit made the guard cry wolf about names
-// that are perfectly unique. Forgetting the claims before each hot update
-// keeps the warning meaningful: after an edit the modules simply claim again
-// from a clean slate, and only a REAL duplicate still shows up.
+// that are perfectly unique. Clearing before each hot update silences that.
+//
+// The trade is worth naming: it also forgets the claims of modules that did
+// NOT reload, so straight after an edit the guard can miss a real duplicate.
+// A CLEAN PAGE LOAD is therefore the authoritative check — the warning is an
+// early hint while you work, not a gate.
 if (import.meta.hot) {
   import.meta.hot.on('vite:beforeUpdate', () => claimedStreams.clear())
 }

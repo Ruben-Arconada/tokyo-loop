@@ -1355,6 +1355,10 @@ export class Game {
   private buildCabRig() {
     const cab = new THREE.Group()
     this.cabRig = cab
+    // Re-planted at the driver's eye every frame in cab view, so it is placed
+    // by the simulation and not by the world seed. The flag is inherited, so
+    // this one line covers the whole console, pillars, lever and lamps.
+    cab.userData.dynamic = true
     this.scene.add(cab)
 
     // Cab dome light: a soft warm pool over the console so the controls and
