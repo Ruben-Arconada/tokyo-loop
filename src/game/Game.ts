@@ -543,6 +543,14 @@ export class Game {
         // in the summary: under a closed sky the sun stops casting, so a rainy
         // lap reports `shadows: true` and never pays for one.
         shadows: this.renderer.shadowMap.enabled,
+      }, {
+        // Read here, before the lap's first render. Inferring this from the
+        // first sample instead would fold whatever that render compiled into
+        // the baseline — and the first frame after pressing record is the
+        // likeliest of the whole lap to compile something.
+        programs: this.renderer.info.programs?.length ?? 0,
+        textures: this.renderer.info.memory.textures,
+        texUploads: this.texUploadCount,
       })
     }
     this.pushPerfState()
@@ -1714,6 +1722,43 @@ export class Game {
     this.camera.quaternion.setFromRotationMatrix(this.camMat)
   }
 
+  /**
+   * How many of the canvas-built textures have actually reached the GPU so
+   * far. Monotonic, so PerfLog can take a per-render delta and say "this
+   * render uploaded a station board".
+   *
+   * Why not `renderer.info.memory.textures`: that counts what is RESIDENT.
+   * The destination roll is disposed and rebuilt at every station
+   * (`updateLever`), so one leaves as one arrives and the total never moves —
+   * the single texture we KNOW churns once per stop is invisible to it. And
+   * the thirty station boards are 1024×384 canvases uploaded lazily on their
+   * first draw, which is a per-station one-off cost that fits the freezes.
+   *
+   * Reads `renderer.properties`, which is three's internal bookkeeping: a
+   * texture that has been uploaded has a `__webglTexture`. Dev telemetry only,
+   * and cheap — a WeakMap lookup per tracked texture, and each one is checked
+   * only until it goes resident.
+   */
+  private countTextureUploads(): number {
+    if (!this.perf.recording) return this.texUploadCount
+    const props = (this.renderer as unknown as { properties?: { get(o: object): { __webglTexture?: unknown } } }).properties
+    if (!props) return this.texUploadCount
+    const check = (tex: THREE.Texture | null | undefined) => {
+      if (!tex || this.uploadedTextures.has(tex)) return
+      if (props.get(tex)?.__webglTexture) {
+        this.uploadedTextures.add(tex)
+        this.texUploadCount++
+      }
+    }
+    for (const entry of this.city.signTextures) check(entry)
+    check(this.destinationMat?.map)
+    return this.texUploadCount
+  }
+
+  /** Textures already seen on the GPU — a Set, so a disposed-and-rebuilt one counts as a NEW upload. */
+  private uploadedTextures = new Set<THREE.Texture>()
+  private texUploadCount = 0
+
   private onResize() {
     // The VISUAL viewport when the platform reports one: on iOS the layout
     // viewport can disagree with what is actually visible (collapsing
@@ -1751,12 +1796,19 @@ export class Game {
       this.physicsAccumulator -= FIXED_DT
     }
     this.step(frameDt)
+    // Timed around the call itself. `rawDt` above is the interval BEFORE this
+    // frame, so pairing it with resources read after this render mis-attributes
+    // a stall by exactly one frame — the render that compiled would look fast
+    // and the frame that reported it would look resourceless.
+    const renderT0 = performance.now()
     this.renderer.render(this.scene, this.camera)
+    const renderMs = performance.now() - renderT0
     // Sampled AFTER the draw: renderer.info resets per render, so these are
     // the counts for the frame that was just put on screen.
     const info = this.renderer.info.render
     this.perf.record({
       frameMs: rawDt * 1000,
+      renderMs,
       draws: info.calls,
       tris: info.triangles,
       speedKmh: this.train.speedKmh,
@@ -1766,6 +1818,7 @@ export class Game {
       // material is drawn, so growth here IS first-draw work happening.
       programs: this.renderer.info.programs?.length ?? 0,
       textures: this.renderer.info.memory.textures,
+      texUploads: this.countTextureUploads(),
       shadowPass: this.dayNight.sunLight.castShadow,
     })
     this.ui.updatePerfChip(this.perf.fpsNow, this.perf.recording)

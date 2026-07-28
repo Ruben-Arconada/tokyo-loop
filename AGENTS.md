@@ -109,8 +109,9 @@ Reglas al tocar el escenario:
 fingerprint CUANTIZADO de los datos generados — matrices, colores y atributos
 instanciados. **No compares capturas píxel a píxel**: WebGL cambia con la GPU,
 el driver y el antialiasing aunque el mundo sea idéntico. `__fingerprintDiff(a,b)`
-dice qué partes se movieron. El informe de rendimiento (`PerfLog` v2) lleva la
-semilla: dos vueltas solo son comparables si coincide.
+dice qué partes se movieron. El informe de rendimiento (**`PerfLog` v4**) lleva
+la semilla, la versión y el commit: dos vueltas solo son comparables si
+coinciden los tres. Formato y trampas en `docs/SISTEMAS-V014-V015.md`.
 
 `__semanticHash()` es el gemelo **ciego a la partición**: agrupa las
 instancias por el nombre que declara el builder (`tagGroup`), las ordena como

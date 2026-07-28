@@ -90,6 +90,16 @@ export class City {
   private lanternMat!: THREE.MeshStandardMaterial
   private ledStripMat!: THREE.MeshStandardMaterial
   private signEntries: SignEntry[] = []
+
+  /**
+   * The thirty station name boards, for the performance log to watch. Each is
+   * a 1024×384 canvas that only reaches the GPU the first time its platform is
+   * drawn — a per-station one-off cost, which is the shape of the freezes we
+   * are chasing.
+   */
+  get signTextures(): (THREE.Texture | null)[] {
+    return this.signEntries.map((e) => e.material.map)
+  }
   private time = 0
   /** Platform canopy colors, snow-capped in winter alongside the house roofs. */
   private canopyPools: SeasonalPool[] = []

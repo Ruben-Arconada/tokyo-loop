@@ -1,4 +1,6 @@
-import { WORLD_SEED } from './Rng'
+// Explicit `.ts`, like worldHash: this module is exercised by test/ under
+// node's own runner, which will not guess an extension.
+import { WORLD_SEED } from './Rng.ts'
 
 // ————————————————————————————————————————————————————————————————
 // Frame-time recorder for real-device sessions.
@@ -32,20 +34,38 @@ const MAX_BINS = 1800
 type Bin = [number, number, number, number, number, number, number, number]
 
 /**
- * One hitch: [tSec, ms, progress‰, station, draws, kTris, programasNuevos, tagsRecientes].
+ * One hitch: [tSec, ms, renderMs, progress‰, station, draws, kTris,
+ *             programasNuevos, texturasSubidas, tagsRecientes].
  *
- * `programasNuevos` is the decisive column. If a 320 ms frame linked a shader
- * program, the stall is compilation and no amount of audio work explains it;
- * if it linked none, compilation is ruled out and the remaining suspects are
- * the ones that leave no JS cost behind.
+ * Read `renderMs` FIRST. It says whether the stall happened inside the render
+ * call at all, which is the fork that matters: work outside it (audio, JS,
+ * storage) cannot show up there. Only then do the two resource columns split
+ * an expensive render into "linked a shader" versus "uploaded a texture" —
+ * and all three describe the same render, which the first version of this
+ * did not.
  */
-type Hitch = [number, number, number, number, number, number, number, string]
+type Hitch = [number, number, number, number, number, number, number, number, number, string]
 /** How far back a hitch looks for game events that might have caused it. */
 const MARK_WINDOW_MS = 2000
 const MARK_RING = 48
 
 export interface PerfSample {
+  /**
+   * The interval the player felt — but note WHICH interval: it is measured at
+   * the top of the tick, so it spans the PREVIOUS frame's work, not this
+   * one's. A render that stalls shows up in the NEXT sample's frameMs.
+   */
   frameMs: number
+  /**
+   * This frame's own `renderer.render()`, measured around the call. Added
+   * because pairing `frameMs` with resources read after the render was off by
+   * exactly one frame: a 320 ms render that linked two programs booked the
+   * programs against a normal-looking frame and the 320 ms against the next
+   * one, which had linked none. The column meant to prove compilation would
+   * have disproved it every time. `renderMs` and the resource deltas below
+   * describe the SAME render.
+   */
+  renderMs: number
   draws: number
   tris: number
   speedKmh: number
@@ -68,6 +88,17 @@ export interface PerfSample {
    */
   programs: number
   textures: number
+  /**
+   * Monotonic count of tracked textures that have reached the GPU — the
+   * station name boards and the destination roll, which are built on a canvas
+   * and uploaded on first draw.
+   *
+   * `textures` alone cannot answer this: it counts what is RESIDENT, so the
+   * destination board being disposed and rebuilt at every station (the one
+   * texture we know churns once per stop) leaves it perfectly flat. A
+   * monotonic counter of first uploads does not have that blind spot.
+   */
+  texUploads: number
   /**
    * Whether the sun was ACTUALLY casting this frame. `shadows` in the context
    * is only `renderer.shadowMap.enabled`, and under a closed sky the sun stops
@@ -98,9 +129,12 @@ export interface PerfSummary {
   /** Shader programs linked BEFORE the lap and DURING it. A lap that compiles nothing cannot be stalling on compiles. */
   programs0: number
   programsEnd: number
-  /** Same for textures uploaded to the GPU. */
+  /** Textures RESIDENT at each end. Flat totals hide a dispose-and-rebuild — see texUploads. */
   textures0: number
   texturesEnd: number
+  /** First GPU uploads of the tracked canvas textures (station boards, destination roll). This is the one that survives churn. */
+  texUploads0: number
+  texUploadsEnd: number
   /** Frames where the sun actually cast — 0 means this lap never exercised the shadow pass, whatever `ctx.shadows` says. */
   shadowFrames: number
 }
@@ -145,17 +179,28 @@ export class PerfLog {
   private markHead = 0
   /** Synchronous cost per instrumented block: tag → [veces, msTotal, msPeor]. */
   private costs = new Map<string, [number, number, number]>()
-  /** GPU resource counts: baseline at the first frame (-1 = not set yet) and running totals. */
-  private programs0 = -1
-  private textures0 = -1
+  /** GPU resource counts: baseline taken in start(), from the renderer, before the lap draws anything. */
+  private programs0 = 0
+  private textures0 = 0
   private programsSeen = 0
   private texturesSeen = 0
+  private texUploads0 = 0
+  private texUploadsSeen = 0
   private shadowFrames = 0
+  /** Previous frame's render time, so the interval that merely REPORTS a slow render isn't logged as a second stall. */
+  private lastRenderMs = 0
 
   /** Live frame rate for the on-screen counter, smoothed just enough to be readable. */
   fpsNow = 0
 
-  start(context: Record<string, unknown>) {
+  /**
+   * `gpu` is the resource baseline read from the renderer BEFORE the first
+   * frame of the lap. It is a parameter rather than something inferred from
+   * the first sample because that first render is the likeliest of all to
+   * compile something, and inferring the baseline from it would hide exactly
+   * that.
+   */
+  start(context: Record<string, unknown>, gpu: { programs: number; textures: number; texUploads: number }) {
     this.hist.fill(0)
     this.frames = 0
     this.totalMs = 0
@@ -177,11 +222,14 @@ export class PerfLog {
     this.markTimes.fill(0)
     this.markHead = 0
     this.costs.clear()
-    this.programs0 = -1
-    this.textures0 = -1
-    this.programsSeen = 0
-    this.texturesSeen = 0
+    this.programs0 = gpu.programs
+    this.textures0 = gpu.textures
+    this.texUploads0 = gpu.texUploads
+    this.programsSeen = gpu.programs
+    this.texturesSeen = gpu.textures
+    this.texUploadsSeen = gpu.texUploads
     this.shadowFrames = 0
+    this.lastRenderMs = 0
     this.context = context
     this.recording = true
   }
@@ -222,19 +270,15 @@ export class PerfLog {
     if (s.frameMs > this.maxMs) this.maxMs = s.frameMs
     if (s.draws > this.maxDraws) this.maxDraws = s.draws
     if (s.tris > this.maxTris) this.maxTris = s.tris
-    // First sample of the lap establishes the baseline: everything already
-    // linked and uploaded before the recording started does not belong to it.
-    if (this.programs0 < 0) {
-      this.programs0 = s.programs
-      this.textures0 = s.textures
-      // Seed the running counters too, or the first frame would report every
-      // program linked before the lap as if the lap had just compiled it.
-      this.programsSeen = s.programs
-      this.texturesSeen = s.textures
-    }
+    // The baseline is taken in start(), from the renderer, BEFORE any frame of
+    // the lap is drawn. Taking it from the first sample instead would have
+    // swallowed whatever that first render compiled — and the first render
+    // after pressing record is exactly the one most likely to compile.
     const newPrograms = Math.max(0, s.programs - this.programsSeen)
+    const newTexUploads = Math.max(0, s.texUploads - this.texUploadsSeen)
     this.programsSeen = s.programs
     this.texturesSeen = s.textures
+    this.texUploadsSeen = s.texUploads
     if (s.shadowPass) this.shadowFrames++
 
     this.binFrames++
@@ -244,20 +288,32 @@ export class PerfLog {
     if (s.tris > this.binTris) this.binTris = s.tris
     if (s.speedKmh > this.binSpeed) this.binSpeed = s.speedKmh
 
-    if (s.frameMs >= HITCH_MS && this.hitches.length < MAX_HITCHES * 4) {
+    // Trigger on EITHER clock. A stall inside render() is visible here one
+    // frame before the interval that reports it, and that earlier record is
+    // the one holding the resources it consumed.
+    const stallMs = Math.max(s.frameMs, s.renderMs)
+    // ...but do not book the same stall twice. When a slow render fires a
+    // hitch, the next frame's interval necessarily contains it and would
+    // record a near-identical entry with no resources attached — the exact
+    // pair that made the first version of this look self-contradictory.
+    const echoOfLastRender = s.renderMs < HITCH_MS && this.lastRenderMs >= HITCH_MS
+    if (stallMs >= HITCH_MS && !echoOfLastRender && this.hitches.length < MAX_HITCHES * 4) {
       this.hitches.push([
         Math.round((now - this.startedAt) / 100) / 10,
         Math.round(s.frameMs),
+        Math.round(s.renderMs),
         Math.round(s.progress * 1000),
         s.stationIdx,
         s.draws,
         Math.round(s.tris / 1000),
         newPrograms,
+        newTexUploads,
         // What the game was doing in the run-up. A stall with a name is a bug
         // you can fix; a stall without one is a guess.
-        this.recentMarks(now - s.frameMs),
+        this.recentMarks(now - Math.max(s.frameMs, s.renderMs)),
       ])
     }
+    this.lastRenderMs = s.renderMs
 
     if (now - this.binStart >= BIN_MS) this.closeBin(now, s.progress)
     // Survive an iOS tab kill mid-lap: the log is worthless if backgrounding
@@ -377,10 +433,12 @@ export class PerfLog {
       over17: this.countOver(16.7),
       over33: this.countOver(33.3),
       over50: this.countOver(HITCH_MS),
-      programs0: Math.max(0, this.programs0),
+      programs0: this.programs0,
       programsEnd: this.programsSeen,
-      textures0: Math.max(0, this.textures0),
+      textures0: this.textures0,
       texturesEnd: this.texturesSeen,
+      texUploads0: this.texUploads0,
+      texUploadsEnd: this.texUploadsSeen,
       shadowFrames: this.shadowFrames,
       maxDraws: this.maxDraws,
       maxTris: this.maxTris,
@@ -410,10 +468,11 @@ export class PerfLog {
   /** The payload to hand back: compact arrays, not objects — a full lap has to fit in a paste. */
   export(): string {
     return JSON.stringify({
-      // v3: hitches gained a `programasNuevos` column and the summary gained
-      // the GPU-resource and shadow-pass counters. A v2 reader would silently
-      // read the new column as the tag string, so the number has to move.
-      v: 3,
+      // v4: hitches carry `renderMs` and a texture-upload column, and the
+      // resource baseline moved to start(). v3 shipped with those columns
+      // misaligned by one frame, so its numbers must not be compared with
+      // these — hence a new number rather than a patched meaning.
+      v: 4,
       // Which world this lap was driven through. Two laps are only comparable
       // if this matches — before seeding, every reload dealt a different Japan
       // and draw counts could not be told apart from layout luck.
@@ -422,8 +481,16 @@ export class PerfLog {
       summary: this.summary,
       // [tSec, frames, meanMs, maxMs, draws, kTris, kmh, progress‰]
       bins: this.bins,
-      // [tSec, ms, progress‰, station, draws, kTris, programasNuevos, tags] — worst first, capped
-      hitches: this.hitches.slice().sort((a, b) => b[1] - a[1]).slice(0, MAX_HITCHES),
+      // [tSec, ms, renderMs, progress‰, station, draws, kTris, programasNuevos, texturasSubidas, tags] — worst first, capped
+      // Sorted by the WORSE of the two clocks, not by the interval. A stall
+      // caught inside render() has an ordinary `frameMs` by construction, so
+      // sorting on that alone would rank the very records that carry the
+      // resource evidence below trivial blips — and then the cap would drop
+      // them.
+      hitches: this.hitches
+        .slice()
+        .sort((a, b) => Math.max(b[1], b[2]) - Math.max(a[1], a[2]))
+        .slice(0, MAX_HITCHES),
       // tag: [veces, msTotal, msPeor] — el bloqueo síncrono medido EN SU MÓVIL.
       costs: Object.fromEntries(
         [...this.costs.entries()].sort((a, b) => b[1][1] - a[1][1]).map(([k, v]) => [k, v.map((n) => Math.round(n * 10) / 10)]),

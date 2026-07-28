@@ -269,16 +269,45 @@ minuto a minuto (que es lo que delata a un móvil estrangulándose por calor).
 Formato de exportación (JSON compacto, ~13 KB por vuelta completa de 7 min):
 
 ```
-v        3
+v        4
 ctx      { version, commit, ua, gpu, dpr, cap, vw, vh, pwa, season, weather,
            weatherAuto, camera, hour, timeScale, shadows }
 summary  { seconds, frames, meanFps, p05, p50, p95, p99, maxMs, over17, over33,
-           over50, maxDraws, maxTris, gaps,
-           programs0, programsEnd, textures0, texturesEnd, shadowFrames }
-bins[]   [tSec, frames, meanMs, maxMs, draws, kTris, kmh, progress‰]        ← uno por segundo
-hitches[][tSec, ms, progress‰, station, draws, kTris, programasNuevos, tags] ← frames ≥50 ms, peores primero
-costs    { tag: [veces, msTotal, msPeor] }                                  ← bloqueo SÍNCRONO medido en el móvil
+           over50, maxDraws, maxTris, gaps, programs0, programsEnd,
+           textures0, texturesEnd, texUploads0, texUploadsEnd, shadowFrames }
+bins[]   [tSec, frames, meanMs, maxMs, draws, kTris, kmh, progress‰]  ← uno por segundo
+hitches[][tSec, ms, renderMs, progress‰, station, draws, kTris,
+          programasNuevos, texturasSubidas, tags]                     ← peores primero
+costs    { tag: [veces, msTotal, msPeor] }                            ← bloqueo SÍNCRONO en el móvil
 ```
+
+### ⚠️ `ms` y `renderMs` NO miden el mismo fotograma (y por eso están los dos)
+
+`ms` es el intervalo, y se toma **al principio** del tick: cubre el trabajo del
+fotograma ANTERIOR. `renderMs` se mide alrededor de `renderer.render()` y es de
+ESTE. La v3 emparejaba `ms` con los contadores de recursos leídos tras el
+render, y eso desplazaba todo un fotograma: un render de 320 ms que enlazaba
+dos programas apuntaba los programas a un fotograma de aspecto normal y los
+320 ms al siguiente, que no había enlazado ninguno. **La columna puesta para
+demostrar la compilación la habría desmentido siempre.** Por eso un tirón se
+dispara con el PEOR de los dos relojes, se ordena por el peor de los dos, y el
+eco del fotograma siguiente no se cuenta aparte. Lo sujeta
+`test/perfLog.test.ts`; la línea base de recursos se toma en `start()` desde el
+renderer, no del primer fotograma.
+
+**Cómo se lee un tirón**: mira `renderMs` primero — dice si el parón estuvo
+DENTRO del render. Si no lo estuvo, los recursos son irrelevantes y el
+sospechoso es audio, JS o almacenamiento. Si lo estuvo, `programasNuevos` y
+`texturasSubidas` separan «enlazó un shader» de «subió una textura».
+Medido en escritorio, al entrar en una estación nueva pasan LAS DOS cosas
+(Kiyomizu: +25 programas y +9 texturas), así que en el móvil hará falta el
+dato real para decidir.
+
+**`texturasSubidas` no es `texturesEnd`**: el total residente cuenta lo que hay
+vivo, y la tablilla de destino se destruye y se recrea en cada estación
+(`updateLever`), así que una se va mientras otra llega y el total no se mueve.
+El contador de subidas es monótono y sí lo ve. Vigila los 30 carteles de
+estación (1024×384, se suben en su primer dibujado) y la tablilla.
 
 `tags` son los eventos de juego marcados en los 2 s previos al tirón
 (`perfMark`), y `costs` mide bloques envueltos en `perfTime` — los hooks están
