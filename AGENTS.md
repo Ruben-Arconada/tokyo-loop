@@ -34,15 +34,44 @@ red después de eso, no había nada guardado.
 
 Nadie lo detectaba porque cada repo, leído por separado, parecía correcto.
 
-**La regla, para siempre** — en [public/sw.js](public/sw.js): el nombre de caché
-lleva prefijo de proyecto y el borrado solo puede tocar claves con ESE prefijo:
+**La regla, para siempre**: el nombre de caché lleva prefijo de proyecto y el
+borrado solo puede tocar claves con ESE prefijo.
 
 ```js
-const CACHE_PREFIX = 'tokyo-loop-'
-const CACHE = CACHE_PREFIX + 'v5'
-// ...
 keys.filter((k) => k.startsWith(CACHE_PREFIX) && k !== CACHE).map((k) => caches.delete(k))
 ```
+
+## 🔧 El service worker se GENERA — no lo edites en `public/`
+
+**`public/sw.js` ya no existe. No lo recrees.** La plantilla es
+[src/sw-template.js](src/sw-template.js) y el plugin `swGeneration` de
+[vite.config.ts](vite.config.ts) emite el `sw.js` real en cada build,
+horneándole dentro la **generación** y la **lista exacta de ficheros
+emitidos**. **Ya no se bumpea ningún `CACHE` a mano**: cada build tiene su
+caché `tokyo-loop-<generación>` y el `activate` barre las anteriores.
+
+Cuatro invariantes que costaron una prueba fallida cada una:
+
+1. **Horneado, no leído por red.** Un SW se mata y reinicia constantemente; si
+   necesita `fetch` para saber el nombre de su propia caché, offline no sirve
+   NADA. Lo que haga falta para responder sin red va dentro del worker.
+2. **Instalación transaccional**: bundles primero, `index.html` al final, y si
+   algo falla `caches.delete(CACHE)` antes de propagar el error — `caches.open`
+   crea la caché antes de que `addAll` pueda fallar, así que un despliegue a
+   medias dejaría una caché huérfana.
+3. **La generación cubre TODO lo que forma una generación**: nombres de
+   bundles + la plantilla + `index.html` + el manifest. Con solo los bundles,
+   cambiar el worker sin tocar un chunk reutilizaba el nombre de la caché VIVA
+   y una instalación fallida la borraba.
+4. **La revalidación va en `event.waitUntil()`**. Al servir desde caché se
+   responde antes de que la red termine, y un worker sin nada pendiente lo
+   matan — con la escritura a medias.
+
+**Cómo se prueba** (el navegador integrado bloquea la navegación con el
+servidor caído, así que hay que pedir con `fetch` desde la página ya cargada):
+servir `dist/` dentro de una carpeta `tokyo-loop/` con
+`python3 -m http.server`, y comprobar los cuatro casos: instalación, offline
+(matando el servidor), actualización y actualización interrumpida.
 
 Arreglado a la vez en los tres repos afectados: `tokyo-loop`, `abismo` y
 `abismo-2`. `neon-exodus-2087` tiene manifest pero todavía no tiene service
@@ -86,9 +115,10 @@ semilla: dos vueltas solo son comparables si coincide.
 ## Publicar
 
 Ritual completo en la memoria del proyecto. Resumen: `npx tsc --noEmit` +
-`npm run build`, bump de versión solo en `package.json`, y si se toca `public/`
-subir también `CACHE` en `public/sw.js`. Push a `main` dispara
-`.github/workflows/deploy.yml` → Pages. Verificar con
+`npm run build`, y bump de versión solo en `package.json` (nada más la lleva;
+lo decide Rubén). **Nada de tocar cachés a mano**: el `sw.js` y su generación
+se generan solos en cada build, ver la sección de arriba. Push a `main`
+dispara `.github/workflows/deploy.yml` → Pages. Verificar con
 `gh run list --repo Ruben-Arconada/tokyo-loop --limit 1`.
 
 `assets/` y `experiments/` están fuera de git a propósito: **nunca `git add -A`**.

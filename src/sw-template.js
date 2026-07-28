@@ -78,15 +78,24 @@ self.addEventListener('fetch', (event) => {
     (async () => {
       const cache = await caches.open(CACHE)
       const cached = await cache.match(event.request)
+      // The write is part of the promise, not fired and forgotten: a response
+      // that never reaches the cache is a revalidation that did not happen.
       const network = fetch(event.request)
-        .then((res) => {
-          if (res.ok) cache.put(event.request, res.clone())
+        .then(async (res) => {
+          if (res.ok) await cache.put(event.request, res.clone())
           return res
         })
         .catch(() => null)
+      // Serving `cached` returns BEFORE the network settles, and a worker with
+      // nothing left to do gets killed — taking the pending write with it. The
+      // browser keeps it alive for whatever waitUntil is given, so the
+      // background revalidation actually completes.
+      event.waitUntil(network)
       // Navigations prefer fresh HTML so a deploy lands at once; hashed assets
       // serve instantly from cache. Either way the cached copy is the
       // fallback, which is what makes this work with no network at all.
+      // Awaiting `network` here also awaits its cache.put, so a navigation
+      // never answers with HTML it has not managed to store.
       if (event.request.mode === 'navigate') return (await network) || cached || Response.error()
       return cached || (await network) || Response.error()
     })(),
