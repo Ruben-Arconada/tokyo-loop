@@ -78,6 +78,8 @@ export class AudioEngine {
   private dryGain: GainNode | null = null
   private wetSend: GainNode | null = null
   private convolver: ConvolverNode | null = null
+  /** Closes over the outside world when the camera is inside the cab. */
+  private cabMuffle: BiquadFilterNode | null = null
   /** Per-room levels behind the shared send: the platform's short IR and the tunnel's long dark one. */
   private roomWet: GainNode | null = null
   private tunnelWet: GainNode | null = null
@@ -179,7 +181,15 @@ export class AudioEngine {
 
     this.dryGain = this.ctx.createGain()
     this.dryGain.gain.value = 1
-    this.dryGain.connect(this.master)
+
+    // Everything that is "the world" passes this on its way to the master, so
+    // one filter can shut the cab's windows on all of it at once. Wide open
+    // outside; rolled off when the camera is the driver's eye.
+    this.cabMuffle = this.ctx.createBiquadFilter()
+    this.cabMuffle.type = 'lowpass'
+    this.cabMuffle.frequency.value = 20000
+    this.cabMuffle.connect(this.master)
+    this.dryGain.connect(this.cabMuffle)
 
     // Nature voices (birds, cicadas, crickets) live behind a shared lowpass:
     // rain rolls the cutoff down so the chorus goes MUFFLED and distant, the
@@ -903,6 +913,110 @@ export class AudioEngine {
     const vol = (0.03 + speed01 * 0.05) * duckMul
     this.railClack(t + 0.01, vol)
     this.railClack(t + 0.105, vol * 0.85)
+  }
+
+  /**
+   * The detent under a notch. Now that the cab has two handles that visibly
+   * sweep the desk, moving one in silence reads as broken — the picture
+   * promises a mechanism the mix never acknowledged.
+   *
+   * Two handles, two timbres, so you can hear WHICH one you moved without
+   * looking: the master controller is a bright dry tick, the brake valve a
+   * lower, blunter one. Emergency gets a doubled, harder pair.
+   *
+   * Same one-shot shape as railClack, which already starts a fresh source
+   * every second of cruising — this adds nothing new to the iOS start() cost.
+   */
+  notchDetent(notch: number, previous: number) {
+    if (!this.ctx || !this.master || !this.noiseBuffer || this.muted) return
+    const brakeSide = notch < 0 || (notch === 0 && previous < 0)
+    const emergency = notch === -8
+    const t = this.ctx.currentTime + 0.005
+    const hit = (when: number, freq: number, vol: number, decay: number) => {
+      const ctx = this.ctx!
+      const src = ctx.createBufferSource()
+      src.buffer = this.noiseBuffer
+      src.playbackRate.value = 0.9 + Math.random() * 0.25
+      const bp = ctx.createBiquadFilter()
+      bp.type = 'bandpass'
+      bp.frequency.value = freq
+      bp.Q.value = 2.4
+      const g = ctx.createGain()
+      g.gain.setValueAtTime(0, when)
+      g.gain.linearRampToValueAtTime(vol, when + 0.003)
+      g.gain.exponentialRampToValueAtTime(0.0001, when + decay)
+      src.connect(bp)
+      bp.connect(g)
+      g.connect(this.dryGain!)
+      src.start(when)
+      src.stop(when + decay + 0.02)
+      // A little body under the tick, so it lands like a mechanism rather
+      // than a click track.
+      const osc = ctx.createOscillator()
+      osc.type = 'sine'
+      osc.frequency.setValueAtTime(freq * 0.42, when)
+      osc.frequency.exponentialRampToValueAtTime(freq * 0.26, when + decay)
+      const og = ctx.createGain()
+      og.gain.setValueAtTime(0, when)
+      og.gain.linearRampToValueAtTime(vol * 0.5, when + 0.004)
+      og.gain.exponentialRampToValueAtTime(0.0001, when + decay)
+      osc.connect(og)
+      og.connect(this.dryGain!)
+      osc.start(when)
+      osc.stop(when + decay + 0.02)
+    }
+    if (emergency) {
+      hit(t, 900, 0.09, 0.07)
+      hit(t + 0.055, 780, 0.07, 0.09)
+      return
+    }
+    hit(t, brakeSide ? 620 : 1150, brakeSide ? 0.05 : 0.042, brakeSide ? 0.065 : 0.045)
+  }
+
+  /**
+   * Brake air. Tied to the SAME cylinder pressure the gauge needle reads, so
+   * what you hear and what the instrument says are one number: a short
+   * descending hiss as it rises, a longer, softer one as it releases.
+   */
+  brakeAir(delta: number) {
+    if (!this.ctx || !this.master || !this.noiseBuffer || this.muted) return
+    const mag = Math.abs(delta)
+    if (mag < 0.02) return
+    const applying = delta > 0
+    const ctx = this.ctx
+    const when = ctx.currentTime + 0.01
+    const dur = applying ? 0.18 + mag * 0.5 : 0.4 + mag * 0.9
+    const src = ctx.createBufferSource()
+    src.buffer = this.noiseBuffer
+    src.playbackRate.value = 1
+    const hp = ctx.createBiquadFilter()
+    hp.type = 'highpass'
+    hp.frequency.setValueAtTime(applying ? 1900 : 1500, when)
+    hp.frequency.exponentialRampToValueAtTime(applying ? 1100 : 900, when + dur)
+    const g = ctx.createGain()
+    const peak = Math.min(0.055, 0.02 + mag * 0.12)
+    g.gain.setValueAtTime(0, when)
+    g.gain.linearRampToValueAtTime(peak, when + 0.03)
+    g.gain.exponentialRampToValueAtTime(0.0001, when + dur)
+    src.connect(hp)
+    hp.connect(g)
+    g.connect(this.dryGain!)
+    g.connect(this.wetSend!)
+    src.start(when)
+    src.stop(when + dur + 0.05)
+  }
+
+  /**
+   * Where the listener is sitting. Inside a sealed cab the world outside is
+   * heard THROUGH the body, so the weather, the platform murmur and the
+   * insect chorus roll off; in the outside views they are open.
+   *
+   * One filter on the dry bus rather than one per layer: everything that is
+   * "the world" already meets here.
+   */
+  setListenerInCab(inCab: boolean) {
+    if (!this.ctx || !this.cabMuffle) return
+    this.cabMuffle.frequency.setTargetAtTime(inCab ? 3200 : 20000, this.ctx.currentTime, 0.25)
   }
 
   private railClack(when: number, vol: number) {

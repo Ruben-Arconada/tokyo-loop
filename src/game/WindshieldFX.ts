@@ -78,7 +78,13 @@ export class WindshieldFX {
    * @param speed01 0..1 of line speed — drives the upward/outward smear
    * @param visible false outside the cab view (the glass belongs to the cab)
    */
-  update(dt: number, intensity: number, snow: boolean, speed01: number, visible: boolean) {
+  /**
+   * `clip` is the windscreen in normalised device coords. Drops are born inside
+   * it and drawing is clipped to it, so rain stays on the glass instead of
+   * running down the instrument panel. Null = the whole canvas, which is what
+   * the outside views want.
+   */
+  update(dt: number, intensity: number, snow: boolean, speed01: number, visible: boolean, clip: { x0: number; y0: number; x1: number; y1: number } | null = null) {
     const active = visible && intensity > 0.02
     if (!active && this.alive === 0) {
       if (this.shown) {
@@ -100,8 +106,13 @@ export class WindshieldFX {
         this.spawnCarry -= 1
         const d = this.drops[this.alive++]
         const maxLife = snow ? 1.6 + Math.random() * 2.2 : 4 + Math.random() * 7
-        d.x = Math.random() * this.w
-        d.y = Math.random() * this.h * 0.9
+        if (clip) {
+          d.x = (clip.x0 + Math.random() * (clip.x1 - clip.x0)) * 0.5 * this.w + this.w * 0.5
+          d.y = this.h * 0.5 - (clip.y0 + Math.random() * (clip.y1 - clip.y0)) * 0.5 * this.h
+        } else {
+          d.x = Math.random() * this.w
+          d.y = Math.random() * this.h * 0.9
+        }
         d.r = (snow ? 2.2 + Math.random() * 3 : 2.4 + Math.random() * 4.6) * this.dpr
         d.life = maxLife
         d.maxLife = maxLife
@@ -113,6 +124,16 @@ export class WindshieldFX {
 
     const ctx = this.ctx
     ctx.clearRect(0, 0, this.w, this.h)
+    if (clip) {
+      ctx.save()
+      const px0 = clip.x0 * 0.5 * this.w + this.w * 0.5
+      const px1 = clip.x1 * 0.5 * this.w + this.w * 0.5
+      const py0 = this.h * 0.5 - clip.y1 * 0.5 * this.h
+      const py1 = this.h * 0.5 - clip.y0 * 0.5 * this.h
+      ctx.beginPath()
+      ctx.rect(px0, py0, px1 - px0, py1 - py0)
+      ctx.clip()
+    }
     const cx = this.w / 2
     const cy = this.h * 0.42 // vanishing point sits a little above center
 
@@ -159,6 +180,7 @@ export class WindshieldFX {
       }
     }
     ctx.globalAlpha = 1
+    if (clip) ctx.restore()
   }
 }
 
