@@ -27,12 +27,12 @@ export const CAR_LEN = 18.4
 const CAR_GAP = 0.6
 export const CAR_PITCH = CAR_LEN + CAR_GAP
 /** Half-width of the body shell. */
-const HALF_W = 2.15
+export const HALF_W = 2.15
 /** Floor sits level with the platform slab (City's PLATFORM_TOP). */
-const FLOOR_Y = 1.2
-const ROOF_Y = 4.35
+export const FLOOR_Y = 1.2
+export const ROOF_Y = 4.35
 const ROOF_CAP_Y = 4.62
-const WALL_T = 0.16
+export const WALL_T = 0.16
 /** Clear width of one doorway; each of its two leaves is half that. */
 const DOOR_W = 1.55
 const LEAF_W = DOOR_W / 2
@@ -40,7 +40,75 @@ const DOOR_TOP = 3.62
 /** Doorway centres within a car. */
 const CAR_DOOR_ZS = [-4.6, 4.6]
 /** Nose length ahead of the leading car's body. */
-const NOSE_LEN = 1.5
+export const NOSE_LEN = 1.5
+
+/**
+ * The windscreen, as ONE set of numbers.
+ *
+ * These used to be literals inside `buildNoseGlass`, which was fine while the
+ * only thing that knew about the windscreen was the thing that drew it from
+ * outside. The cab interior has to agree with it pane for pane — that
+ * agreement is the whole point of sitting inside this train rather than a
+ * generic box — so the numbers live here and both sides read them.
+ *
+ * Two panes with a centre pillar between them, which is the face of a Japanese
+ * commuter EMU. `INNER` and `OUTER` are the |x| the glass spans; the pillar is
+ * everything inside `INNER`.
+ */
+export const WINDSCREEN = {
+  /** Pane centre height above the rail head. */
+  centreY: 3.12,
+  /**
+   * The centre pillar used to be 0.56 wide. From outside that reads as a face;
+   * from the driver's seat it is a post planted on the vanishing point, because
+   * the eye is pinned to the axis.
+   *
+   * It is slimmed by moving the panes INWARD, not by widening them. Widening
+   * was the first attempt and it pushed the outer edge of the glass to |x| =
+   * 2.11, which is 0.14 PAST the shoulder of a nose that is a rounded box of
+   * radius 0.34 — the windscreen flew off the side of the train. Sliding the
+   * same 1.68-wide pane inward gets the pillar down to 0.16, thinner still,
+   * with the glass ending at 1.76 and comfortably on the bodywork.
+   */
+  paneW: HALF_W * 0.78,
+  paneH: 1.35,
+  /** Pane centre offset from the axis. */
+  paneX: HALF_W * 0.427,
+  /** Glass plane, measured from the nose's mounting face. */
+  z: NOSE_LEN + 0.01,
+  get inner() {
+    return this.paneX - this.paneW / 2
+  },
+  get outer() {
+    return this.paneX + this.paneW / 2
+  },
+  get top() {
+    return this.centreY + this.paneH / 2
+  },
+  get bottom() {
+    return this.centreY - this.paneH / 2
+  },
+} as const
+
+/** Destination board over the windscreen, on the outside of the nose. */
+export const NOSE_BOARD = { y: 4.02, w: HALF_W * 1.05, h: 0.42 } as const
+
+/**
+ * How far back into the leading car the cab reaches. Saloon glazing has to
+ * stop here — behind this line is passenger space, ahead of it is the driver.
+ */
+export const CAB_LEN_IN_CAR = 2.3
+
+/**
+ * 運転士側窓 — the cab's sliding side window, the one a Japanese driver leans
+ * out of to watch the platform.
+ *
+ * Shared for the same reason `WINDSCREEN` is. The interior cuts this opening in
+ * its side wall and the nose carries the matching glass, so the window a driver
+ * looks through is the window you can see from the platform. Z is measured
+ * forward from the nose's mounting face, which is where `buildNose` works.
+ */
+export const CAB_SIDE_WINDOW = { z0: 0.04, z1: 1.3, y0: 2.565, y1: 3.655 } as const
 
 /** Car centres along the consist, front car first (+Z is the direction of travel). */
 export const CAR_OFFSETS = Array.from({ length: CAR_COUNT }, (_, i) => ((CAR_COUNT - 1) / 2 - i) * CAR_PITCH)
@@ -157,7 +225,12 @@ function buildCarGlass(): THREE.BufferGeometry {
     segs.push([from, dz - DOOR_W / 2 - 0.35])
     from = dz + DOOR_W / 2 + 0.35
   }
-  segs.push([from, halfLen - 0.5])
+  // The last segment stops well short of the front end. That end of the LEAD
+  // car is the driver's cab, and saloon windows used to run right over it: from
+  // outside you saw passenger glazing along 1.25 m of what is, from the inside,
+  // the cab's blind rear bulkhead. The geometry is shared by all three cars, so
+  // the setback costs nothing and gives every car a more believable end panel.
+  segs.push([from, halfLen - CAB_LEN_IN_CAR])
   for (const side of [-1, 1]) {
     for (const [a, b] of segs) {
       const len = b - a
@@ -192,12 +265,25 @@ function buildNose(): THREE.BufferGeometry {
 /** Windscreen glass + the destination board, both dark. */
 function buildNoseGlass(): THREE.BufferGeometry {
   const parts: THREE.BufferGeometry[] = []
-  // Two-pane windscreen with a centre pillar — the face of the thing.
+  // Two-pane windscreen with a centre pillar — the face of the thing. The cab
+  // interior builds its own frame from these same numbers.
   for (const side of [-1, 1]) {
-    parts.push(box(HALF_W * 0.78, 1.35, 0.1, side * HALF_W * 0.52, 3.12, NOSE_LEN + 0.01))
+    parts.push(box(WINDSCREEN.paneW, WINDSCREEN.paneH, 0.1, side * WINDSCREEN.paneX, WINDSCREEN.centreY, WINDSCREEN.z))
   }
   // Destination board above the screen, and the route board under it.
-  parts.push(box(HALF_W * 1.05, 0.42, 0.1, 0, 4.02, NOSE_LEN + 0.01))
+  parts.push(box(NOSE_BOARD.w, NOSE_BOARD.h, 0.1, 0, NOSE_BOARD.y, WINDSCREEN.z))
+  // 運転士側窓 on each flank. The cab cuts this same opening in its interior
+  // wall, so the window the driver leans out of is a window that exists on the
+  // outside of the train too — it used to be a hole into a solid block. Free:
+  // this geometry is already an InstancedMesh over the two noses.
+  {
+    const w = CAB_SIDE_WINDOW
+    const len = w.z1 - w.z0
+    const h = w.y1 - w.y0
+    for (const side of [-1, 1]) {
+      parts.push(box(0.07, h, len, side * (HALF_W + 0.02), (w.y0 + w.y1) / 2, w.z0 + len / 2))
+    }
+  }
   return merge(parts)
 }
 
