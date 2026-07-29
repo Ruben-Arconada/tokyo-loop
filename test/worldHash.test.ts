@@ -10,6 +10,7 @@ import {
   CANONICAL_SCENARIO,
   type WorldScenario,
 } from '../src/game/worldHash.ts'
+import { sectorizeWorld } from '../src/game/sectorize.ts'
 
 // ————————————————————————————————————————————————————————————————
 // The contract the ring sectorisation is about to lean on, as a test instead
@@ -224,4 +225,80 @@ test('un hash sin escenario canónico se marca como no canónico', () => {
   // No scenario at all is the synthetic case these tests run in, and it is
   // never canonical — nothing here is a capture of the real world.
   assert.equal(semanticFingerprint(scene).scenario, null)
+})
+
+// ————————————————————————————————————————————————————————————————
+// The sectoriser itself, not just the property it relies on.
+//
+// The tests above fix that the semantic fingerprint is blind to how instances
+// are parcelled up. These fix that `sectorizeWorld` — the pass that actually
+// does the parcelling — keeps its side of that bargain: same instances, same
+// tag, same hash, whatever N is.
+// ————————————————————————————————————————————————————————————————
+
+test('sectorizar el anillo NO mueve el hash semántico, para 1, 4, 6 y 8', () => {
+  // Instances spread right around a ring, which is the case the pass exists for.
+  const ringPool = (group: string, n: number, radius: number) => {
+    const mesh = new THREE.InstancedMesh(BOX, MAT, n)
+    const o = new THREE.Object3D()
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2
+      o.position.set(Math.cos(a) * radius, (i % 5) * 0.4, Math.sin(a) * radius)
+      o.rotation.set(0, a, 0)
+      o.updateMatrix()
+      mesh.setMatrixAt(i, o.matrix)
+    }
+    mesh.instanceMatrix.needsUpdate = true
+    return tagGroup(mesh, group)
+  }
+
+  const reference = semanticFingerprint(sceneOf(ringPool('houses', 120, 4000), ringPool('poles', 90, 4200)), CANONICAL_SCENARIO)
+
+  for (const sectors of [1, 4, 6, 8]) {
+    const scene = sceneOf(ringPool('houses', 120, 4000), ringPool('poles', 90, 4200))
+    const report = sectorizeWorld(scene, { sectors })
+    const after = semanticFingerprint(scene, CANONICAL_SCENARIO)
+    assert.equal(after.total, reference.total, `con ${sectors} sectores el hash semántico se movió`)
+    assert.deepEqual(after.counts, reference.counts, `con ${sectors} sectores cambiaron los recuentos`)
+    if (sectors > 1) assert.ok(report.split.length === 2, `con ${sectors} sectores deberían haberse partido los dos pools`)
+  }
+})
+
+test('sectorizar deja en paz lo dinámico y lo que no lleva etiqueta', () => {
+  const plain = new THREE.InstancedMesh(BOX, MAT, 60)
+  const o = new THREE.Object3D()
+  for (let i = 0; i < 60; i++) {
+    o.position.set(Math.cos(i) * 3000, 0, Math.sin(i) * 3000)
+    o.updateMatrix()
+    plain.setMatrixAt(i, o.matrix)
+  }
+  plain.instanceMatrix.needsUpdate = true
+
+  const dyn = plain.clone()
+  dyn.userData.dynamic = true
+  tagGroup(dyn, 'consist')
+
+  const scene = sceneOf(plain, dyn)
+  const report = sectorizeWorld(scene, { sectors: 8 })
+
+  assert.equal(report.split.length, 0, 'no debería haber partido ninguno de los dos')
+  assert.equal(report.skipped.length, 2)
+  assert.ok(report.skipped.some((s) => s.reason.includes('dinámico')))
+  assert.ok(report.skipped.some((s) => s.reason.includes('sin nombre semántico')))
+})
+
+test('un pool que ya es local no se parte: pagaría draw calls sin ganar culling', () => {
+  const local = new THREE.InstancedMesh(BOX, MAT, 40)
+  const o = new THREE.Object3D()
+  for (let i = 0; i < 40; i++) {
+    o.position.set((i % 8) * 5, 0, Math.floor(i / 8) * 5)
+    o.updateMatrix()
+    local.setMatrixAt(i, o.matrix)
+  }
+  local.instanceMatrix.needsUpdate = true
+  const scene = sceneOf(tagGroup(local, 'station-props'))
+
+  const report = sectorizeWorld(scene, { sectors: 8 })
+  assert.equal(report.split.length, 0)
+  assert.match(report.skipped[0].reason, /ya es local/)
 })

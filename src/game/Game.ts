@@ -8,6 +8,7 @@ import { Passengers } from './Passengers'
 import { Precipitation } from './Precipitation'
 import { TrainConsist, CAB_OFFSET } from './TrainConsist'
 import { CabInterior } from './CabInterior'
+import { requestedSectors, sectorizeWorld, type SectorizeReport } from './sectorize'
 import type { CameraMode } from './cameraModes'
 import { PerfLog, setActivePerfLog, perfMark, perfPhase } from './PerfLog'
 import { PassengerFlow, TRAIN_CAPACITY } from './PassengerFlow'
@@ -248,6 +249,8 @@ export class Game {
   private platYaw = 0
   private platPitch = 0
   private lastDestinationIdx = -1
+  /** What the sectorisation pass actually did — read by the dev harness. */
+  sectorReport!: SectorizeReport
   /** Reused every rainy frame — the windscreen's screen-space box. */
   private readonly wsClip = { x0: -1, y0: -1, x1: 1, y1: 1 }
   private lastCrossingPhase = false
@@ -415,6 +418,12 @@ export class Game {
     // Registered once, here, so the upload watch is already tracking them long
     // before anyone presses record — that is what keeps its baseline honest.
     this.city.collectSignTextures(this.uploadWatch)
+
+    // AFTER every builder has finished, and only when asked for with `?sectors=N`.
+    // Cutting the ring's pools into angular sectors is the experiment that buys
+    // the graphics budget for what comes next; leaving it behind a flag is what
+    // makes it measurable against the world exactly as it is today.
+    this.sectorReport = sectorizeWorld(this.scene, { sectors: requestedSectors() })
     
     this.controls = new Controls(mount, {
       onNotchChange: (n) => {

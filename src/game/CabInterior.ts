@@ -583,8 +583,12 @@ export class CabInterior {
      * Built as ten separate little meshes this was ten draw calls in the view
      * that is on screen most of the time.
      */
-    const build = (pivot: THREE.Object3D, x: number, armLen: number, sweepOut: number) => {
-      const baseAt = new THREE.Vector3(x, DESK_TOP + 0.075, fwd(1.34))
+    const build = (pivot: THREE.Object3D, x: number, armLen: number, sweepOut: number, tint: number) => {
+      // Forward of where it was: at fwd(1.34) the base fell below the bottom
+      // of a 68° frame, so the mounting collar and the detent marks — modelled
+      // and paid for in triangles — were never once on screen, and the handles
+      // read as two rods entering from nowhere.
+      const baseAt = new THREE.Vector3(x, DESK_TOP + 0.075, fwd(1.52))
       const base = new THREE.CylinderGeometry(0.115, 0.13, 0.055, 16)
       base.translate(baseAt.x, baseAt.y, baseAt.z)
       this.fittings.push(base)
@@ -620,14 +624,22 @@ export class CabInterior {
       parts.push(knob)
 
       const geo = merge(parts)
-      bakeShading(geo, new THREE.Color(0xb9bec6))
+      bakeShading(geo, new THREE.Color(tint))
       const mesh = new THREE.Mesh(geo, handleMat)
       pivot.add(mesh)
       this.disposables.push(geo)
     }
 
-    build(this.mascon, -0.62, 0.30, 1)
-    build(this.brakeHandle, 0.62, 0.28, -1)
+    // Dark bakelite, and two DIFFERENT darks. Measured on the captures, the
+    // pale handles came out three times the luminance of the desk beside them:
+    // in a room deliberately kept dark, the two biggest bright objects in frame
+    // were a pair of identical white tubes at the bottom edge, and the eye went
+    // to them before the speedometer or the track. A real 205 desk keeps both
+    // handles dark precisely so they do not run the picture — and giving each
+    // its own tint is what lets you tell the 主幹制御器 from the brake by
+    // something other than which side it is on.
+    build(this.mascon, -0.62, 0.30, 1, 0x4a4f57)
+    build(this.brakeHandle, 0.62, 0.28, -1, 0x5a4340)
 
     // 逆転ハンドル — the reverser, on the master controller's housing. A
     // two-handle desk without one is not a desk: it is the handle that decides
