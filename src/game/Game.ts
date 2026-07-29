@@ -1,12 +1,13 @@
 import * as THREE from 'three'
 import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment.js'
 import { Track, TrackOffsetCurve, CatenaryCurve, HILL_PEAK, EMBANKMENT, embankmentSurface, terrainRelief, trenchPortalOffset } from './Track'
-import { Train, notchLabel, MIN_NOTCH, MAX_NOTCH, MAX_SPEED_KMH, SPEED_SCALE, OPEN_INSTANT_SECONDS, OPEN_QUICK_SECONDS, CLOSE_WINDOW_SECONDS, CLOSE_HURRY_SECONDS, RAIL_ADVISORY_KMH, type DoorActionInfo, type RailCondition } from './Train'
+import { Train, notchLabel, MAX_NOTCH, MAX_SPEED_KMH, SPEED_SCALE, OPEN_INSTANT_SECONDS, OPEN_QUICK_SECONDS, CLOSE_WINDOW_SECONDS, CLOSE_HURRY_SECONDS, RAIL_ADVISORY_KMH, type DoorActionInfo, type RailCondition } from './Train'
 import { WindshieldFX } from './WindshieldFX'
 import { City } from './City'
 import { Passengers } from './Passengers'
 import { Precipitation } from './Precipitation'
 import { TrainConsist, CAB_OFFSET } from './TrainConsist'
+import { CabInterior } from './CabInterior'
 import type { CameraMode } from './cameraModes'
 import { PerfLog, setActivePerfLog, perfMark, perfPhase } from './PerfLog'
 import { PassengerFlow, TRAIN_CAPACITY } from './PassengerFlow'
@@ -23,9 +24,9 @@ import { Controls } from '../ui/Controls'
 import { UI } from '../ui/UI'
 import { STATIONS, type StationDef } from '../data/stations'
 import { getStationMelody, DOOR_CHIME_OPEN, DOOR_CHIME_CLOSE, BOARDING_DONE_CUE } from '../data/melodies'
-import { makeBallastTexture, makeScuffedPanelTexture, makeDestinationTexture, makeGroundTexture, makeTracksideWearTexture, WINDOW_DUSK_UNIFORM } from './signage'
+import { makeBallastTexture, makeGroundTexture, makeTracksideWearTexture, WINDOW_DUSK_UNIFORM } from './signage'
 
-const LOOK_YAW_LIMIT = 1.7 // ~97°, enough to look out the side windows
+const LOOK_YAW_LIMIT = 1.2 // ~97°, enough to look out the side windows
 const LOOK_PITCH_LIMIT = 0.55
 
 // Fixed-timestep physics: train integration/scoring must be identical
@@ -179,6 +180,7 @@ export class Game {
   private windshield!: WindshieldFX
   private consist!: TrainConsist
   private cabRig!: THREE.Group
+  private cab!: CabInterior
   /**
    * Which eye the player is looking through. The train is only BUILT into the
    * world in the outside views, so the default cab view costs exactly what it
@@ -226,7 +228,6 @@ export class Game {
   private ballastMat!: THREE.MeshStandardMaterial
   private wearMat!: THREE.MeshStandardMaterial
   private headlight!: THREE.SpotLight
-  private cabLight!: THREE.PointLight
   private controls: Controls
   private ui: UI
   private clock = new THREE.Clock()
@@ -246,9 +247,9 @@ export class Game {
   /** Pan/tilt of the platform camera, relative to its mounted aim. */
   private platYaw = 0
   private platPitch = 0
-  private leverPivot!: THREE.Object3D
-  private destinationMat!: THREE.MeshBasicMaterial
   private lastDestinationIdx = -1
+  /** Reused every rainy frame — the windscreen's screen-space box. */
+  private readonly wsClip = { x0: -1, y0: -1, x1: 1, y1: 1 }
   private lastCrossingPhase = false
   private perf = new PerfLog()
   private score = 0
@@ -414,10 +415,13 @@ export class Game {
     // Registered once, here, so the upload watch is already tracking them long
     // before anyone presses record — that is what keeps its baseline honest.
     this.city.collectSignTextures(this.uploadWatch)
-    this.uploadWatch.watch(this.destinationMat.map)
-
+    
     this.controls = new Controls(mount, {
-      onNotchChange: (n) => this.train.setNotch(n),
+      onNotchChange: (n) => {
+        // The detent is the sound of the handle the cab now visibly moves.
+        audio.notchDetent(n, this.train.notch)
+        this.train.setNotch(n)
+      },
       onLook: (dx, dy) => this.handleLook(dx, dy),
     })
     this.ui = new UI(mount, {
@@ -1460,127 +1464,16 @@ export class Game {
    * cab stays bolted to the train and you look around inside it.
    */
   private buildCabRig() {
-    const cab = new THREE.Group()
-    this.cabRig = cab
-    // Re-planted at the driver's eye every frame in cab view, so it is placed
-    // by the simulation and not by the world seed. The flag is inherited, so
-    // this one line covers the whole console, pillars, lever and lamps.
-    cab.userData.dynamic = true
-    this.scene.add(cab)
-
-    // Cab dome light: a soft warm pool over the console so the controls and
-    // pillars stay readable after dark (stronger at night, ember-low by day).
-    this.cabLight = new THREE.PointLight(0xffdfb0, 0.25, 3.2, 1.6)
-    this.cabLight.position.set(0.1, 0.35, -0.5)
-    cab.add(this.cabLight)
-
-    // Tinted windshield, set behind the dashboard hardware so it reads as
-    // glass between the driver and the world rather than a filter on top.
-    // The tint FADES OUT toward the plane's edges: a constant-alpha quad
-    // drew a hard vertical exposure line across the view whenever the head
-    // turned toward a side window (Yui caught it crossing the coast).
-    const tintAlpha = (() => {
-      const cnv = document.createElement('canvas')
-      cnv.width = 64
-      cnv.height = 8
-      const cctx = cnv.getContext('2d')!
-      const grad = cctx.createLinearGradient(0, 0, 64, 0)
-      grad.addColorStop(0, '#000')
-      grad.addColorStop(0.28, '#fff')
-      grad.addColorStop(0.72, '#fff')
-      grad.addColorStop(1, '#000')
-      cctx.fillStyle = grad
-      cctx.fillRect(0, 0, 64, 8)
-      return new THREE.CanvasTexture(cnv)
-    })()
-    const windshieldMat = new THREE.MeshBasicMaterial({ color: 0x9fc4ff, transparent: true, opacity: 0.045, alphaMap: tintAlpha, depthWrite: false })
-    const windshield = new THREE.Mesh(new THREE.PlaneGeometry(6.4, 3.6), windshieldMat)
-    windshield.position.set(0, 0.05, -1.05)
-    cab.add(windshield)
-
-    const panelTex = makeScuffedPanelTexture('#3a3f4a')
-    panelTex.repeat.set(1.5, 1.5)
-    // Faint self-illumination so the desk never falls to pure black between lamps.
-    const consoleMat = new THREE.MeshStandardMaterial({ color: 0xffffff, map: panelTex, roughness: 0.55, metalness: 0.35, emissive: 0x2a2c33, emissiveIntensity: 0.22 })
-    const consoleMesh = new THREE.Mesh(new THREE.BoxGeometry(1.7, 0.5, 0.5), consoleMat)
-    consoleMesh.position.set(0, -0.62, -0.85)
-    consoleMesh.rotation.x = -0.25
-    cab.add(consoleMesh)
-
-    const pillarTex = makeScuffedPanelTexture('#33363d')
-    const pillarMat = new THREE.MeshStandardMaterial({ color: 0xffffff, map: pillarTex, roughness: 0.65 })
-    const pillarGeo = new THREE.BoxGeometry(0.12, 1.3, 0.12)
-    const pillarL = new THREE.Mesh(pillarGeo, pillarMat)
-    pillarL.position.set(-0.86, -0.05, -0.88)
-    pillarL.rotation.z = 0.12
-    cab.add(pillarL)
-    const pillarR = pillarL.clone()
-    pillarR.position.x = 0.86
-    pillarR.rotation.z = -0.12
-    cab.add(pillarR)
-
-    const visor = new THREE.Mesh(new THREE.BoxGeometry(1.9, 0.08, 0.35), pillarMat)
-    visor.position.set(0, 0.56, -0.85)
-    cab.add(visor)
-
-    const lampGeo = new THREE.SphereGeometry(0.022, 8, 8)
-    const lampColors = [0x33ff66, 0xffcc33, 0xff3333]
-    lampColors.forEach((color, i) => {
-      const lamp = new THREE.Mesh(lampGeo, new THREE.MeshStandardMaterial({ color, emissive: color, emissiveIntensity: 0.9 }))
-      lamp.position.set(-0.55 + i * 0.12, -0.42, -0.82)
-      cab.add(lamp)
-    })
-
-    // Destination roll sign, updated only when the target station changes.
-    this.destinationMat = new THREE.MeshBasicMaterial({ map: makeDestinationTexture('---'), toneMapped: false })
-    const destPlane = new THREE.Mesh(new THREE.PlaneGeometry(0.55, 0.14), this.destinationMat)
-    destPlane.position.set(-0.48, -0.48, -0.83)
-    destPlane.rotation.x = -0.25
-    cab.add(destPlane)
-
-    // The physical master controller — a modeled lever that tilts with the
-    // train's notch, in front of the DOM lever the player actually drags.
-    // The master controller sits in a slot it can actually travel along —
-    // a raised plate with a dark slit cut down it and notch marks either
-    // side, so the lever reads as part of the desk instead of stuck to it.
-    const slotPlateMat = new THREE.MeshStandardMaterial({ color: 0x23262d, roughness: 0.5, metalness: 0.45 })
-    const slotPlate = new THREE.Mesh(new THREE.BoxGeometry(0.17, 0.012, 0.30), slotPlateMat)
-    slotPlate.position.set(0.58, -0.375, -0.74)
-    slotPlate.rotation.x = -0.25
-    cab.add(slotPlate)
-    const slitMat = new THREE.MeshBasicMaterial({ color: 0x05060a })
-    const slit = new THREE.Mesh(new THREE.BoxGeometry(0.045, 0.004, 0.25), slitMat)
-    slit.position.set(0.58, -0.368, -0.74)
-    slit.rotation.x = -0.25
-    cab.add(slit)
-    // Detent ticks along the slot: P5…N…B7, the marks the notch clicks into.
-    const tickMat = new THREE.MeshStandardMaterial({ color: 0xb9bec7, roughness: 0.6, emissive: 0x33373f, emissiveIntensity: 0.5 })
-    const tickGeo = new THREE.BoxGeometry(0.035, 0.005, 0.008)
-    for (let i = 0; i < 7; i++) {
-      const tick = new THREE.Mesh(tickGeo, tickMat)
-      const along = -0.105 + i * 0.035
-      tick.position.set(0.505, -0.368 + along * 0.25, -0.74 + along)
-      tick.rotation.x = -0.25
-      cab.add(tick)
+    // The cab used to be assembled right here: a windscreen tint, a console
+    // box, two uprights, a visor, three lamp beads and a stick. It now lives in
+    // CabInterior, which derives every measurement from the same TrainConsist
+    // constants the exterior is built from — that agreement is the point.
+    this.cab = new CabInterior(this.scene)
+    this.cabRig = this.cab.group
+    // Only worth voicing from inside: outside you cannot hear the cylinders.
+    this.cab.onBrakeAir = (d) => {
+      if (this.cameraMode === 'cab') audio.brakeAir(d * 12)
     }
-
-    const leverMount = new THREE.Mesh(new THREE.CylinderGeometry(0.05, 0.06, 0.06, 10), consoleMat)
-    leverMount.position.set(0.58, -0.38, -0.72)
-    cab.add(leverMount)
-
-    this.leverPivot = new THREE.Object3D()
-    this.leverPivot.position.copy(leverMount.position)
-    cab.add(this.leverPivot)
-
-    const shaftMat = new THREE.MeshStandardMaterial({ color: 0x888a8f, metalness: 0.6, roughness: 0.35 })
-    const shaft = new THREE.Mesh(new THREE.CylinderGeometry(0.017, 0.021, 0.22, 8), shaftMat)
-    shaft.position.set(0, 0.11, 0)
-    this.leverPivot.add(shaft)
-
-    const knobMat = new THREE.MeshStandardMaterial({ color: 0x2d3340, metalness: 0.25, roughness: 0.5 })
-    const knob = new THREE.Mesh(new THREE.SphereGeometry(0.042, 10, 8), knobMat)
-    knob.position.set(0, 0.22, 0)
-    this.leverPivot.add(knob)
   }
 
   /** Train headlight — a soft forward spot that only matters after dusk, when it sweeps the ballast ahead of the cab. */
@@ -1598,8 +1491,7 @@ export class Game {
     const night = this.dayNight.nightFactor
     // The tunnel counts as night for every lamp the train owns.
     const dark = Math.max(night, this.tunnelF)
-    // Cab light breathes with the dark: ember by day, warm pool at night.
-    this.cabLight.intensity = 0.25 + night * 1.3 + this.tunnelF * 0.9
+    // The cab's own lamp breathes with the dark from inside CabInterior.update.
     // Fully off (and skipped by the renderer) in daylight — an intensity-0
     // spot still costs per-fragment work in every standard material.
     this.headlight.visible = dark > 0.01
@@ -1632,18 +1524,21 @@ export class Game {
     return gained
   }
 
-  private updateLever() {
-    this.leverPivot.rotation.x = THREE.MathUtils.mapLinear(this.train.notch, MIN_NOTCH, MAX_NOTCH, 0.5, -0.35)
+  private updateLever(dt: number) {
+    this.cab.update(dt, {
+      speedKmh: this.train.speedKmh,
+      notch: this.train.notch,
+      doorsOpenAmount: this.train.doorsOpenAmount,
+      nightFactor: this.dayNight.nightFactor,
+      tunnelFactor: this.tunnelF,
+    })
     if (this.train.targetStationIndex !== this.lastDestinationIdx) {
       this.lastDestinationIdx = this.train.targetStationIndex
-      // The outgoing roll may never have been drawn; stop waiting for it.
-      this.uploadWatch.forget(this.destinationMat.map)
-      this.destinationMat.map?.dispose()
-      this.destinationMat.map = makeDestinationTexture(this.train.targetStation.nameEn.toUpperCase())
       // Watch the REPLACEMENT: its upload is a real per-station cost that the
-      // resident texture count cannot see.
-      this.uploadWatch.watch(this.destinationMat.map)
-      this.destinationMat.needsUpdate = true
+      // resident texture count cannot see. The outgoing roll may never have
+      // been drawn, so stop waiting for it first.
+      const fresh = this.cab.setDestination(this.train.targetStation.nameEn.toUpperCase(), (old) => this.uploadWatch.forget(old))
+      this.uploadWatch.watch(fresh)
     }
   }
 
@@ -1669,6 +1564,8 @@ export class Game {
     this.camera.fov = mode === 'platform' ? CCTV_FOV : NORMAL_FOV
     this.camera.updateProjectionMatrix()
     this.ui.setCctv(mode === 'platform')
+    // Sealed cab: the weather and the platform are heard through the body.
+    audio.setListenerInCab(mode === 'cab')
     this.updateCameraFromTrain()
     if (!this.running) this.renderOnce()
   }
@@ -2150,7 +2047,11 @@ export class Game {
       }
     }
     perfPhase('f:precip', () => this.precipitation.update(dt, this.camera.position, this.dayNight.nightFactor))
-    perfPhase('f:windshield', () => this.windshield.update(dt, this.wsIntensity, this.wsSnow, this.train.speed01, this.cameraMode === 'cab'))
+    perfPhase('f:windshield', () => {
+      // Rain belongs on the glass, not on the instrument panel.
+      if (this.cameraMode === 'cab') this.cab.windscreenNdc(this.camera, this.wsClip)
+      this.windshield.update(dt, this.wsIntensity, this.wsSnow, this.train.speed01, this.cameraMode === 'cab', this.cameraMode === 'cab' ? this.wsClip : null)
+    })
     this.updateHeadlight()
 
     // H5: the sea is audible along the bay arc — loudest standing at a
@@ -2198,7 +2099,7 @@ export class Game {
     perfPhase('f:audio', () => audio.updateAmbient(this.train.speed01, this.train.brakeAmount01, this.dayNight.timeOfDay, this.train.doorsOpenAmount, murmurLevel, murmurPan))
     this.controls.syncNotch(this.train.notch)
     perfPhase('f:camera', () => this.updateCameraFromTrain())
-    perfPhase('f:lever', () => this.updateLever())
+    perfPhase('f:lever', () => this.updateLever(dt))
     this.ui.updateClock(this.dayNight.timeOfDay, this.dayNight.phaseLabel)
     if (this.cameraMode === 'platform') this.ui.setCctvLabel(STATIONS[this.platformStation].nameEn)
     this.ui.updateAtmoPhase(this.season, this.weather, this.dayNight.timeOfDay)

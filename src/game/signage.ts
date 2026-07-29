@@ -619,3 +619,159 @@ export function makeGroundTexture(): THREE.CanvasTexture {
   tex.colorSpace = THREE.SRGBColorSpace
   return tex
 }
+
+// ── Cab instruments ─────────────────────────────────────────────────────────
+// Everything below draws a gauge face, and NONE of it touches the module's
+// shared `rnd`. That is deliberate: these run while the cab is built, and a
+// single extra draw from the shared sequence would re-grain every texture
+// made after them. Instruments are precise objects anyway — their wear comes
+// from the scuffed panel they are mounted on, not from speckle of their own.
+
+export interface GaugeFaceOptions {
+  /** Top of the scale in the gauge's own units. */
+  max: number
+  /** Numerals are drawn every this many units; ticks at half of it. */
+  majorEvery: number
+  /** Small caption under the hub, e.g. "km/h" or "kPa". */
+  unit: string
+  /** Optional red band from this value to `max` — the limit you must not pass. */
+  redFrom?: number
+  /** Second scale drawn inside the first, for the twin-needle pressure gauge. */
+  inner?: { max: number; majorEvery: number; color: string }
+  face?: string
+  ink?: string
+}
+
+/** Sweep of every dial in this cab: 7 o'clock round to 5 o'clock, the usual 270°. */
+const GAUGE_START = Math.PI * 0.75
+const GAUGE_SWEEP = Math.PI * 1.5
+
+/** Fraction along the scale (0..1) to the angle its needle points at. */
+export function gaugeAngle(fraction: number): number {
+  return GAUGE_START + THREE.MathUtils.clamp(fraction, 0, 1) * GAUGE_SWEEP
+}
+
+/**
+ * A round instrument face on a transparent background, drawn once at build
+ * time. The needle is NOT part of this texture — it is a separate mesh that
+ * rotates, because redrawing a canvas every frame is exactly the kind of cost
+ * this project measures and refuses.
+ */
+export function makeGaugeFaceTexture(opts: GaugeFaceOptions): THREE.CanvasTexture {
+  // 256, not 512. The speedometer is 0.35 m across at 2.13 m from the eye:
+  // about 12% of screen height, ~105 real pixels on the phone once pixelRatio
+  // is capped. 512 was oversampled five times over, for 2.1 MB of VRAM.
+  const size = 256
+  const canvas = document.createElement('canvas')
+  canvas.width = size
+  canvas.height = size
+  const ctx = canvas.getContext('2d')!
+  const c = size / 2
+  const face = opts.face ?? '#0d1016'
+  const ink = opts.ink ?? '#e8ecf2'
+
+  // Dial well, with a soft vignette so the face reads as recessed metal.
+  const well = ctx.createRadialGradient(c, c * 0.82, size * 0.05, c, c, c)
+  well.addColorStop(0, '#1b202a')
+  well.addColorStop(0.72, face)
+  well.addColorStop(1, '#05070b')
+  ctx.fillStyle = well
+  ctx.beginPath()
+  ctx.arc(c, c, c - 3, 0, Math.PI * 2)
+  ctx.fill()
+
+  const ring = (radius: number, width: number, style: string) => {
+    ctx.strokeStyle = style
+    ctx.lineWidth = width
+    ctx.beginPath()
+    ctx.arc(c, c, radius, 0, Math.PI * 2)
+    ctx.stroke()
+  }
+  ring(c - 4, 4.5, '#2f3540')
+  ring(c - 7.5, 1, '#565e6b')
+
+  const polar = (angle: number, radius: number): [number, number] => [c + Math.cos(angle) * radius, c + Math.sin(angle) * radius]
+
+  // The red band goes UNDER the ticks so the marks stay readable on top of it.
+  if (opts.redFrom !== undefined) {
+    ctx.strokeStyle = 'rgba(214,58,58,0.85)'
+    ctx.lineWidth = 7.5
+    ctx.beginPath()
+    ctx.arc(c, c, c - 15, gaugeAngle(opts.redFrom / opts.max), gaugeAngle(1))
+    ctx.stroke()
+  }
+
+  const drawScale = (max: number, majorEvery: number, radius: number, color: string, numerals: boolean) => {
+    const steps = Math.round(max / majorEvery)
+    for (let i = 0; i <= steps * 2; i++) {
+      const value = (i * majorEvery) / 2
+      if (value > max) break
+      const major = i % 2 === 0
+      const a = gaugeAngle(value / max)
+      const outer = radius
+      const inner = radius - (major ? 13 : 6.5)
+      const [x1, y1] = polar(a, outer)
+      const [x2, y2] = polar(a, inner)
+      ctx.strokeStyle = color
+      ctx.lineWidth = major ? 3 : 1.5
+      ctx.lineCap = 'round'
+      ctx.beginPath()
+      ctx.moveTo(x1, y1)
+      ctx.lineTo(x2, y2)
+      ctx.stroke()
+      if (major && numerals) {
+        const [tx, ty] = polar(a, radius - 27)
+        ctx.fillStyle = color
+        ctx.font = '700 21px Arial, sans-serif'
+        ctx.textAlign = 'center'
+        ctx.textBaseline = 'middle'
+        ctx.fillText(String(Math.round(value)), tx, ty)
+      }
+    }
+  }
+
+  drawScale(opts.max, opts.majorEvery, c - 11, ink, true)
+  if (opts.inner) drawScale(opts.inner.max, opts.inner.majorEvery, c - 59, opts.inner.color, false)
+
+  ctx.fillStyle = 'rgba(232,236,242,0.72)'
+  ctx.font = '600 17px Arial, sans-serif'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillText(opts.unit, c, c + 46)
+
+  const tex = new THREE.CanvasTexture(canvas)
+  tex.colorSpace = THREE.SRGBColorSpace
+  tex.anisotropy = 4
+  return tex
+}
+
+/**
+ * The row of annunciators over the desk: doors, ATS, and the emergency lamp.
+ * Drawn as one strip so the whole row is a single quad — the lit state is a
+ * separate emissive plane per lamp, which is what actually changes.
+ */
+export function makeCabAnnunciatorTexture(labels: string[]): THREE.CanvasTexture {
+  const w = 128 * labels.length
+  const canvas = document.createElement('canvas')
+  canvas.width = w
+  canvas.height = 128
+  const ctx = canvas.getContext('2d')!
+  ctx.fillStyle = '#14171d'
+  ctx.fillRect(0, 0, w, 128)
+  labels.forEach((label, i) => {
+    const x = i * 128
+    ctx.fillStyle = '#0a0c11'
+    ctx.fillRect(x + 8, 18, 112, 92)
+    ctx.strokeStyle = '#3b424f'
+    ctx.lineWidth = 3
+    ctx.strokeRect(x + 8, 18, 112, 92)
+    ctx.fillStyle = '#9aa3b2'
+    ctx.font = '700 44px "Hiragino Sans", "Yu Gothic", Arial, sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(label, x + 64, 66)
+  })
+  const tex = new THREE.CanvasTexture(canvas)
+  tex.colorSpace = THREE.SRGBColorSpace
+  return tex
+}
