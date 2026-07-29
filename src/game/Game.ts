@@ -113,6 +113,20 @@ const EXT_FOCUS_Y = 2.8
 /** Elevation limits: never at train height, never a map view. */
 const EXT_PITCH_MIN = 0.18
 const EXT_PITCH_MAX = 0.95
+/**
+ * Where the outside view starts: a rear three-quarter, which is how you look at
+ * a train. Both properties are load-bearing and were measured, not guessed.
+ *
+ * BEHIND comes from the negative sine (the along-track term), and this flank
+ * from the negative cosine. The flank matters because a platform canopy is
+ * opaque: standing on the platform side, the camera watches a roof instead of a
+ * train. Neither flank clears every station (the door side alternates around
+ * the ring), but this one is blocked at 15 of the 30 rather than 16 — and,
+ * decisively, it is the one that leaves TOKYO clear, which is where a session
+ * begins. Raising the elevation does not help: the canopy is tall enough that
+ * every pitch in the allowed range is blocked at the same stations.
+ */
+const EXT_DEFAULT_YAW = -(Math.PI - 0.55)
 /** How far past a platform the train must get before the platform camera hands over. */
 const PLATFORM_HANDOVER_UNITS = 150
 /** Where the station's own camera hangs: high, at the back, under the canopy. */
@@ -224,8 +238,8 @@ export class Game {
   private timeScale = 1
   private lookYaw = 0
   private lookPitch = 0
-  /** Outside-view orbit: yaw is free, pitch is fenced (see EXT_PITCH_*). */
-  private extYaw = 0.55
+  /** Outside-view orbit: yaw is free, pitch is fenced (see EXT_PITCH_*). Starts on a rear three-quarter view. */
+  private extYaw = EXT_DEFAULT_YAW
   private extPitch = 0.42
   /** Which platform the standing camera is on — it lags the train's target on purpose. */
   private platformStation = 0
@@ -897,13 +911,16 @@ export class Game {
   private handleLook(dx: number, dy: number) {
     if (this.cameraMode === 'exterior') {
       // Free all the way round the sides; the elevation is what gets fenced.
-      this.extYaw -= dx * 0.005
+      // Outside views pan opposite to the cab: dragging moves the CAMERA,
+      // not the head, so the sign flips (Rubén, 0.1.9).
+      this.extYaw += dx * 0.005
       this.extPitch = THREE.MathUtils.clamp(this.extPitch + dy * 0.004, EXT_PITCH_MIN, EXT_PITCH_MAX)
       if (!this.running) this.renderOnce()
       return
     }
     if (this.cameraMode === 'platform') {
-      this.platYaw = THREE.MathUtils.clamp(this.platYaw - dx * 0.0035, -CCTV_YAW_LIMIT, CCTV_YAW_LIMIT)
+      // Same camera-not-head convention as the exterior view for the horizontal axis.
+      this.platYaw = THREE.MathUtils.clamp(this.platYaw + dx * 0.0035, -CCTV_YAW_LIMIT, CCTV_YAW_LIMIT)
       this.platPitch = THREE.MathUtils.clamp(this.platPitch - dy * 0.003, CCTV_PITCH_MIN, CCTV_PITCH_MAX)
       if (!this.running) this.renderOnce()
       return
@@ -1688,17 +1705,19 @@ export class Game {
       return
     }
 
-    const side = STATIONS[this.train.targetStationIndex].doorSide === 'left' ? 1 : -1
     if (this.cameraMode === 'exterior') {
       // An orbit around the consist, deliberately fenced in: you can swing all
       // the way around the sides, but the elevation is clamped so the camera
       // never drops to train height (which put you inside the bodywork and
       // lost the train entirely) and never rises to a map view. Distance is
-      // fixed, so the train cannot leave the frame.
+      // fixed, so the train cannot leave the frame. The orbit ignores the
+      // station's door side on purpose: mirroring by doorSide flipped the
+      // drag direction half the time and snapped the view 180° whenever the
+      // target station changed.
       const point = this.track.pointAt(t, this.camPoint)
       const tangent = this.track.tangentAt(t, this.camTangent)
       const normal = this.camNormal.set(tangent.z, 0, -tangent.x).normalize()
-      const yaw = this.extYaw + (side > 0 ? 0 : Math.PI)
+      const yaw = this.extYaw
       const dist = EXT_DISTANCE * Math.cos(this.extPitch)
       const height = EXT_DISTANCE * Math.sin(this.extPitch)
       const focus = this.camAim.copy(point)
@@ -1751,7 +1770,9 @@ export class Game {
     const baseDir = aim.sub(eye)
     const baseYaw = Math.atan2(baseDir.x, baseDir.z)
     const basePitch = Math.asin(THREE.MathUtils.clamp(baseDir.y / baseDir.length(), -1, 1))
-    const yaw = baseYaw + this.platYaw * pSide
+    // platYaw is a world-yaw delta, NOT mirrored by pSide: mirroring made the
+    // drag direction depend on which side the platform was on.
+    const yaw = baseYaw + this.platYaw
     const pitch = basePitch + this.platPitch
     const target = this.camAim
       .set(Math.sin(yaw) * Math.cos(pitch), Math.sin(pitch), Math.cos(yaw) * Math.cos(pitch))
