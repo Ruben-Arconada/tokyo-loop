@@ -583,11 +583,26 @@ export class CabInterior {
      * Built as ten separate little meshes this was ten draw calls in the view
      * that is on screen most of the time.
      */
-    const build = (pivot: THREE.Object3D, x: number, armLen: number) => {
+    const build = (pivot: THREE.Object3D, x: number, armLen: number, sweepOut: number) => {
       const baseAt = new THREE.Vector3(x, DESK_TOP + 0.075, fwd(1.34))
       const base = new THREE.CylinderGeometry(0.115, 0.13, 0.055, 16)
       base.translate(baseAt.x, baseAt.y, baseAt.z)
       this.fittings.push(base)
+
+      // 段位表示 — the detent marks the handle clicks into. Without them its
+      // angle corresponds to nothing you can read, which is what the old cab's
+      // seven notch ticks were for before they were lost. Raised marks rather
+      // than a printed ring: same low-poly grammar as everything else here, and
+      // they ride the fittings mesh for no extra draw call.
+      const marks = sweepOut > 0 ? 6 : 9
+      for (let i = 0; i < marks; i++) {
+        const a = sweepOut * (0.16 + (i / (marks - 1)) * 0.9)
+        const mark = new THREE.BoxGeometry(0.012, 0.008, 0.042)
+        mark.translate(0, 0, -0.155)
+        mark.rotateY(a)
+        mark.translate(baseAt.x, baseAt.y + 0.03, baseAt.z)
+        this.fittings.push(mark)
+      }
 
       pivot.position.copy(baseAt)
       this.group.add(pivot)
@@ -611,8 +626,19 @@ export class CabInterior {
       this.disposables.push(geo)
     }
 
-    build(this.mascon, -0.62, 0.30)
-    build(this.brakeHandle, 0.62, 0.28)
+    build(this.mascon, -0.62, 0.30, 1)
+    build(this.brakeHandle, 0.62, 0.28, -1)
+
+    // 逆転ハンドル — the reverser, on the master controller's housing. A
+    // two-handle desk without one is not a desk: it is the handle that decides
+    // 前 / 切 / 後 before the mascon does anything at all. Fixed, because this
+    // game only ever goes forward.
+    const rev = new THREE.CylinderGeometry(0.019, 0.019, 0.10, 8)
+    rev.translate(-0.62 - 0.17, DESK_TOP + 0.12, fwd(1.34))
+    this.fittings.push(rev)
+    const revGrip = new THREE.BoxGeometry(0.115, 0.022, 0.022)
+    revGrip.translate(-0.62 - 0.17, DESK_TOP + 0.17, fwd(1.34))
+    this.fittings.push(revGrip)
   }
 
   /** The bits bolted to the desk that never move: handle bases and dial hubs. */
