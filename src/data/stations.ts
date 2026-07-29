@@ -43,6 +43,13 @@ export interface StationDef {
   doorSide: 'left' | 'right'
   /** Flavor transfers at the landmark stops: real, commonly-known lines OF EACH PLACE, so the PA sells the allegory. */
   transferLines?: string[]
+  /**
+   * Overrides how far out (world units) the arrival announcement fires;
+   * default is Train's ARRIVING_ANNOUNCE_DISTANCE. Otaru fires early so the
+   * whole Japanese line plays inside the Dōtonbori tunnel and the portal
+   * crossing lands mid-announcement — the tunnel reverb is the point.
+   */
+  announceUnitsBefore?: number
 }
 
 const THEMES: Record<StationTheme['district'], StationTheme> = {
@@ -75,7 +82,7 @@ export const STATIONS: StationDef[] = [
   { id: 'sendai', nameEn: 'Sendai', nameJa: '仙台', nameKana: 'せんだい', distanceToNextKm: 1.0, landmark: false, theme: THEMES.business, blurb: 'La ciudad de los árboles: avenidas enteras bajo zelkovas.', doorSide: 'right' },
   { id: 'fushimi-inari', nameEn: 'Fushimi Inari', nameJa: '伏見稲荷', nameKana: 'ふしみいなり', distanceToNextKm: 1.4, landmark: true, theme: THEMES.youth, blurb: 'Mil torii bermellón subiendo la montaña del zorro.', doorSide: 'left', transferLines: ['Keihan Main Line', 'JR Nara Line'] },
   { id: 'dotonbori', nameEn: 'Dotonbori', nameJa: '道頓堀', nameKana: 'どうとんぼり', distanceToNextKm: 2.1, landmark: true, theme: THEMES.youth, blurb: 'Pantallas gigantes sobre el canal — y el corredor se hunde bajo la ciudad.', doorSide: 'left', transferLines: ['Midosuji Subway Line', 'Sennichimae Subway Line', 'Nankai Line'] },
-  { id: 'otaru', nameEn: 'Otaru', nameJa: '小樽', nameKana: 'おたる', distanceToNextKm: 1.2, landmark: false, theme: THEMES.business, blurb: 'Almacenes de canal, lámparas de cristal y cerveza.', doorSide: 'right' },
+  { id: 'otaru', nameEn: 'Otaru', nameJa: '小樽', nameKana: 'おたる', distanceToNextKm: 1.2, landmark: false, theme: THEMES.business, blurb: 'Almacenes de canal, lámparas de cristal y cerveza.', doorSide: 'right', announceUnitsBefore: 450 },
   { id: 'yoshino', nameEn: 'Yoshino', nameJa: '吉野', nameKana: 'よしの', distanceToNextKm: 1.6, landmark: false, theme: THEMES.green, blurb: 'La montaña que se cubre entera de cerezos.', doorSide: 'right' },
   { id: 'shizuoka', nameEn: 'Shizuoka', nameJa: '静岡', nameKana: 'しずおか', distanceToNextKm: 1.6, landmark: false, theme: THEMES.business, blurb: 'Té en las laderas y el Fuji asomado sobre los tejados.', doorSide: 'left' },
   { id: 'kawasaki', nameEn: 'Kawasaki', nameJa: '川崎', nameKana: 'かわさき', distanceToNextKm: 0.9, landmark: false, theme: THEMES.business, blurb: 'Fábricas convertidas en torres de cristal.', doorSide: 'left' },

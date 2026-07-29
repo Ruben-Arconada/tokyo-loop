@@ -51,7 +51,9 @@ const GRADE_ACCEL_KMH_S = 8.8
 
 const STATION_ZONE_HALF_WIDTH = 26 // world units either side of the platform marker
 const STOP_SPEED_THRESHOLD_KMH = 3
-const ARRIVING_ANNOUNCE_DISTANCE = 260 // early enough for the trilingual arrival announcement to finish before the platform
+// Early enough for the trilingual arrival announcement to finish before the
+// platform. A station can widen it via announceUnitsBefore (Otaru: the tunnel).
+const ARRIVING_ANNOUNCE_DISTANCE = 260
 const DOOR_ANIM_SECONDS = 1.4
 
 // ——— Manual door timing (the player is the conductor) ———
@@ -272,7 +274,8 @@ export class Train {
     const distForward = this.forwardDistanceUnits(marker.tFraction)
     const signedError = wrappedSignedDelta(this.progressFraction, marker.tFraction) * this.track.getLength()
 
-    if (!this.announcedArriving && distForward < ARRIVING_ANNOUNCE_DISTANCE) {
+    const announceDistance = STATIONS[this.targetStationIndex].announceUnitsBefore ?? ARRIVING_ANNOUNCE_DISTANCE
+    if (!this.announcedArriving && distForward < announceDistance) {
       this.announcedArriving = true
       this.events.onArrivingAnnounce?.(this.targetStationIndex)
     }
