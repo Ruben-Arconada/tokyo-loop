@@ -870,7 +870,15 @@ export class Game {
     audio.stopMelodyLoop()
     this.passengers.endBoarding()
 
-    const UNITS_BEFORE = 300
+    // The landing has to sit BEHIND this station's own announcement threshold,
+    // not behind the global one. A flat 300 was 40 units of slack past the
+    // usual 260 — about nine seconds of driving, which is what gives `step()`
+    // time to ask for the arc's voice sprite. Otaru asks to be called at 450,
+    // so a flat landing fired the announcement in the first physics step with
+    // the train still at a stand and nothing decoded: the chime played and the
+    // words were silently skipped. Same cushion, measured from the real
+    // threshold; for Otaru that is 490, still deep inside the tunnel.
+    const UNITS_BEFORE = Math.max(300, (STATIONS[idx].announceUnitsBefore ?? 0) + 40)
     this.train.jumpToApproach(idx, UNITS_BEFORE)
     // Segment progress at the landing point feeds the schedule resync.
     const prevT = this.track.markerFor(this.train.currentStationIndex).tFraction
@@ -1815,9 +1823,11 @@ export class Game {
   // `targetStationIndex`, so the destination roll is never rebuilt and that
   // hypothesis goes untested), stay in the CAB (the roll hangs off `cabRig`,
   // which is hidden in the outside views, so it would be rebuilt and never
-  // uploaded), let each leg reach the arrival announcement (it fires at 260
-  // units and the jump lands at 300, so leaving early tests the visuals and
-  // never the audio), and never open Pause in between (`setRunning(false)`
+  // uploaded), let each leg reach the arrival announcement (the jump lands 40
+  // units behind the threshold — 300 against the usual 260 — so leaving early
+  // tests the visuals and never the audio; the gap is what matters, not the
+  // pair of numbers, since a station can move its own threshold with
+  // `announceUnitsBefore`), and never open Pause in between (`setRunning(false)`
   // renders a frame that no one records, warming resources outside the log).
   //
   // Four conditions to hold in your head while driving a phone is how a lap
