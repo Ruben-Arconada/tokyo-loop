@@ -78,6 +78,10 @@ export class AudioEngine {
   private dryGain: GainNode | null = null
   private wetSend: GainNode | null = null
   private convolver: ConvolverNode | null = null
+  /** Per-room levels behind the shared send: the platform's short IR and the tunnel's long dark one. */
+  private roomWet: GainNode | null = null
+  private tunnelWet: GainNode | null = null
+  private tunnelConvolver: ConvolverNode | null = null
 
   private motorOsc: OscillatorNode | null = null
   private motorFilter: BiquadFilterNode | null = null
@@ -188,12 +192,27 @@ export class AudioEngine {
     this.natureBus.connect(this.natureLP)
     this.natureLP.connect(this.dryGain)
 
+    // One shared reverb send, two rooms behind it: the platform's short IR
+    // and the tunnel's long dark one. setTunnel crossfades the room gains,
+    // so every source that already taps wetSend moves between spaces for
+    // free. The send bus itself stays at unity — the room gains carry the
+    // level (roomWet's 0.22 is the old wetSend baseline).
     this.convolver = this.ctx.createConvolver()
     this.convolver.buffer = this.buildImpulseResponse()
+    this.tunnelConvolver = this.ctx.createConvolver()
+    this.tunnelConvolver.buffer = this.buildTunnelImpulseResponse()
     this.wetSend = this.ctx.createGain()
-    this.wetSend.gain.value = 0.22
-    this.wetSend.connect(this.convolver)
+    this.wetSend.gain.value = 1
+    this.roomWet = this.ctx.createGain()
+    this.roomWet.gain.value = 0.22
+    this.tunnelWet = this.ctx.createGain()
+    this.tunnelWet.gain.value = 0
+    this.wetSend.connect(this.roomWet)
+    this.roomWet.connect(this.convolver)
     this.convolver.connect(this.master)
+    this.wetSend.connect(this.tunnelWet)
+    this.tunnelWet.connect(this.tunnelConvolver)
+    this.tunnelConvolver.connect(this.master)
     // A touch of the nature chorus reaches the reverb too (birdsong used to).
     const natureWet = this.ctx.createGain()
     natureWet.gain.value = 0.4
@@ -321,6 +340,38 @@ export class AudioEngine {
         const decay = Math.pow(1 - i / len, 2.4)
         const raw = (Math.random() * 2 - 1) * decay
         prev = prev * 0.35 + raw * 0.65 // gentle lowpass so the tail isn't hissy
+        data[i] = prev
+      }
+    }
+    return buffer
+  }
+
+  /**
+   * The tunnel's own impulse response: longer and much darker than the
+   * platform's, the way a concrete tube swallows treble and keeps low-mids
+   * rolling. Same synthesized-noise recipe, different room.
+   *
+   * Do NOT try to set the room's loudness from inside this buffer.
+   * `ConvolverNode.normalize` defaults to true and is not turned off here, so
+   * the node scales whatever it is handed to a fixed power — a uniform factor
+   * on these samples cancels out exactly. (An earlier version multiplied by
+   * 1.9 to "make up for" the heavy smoothing; rendered offline against the
+   * same IR without it, the output RMS ratio is 1.00000.) What this function
+   * controls is the SHAPE — decay length and tone — and the shape is what
+   * makes the tunnel read as bigger. The level lives in the room gains.
+   */
+  private buildTunnelImpulseResponse(): AudioBuffer {
+    const ctx = this.ctx!
+    const duration = 2.8
+    const len = Math.floor(ctx.sampleRate * duration)
+    const buffer = ctx.createBuffer(2, len, ctx.sampleRate)
+    for (let ch = 0; ch < 2; ch++) {
+      const data = buffer.getChannelData(ch)
+      let prev = 0
+      for (let i = 0; i < len; i++) {
+        const decay = Math.pow(1 - i / len, 1.9)
+        const raw = (Math.random() * 2 - 1) * decay
+        prev = prev * 0.78 + raw * 0.22
         data[i] = prev
       }
     }
@@ -709,8 +760,18 @@ export class AudioEngine {
    */
   setTunnel(f01: number) {
     this.tunnelFactor = f01
-    if (!this.ctx || !this.wetSend) return
-    this.wetSend.gain.setTargetAtTime(0.22 + 0.36 * f01, this.ctx.currentTime, 0.4)
+    if (!this.ctx || !this.roomWet || !this.tunnelWet) return
+    // A crossfade of ROOMS, not a louder send: pushing more level into the
+    // 1.7 s platform IR read as "wetter", never as "bigger". Both convolvers
+    // normalize, so these two numbers are directly comparable as loudness —
+    // 0.62 sits just above the 0.58 the old boosted send reached, and the
+    // BIGNESS comes from the tunnel IR being 2.8 s and dark rather than from
+    // level. The platform room keeps a floor so the fade never passes through
+    // bone-dry, which is what makes the portal crossing audible in both
+    // directions.
+    const t = this.ctx.currentTime
+    this.roomWet.gain.setTargetAtTime(0.22 - 0.12 * f01, t, 0.4)
+    this.tunnelWet.gain.setTargetAtTime(0.62 * f01, t, 0.4)
   }
 
   /**
