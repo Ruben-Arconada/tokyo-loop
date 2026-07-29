@@ -25,3 +25,11 @@ dist-ssr
 
 # Local Claude Code session/tooling artifacts
 .claude/
+
+# Working material kept out of git on purpose (AGENTS.md says so, but a note in
+# a document is not a guard: until now the only thing standing between these
+# 10 MB and the repo was remembering never to run `git add -A`).
+# Anchored with a leading slash: bare `assets/` would also swallow a future
+# src/assets or public/assets without ever saying so.
+/assets/
+/experiments/
