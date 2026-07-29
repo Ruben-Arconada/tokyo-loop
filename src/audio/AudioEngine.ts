@@ -1,12 +1,24 @@
 import type { PlayableNote } from '../data/melodies'
 import { ATTENTION_CHIME, RETRO_FANFARE } from '../data/melodies'
 import { perfMark, perfTime, perfTimeout } from '../game/PerfLog'
+import { PA_CLIPS, type PaLang } from '../data/paClips'
 
 export type Timbre = 'bell' | 'chime' | 'attention' | 'retro'
 export type AnnounceLang = 'ja' | 'en' | 'es'
+
+/**
+ * One piece of a spoken line: either a recorded clip — `'frag:next'`,
+ * `'name:kiyomizu'` — or a beat of silence in seconds.
+ *
+ * Announcements are assembled from fragments the way real JR ones are, which
+ * is why thirty stations cost thirty names instead of sixty sentences. The
+ * clips and the table that indexes them come out of `npm run pa:build`.
+ */
+export type PaPiece = string | number
+
 export interface AnnounceSegment {
   lang: AnnounceLang
-  text: string
+  pieces: PaPiece[]
 }
 
 export interface AnnounceOptions {
@@ -37,32 +49,28 @@ interface QueuedAnnouncement {
 const SEGMENT_GAP_MS = 750
 const ANNOUNCEMENT_GAP_MS = 1400
 
-const JA_VOICE_PREFERENCE = ['Google 日本語', 'O-Ren', 'Kyoko', 'Sayaka', 'Ayumi', 'Haruka']
 // A natural, clear masculine voice for English — the retro chiptune fanfare
 // and chime already carry the "80s videogame" flavor, so the voice itself
 // should just read well (a robotic novelty voice here was tried and vetoed).
-const EN_VOICE_PREFERENCE = [
-  'Google UK English Male',
-  'Microsoft David', 'Microsoft Guy', 'Microsoft Mark', 'Microsoft Ryan',
-  'Daniel', 'Alex', 'Arthur', 'Oliver', 'Gordon', 'Aaron', 'Nathan', 'Tom',
-]
-const ES_VOICE_PREFERENCE = ['Google español', 'Mónica', 'Paulina', 'Jorge', 'Diego', 'Juan']
 
-const LANG_TAG: Record<AnnounceLang, string> = { ja: 'ja-JP', en: 'en-US', es: 'es-ES' }
-const LANG_RATE: Record<AnnounceLang, number> = { ja: 0.88, en: 0.92, es: 0.92 }
-const LANG_PITCH_PREFERRED: Record<AnnounceLang, number> = { ja: 0.97, en: 0.9, es: 0.97 }
-const LANG_PITCH_FALLBACK: Record<AnnounceLang, number> = { ja: 1.08, en: 1.0, es: 1.02 }
 
 /**
- * All sound in this game is synthesized live with the Web Audio API — there
- * are no external audio assets to license or ship. Station melodies are
- * original compositions (see data/melodies.ts); the motor/brake/room-tone
- * sounds are procedural noise, not recordings. Spoken announcements use the
- * browser's built-in Web Speech API, which plays outside the Web Audio graph
- * — so the reverb bus below can process bells/chimes but not the voice
- * itself; the attention chime + a chiptune fanfare + preferring genuinely
- * synthetic-sounding system voices is what gives the PA its retro character
- * without ever degrading the actual speech.
+ * Almost all sound here is synthesized live with the Web Audio API: the
+ * station melodies are original compositions (see data/melodies.ts) and the
+ * motor, brakes and room tone are procedural noise, not recordings.
+ *
+ * The ONE exception is the spoken announcements, and it is worth knowing why
+ * the game gave up its "no audio assets to ship" property for them. They used
+ * to come from the browser's Web Speech API, which on iOS runs in its own
+ * audio session: every time the utterance queue drained, the main thread
+ * froze for about a third of a second — measured, once per station, and
+ * proven by a cold muted lap that had none of them. It also meant the voice
+ * could never enter this graph, so it could not have the platform reverb, the
+ * ducking, or the band limiting that makes a tannoy sound like a tannoy.
+ *
+ * So the voice is recorded now, assembled from fragments the way real JR
+ * announcements are, and plays as buffers through the chain below. It costs
+ * ~110 KB per language. See scripts/build-pa.mjs.
  */
 export class AudioEngine {
   private ctx: AudioContext | null = null
@@ -83,12 +91,6 @@ export class AudioEngine {
 
   private noiseBuffer: AudioBuffer | null = null
   private bitcrushCurveCache: Float32Array<ArrayBuffer> | null = null
-  private voiceMap: Record<AnnounceLang, { voice: SpeechSynthesisVoice | null; preferred: boolean }> = {
-    ja: { voice: null, preferred: false },
-    en: { voice: null, preferred: false },
-    es: { voice: null, preferred: false },
-  }
-  private voicesReady = false
 
   private motorSubOsc: OscillatorNode | null = null
 
@@ -100,6 +102,13 @@ export class AudioEngine {
   private currentItem: QueuedAnnouncement | null = null
   /** Bumped on every start/abort so stale callbacks from an old sequence die quietly. */
   private announceEpoch = 0
+  /** Head of the announcement voice chain — everything spoken enters here. */
+  private paVoiceIn: BiquadFilterNode | null = null
+  /** Decoded sprites, keyed `lang:group`. Arcs arrive as the train approaches them. */
+  private paSprites = new Map<string, AudioBuffer>()
+  private paFetching = new Map<string, Promise<void>>()
+  /** Sources of the announcement currently sounding, so a stale one can be cut. */
+  private paPlaying: AudioBufferSourceNode[] = []
   private lastAmbientAt = 0
   private jointTimer = 0.8
   private ambNextAt = 0
@@ -191,6 +200,27 @@ export class AudioEngine {
     this.natureLP!.connect(natureWet)
     natureWet.connect(this.wetSend)
 
+    // The platform speaker the announcements come out of. Recorded voice can
+    // finally go through the graph — the synthesized one never could, because
+    // iOS runs it in a separate audio session — so it gets the band limiting
+    // that makes a tannoy sound like a tannoy, and the station reverb with it.
+    const paHP = this.ctx.createBiquadFilter()
+    paHP.type = 'highpass'
+    paHP.frequency.value = 300
+    const paLP = this.ctx.createBiquadFilter()
+    paLP.type = 'lowpass'
+    paLP.frequency.value = 3400
+    const paPresence = this.ctx.createBiquadFilter()
+    paPresence.type = 'peaking'
+    paPresence.frequency.value = 1800
+    paPresence.Q.value = 0.9
+    paPresence.gain.value = 4
+    this.paVoiceIn = paHP
+    paHP.connect(paLP)
+    paLP.connect(paPresence)
+    paPresence.connect(this.dryGain)
+    paPresence.connect(this.wetSend)
+
     this.noiseBuffer = this.buildNoiseBuffer()
     this.startAmbientBed()
     this.ensurePaBed()
@@ -199,11 +229,9 @@ export class AudioEngine {
     if (this.rainLevel > 0) this.setRain(this.rainLevel)
     if (this.windLevel > 0) this.setWind(this.windLevel)
     if (this.shoreLevel > 0) this.setShore(this.shoreLevel)
-    this.loadVoices()
 
     this.resumeContext()
     this.kickSilentBuffer()
-    this.primeSpeechSynthesis()
     this.installAutoResume()
     if (this.muted) this.applyMute(true)
   }
@@ -259,20 +287,6 @@ export class AudioEngine {
     source.buffer = buffer
     source.connect(this.ctx.destination)
     source.start(0)
-  }
-
-  /** Speaking one silent utterance synchronously inside the gesture unlocks later async speak() calls on iOS Safari. */
-  private primeSpeechSynthesis() {
-    if (!('speechSynthesis' in window)) return
-    try {
-      speechSynthesis.cancel()
-      const primer = new SpeechSynthesisUtterance('.')
-      primer.volume = 0
-      primer.rate = 10
-      speechSynthesis.speak(primer)
-    } catch {
-      // Speech synthesis is best-effort — a priming failure shouldn't block the rest of unlock().
-    }
   }
 
   /** Keeps retrying resume() on later taps/visibility changes, in case the initial unlock didn't fully take. */
@@ -1222,49 +1236,6 @@ export class AudioEngine {
     }
   }
 
-  private loadVoices() {
-    // Guard: an embedding WebView without Web Speech support (rare, but seen
-    // in some older/stripped Android WebViews) must not throw here — the PA
-    // announcements degrade to silent rather than crashing the whole unlock
-    // path a tap on "start" runs through.
-    if (!('speechSynthesis' in window)) return
-    const pick = () => {
-      const voices = speechSynthesis.getVoices()
-      if (!voices.length) return
-      const assign = (key: AnnounceLang, preference: string[]) => {
-        const byPreference = this.pickByPreference(voices, preference)
-        const fallback = voices.find((v) => v.lang.startsWith(key)) || null
-        this.voiceMap[key] = { voice: byPreference || fallback, preferred: !!byPreference }
-      }
-      assign('ja', JA_VOICE_PREFERENCE)
-      assign('en', EN_VOICE_PREFERENCE)
-      assign('es', ES_VOICE_PREFERENCE)
-      this.voicesReady = true
-    }
-    pick()
-    if (!this.voicesReady && 'onvoiceschanged' in speechSynthesis) {
-      speechSynthesis.onvoiceschanged = pick
-    }
-  }
-
-  private pickByPreference(voices: SpeechSynthesisVoice[], preference: string[]): SpeechSynthesisVoice | null {
-    for (const name of preference) {
-      const found = voices.find((v) => v.name.toLowerCase().includes(name.toLowerCase()))
-      if (found) return found
-    }
-    return null
-  }
-
-  private buildUtterance(lang: AnnounceLang, text: string): SpeechSynthesisUtterance {
-    const utter = new SpeechSynthesisUtterance(text)
-    utter.lang = LANG_TAG[lang]
-    utter.rate = LANG_RATE[lang]
-    const entry = this.voiceMap[lang]
-    utter.pitch = entry.preferred ? LANG_PITCH_PREFERRED[lang] : LANG_PITCH_FALLBACK[lang]
-    if (entry.voice) utter.voice = entry.voice
-    return utter
-  }
-
   /**
    * Queues a PA announcement: an optional retro chiptune fanfare, an
    * attention chime, then each segment spoken in order with a breathing
@@ -1280,11 +1251,7 @@ export class AudioEngine {
     // chime and the PA bed and says nothing. That path never touches
     // speechSynthesis at all, which is also what isolates it as a suspect —
     // the per-station freezes all land on the announcement's teardown.
-    // The speech engine is only required when there is something to SAY: with
-    // announcements set to chime-only, a browser without Web Speech should
-    // still get its chime and its PA bed.
     if (!this.ctx || this.muted) return
-    if (segments.length > 0 && !('speechSynthesis' in window)) return
     const item: QueuedAnnouncement = { segments, fanfare: !!opts.fanfare, kind: opts.kind ?? 'general', valid: opts.valid }
     if (this.announcing) {
       // A newer announcement of the same kind makes the playing one stale, so
@@ -1372,14 +1339,100 @@ export class AudioEngine {
     this.paBedGain.gain.setTargetAtTime(0, t, 0.18)
   }
 
+  /**
+   * Fetches and decodes one announcement sprite, once. Decoding happens off
+   * the main thread, so a sprite arriving mid-ride cannot cost a frame.
+   *
+   * A sprite that never arrives is not an error worth shouting about: the
+   * announcement simply skips the pieces it cannot find, so a failed download
+   * costs you the words, not the chime and not the game.
+   */
+  private loadSprite(lang: PaLang, group: string): Promise<void> {
+    const key = `${lang}:${group}`
+    if (this.paSprites.has(key)) return Promise.resolve()
+    const pending = this.paFetching.get(key)
+    if (pending) return pending
+    const base = (import.meta.env?.BASE_URL as string | undefined) ?? '/'
+    const job = fetch(`${base}audio/pa/${lang}-${group}.m4a`)
+      .then((r) => (r.ok ? r.arrayBuffer() : Promise.reject(new Error(String(r.status)))))
+      .then((bytes) => this.ctx!.decodeAudioData(bytes))
+      .then((buf) => {
+        this.paSprites.set(key, buf)
+      })
+      .catch(() => {
+        /* sin voz para ese trozo; el aviso sigue sonando con su campanilla */
+      })
+      .finally(() => {
+        this.paFetching.delete(key)
+      })
+    this.paFetching.set(key, job)
+    return job
+  }
+
+  /**
+   * Asks for the pieces the next few stations will need: the fixed fragments
+   * once, and the arcs of the ring around where the train is. Called as the
+   * train moves, so the audio for a station is resident before it is due and
+   * the rest of the ring is not.
+   */
+  preloadAnnouncements(langs: PaLang[], arcs: number[]) {
+    if (!this.ctx) return
+    for (const lang of langs) {
+      if (!PA_CLIPS[lang]) continue
+      void this.loadSprite(lang, 'frag')
+      for (const arc of arcs) void this.loadSprite(lang, `name${arc}`)
+    }
+  }
+
+  /**
+   * Schedules one language's line back to back and returns how long it runs.
+   * Pieces are slices of a sprite — `start(when, offset, duration)` plays an
+   * arbitrary cut of a buffer already in memory, so there is no seeking and
+   * no per-clip cost.
+   */
+  private scheduleLine(seg: AnnounceSegment): number {
+    const ctx = this.ctx!
+    // Only the line being spoken needs to be interruptible, and the previous
+    // one has already finished by the time this runs — so the list is reset
+    // rather than appended to, which otherwise grows for the whole lap.
+    this.paPlaying.length = 0
+    const start = ctx.currentTime + 0.03
+    let t = start
+    for (const piece of seg.pieces) {
+      if (typeof piece === 'number') {
+        t += piece
+        continue
+      }
+      const [group, key] = piece.split(':')
+      const sprite = this.paSprites.get(`${seg.lang}:${group}`)
+      const slice = PA_CLIPS[seg.lang]?.[group]?.[key]
+      if (!sprite || !slice) continue
+      const src = ctx.createBufferSource()
+      src.buffer = sprite
+      src.connect(this.paVoiceIn!)
+      src.start(t, slice.at, slice.dur)
+      this.paPlaying.push(src)
+      t += slice.dur
+    }
+    return t - start
+  }
+
+  /** Silences whatever is mid-sentence — the graph equivalent of cutting the mic. */
+  private stopPaVoice() {
+    for (const src of this.paPlaying) {
+      try {
+        src.stop()
+      } catch {
+        /* ya había terminado */
+      }
+    }
+    this.paPlaying.length = 0
+  }
+
   /** Cuts the current announcement dead (used when it has gone stale). */
   private abortCurrentAnnouncement() {
     this.announceEpoch++
-    try {
-      speechSynthesis.cancel()
-    } catch {
-      // Some WebViews throw if the engine is mid-teardown; silence is the goal anyway.
-    }
+    this.stopPaVoice()
     this.stopPaBed()
     this.announcing = false
     this.currentItem = null
@@ -1396,9 +1449,12 @@ export class AudioEngine {
     this.currentItem = item
     const epoch = ++this.announceEpoch
     this.announcing = true
-    const totalChars = item.segments.reduce((n, s) => n + s.text.length, 0)
+    // The real length, from the clips themselves — the old estimate counted
+    // characters because the browser's synthesizer never said how long it
+    // would take. The duck can now match the sentence exactly.
+    const spoken = item.segments.reduce((n, seg) => n + this.lineDuration(seg), 0)
     const fanfareDuration = item.fanfare ? perfTime('a:fanfare', () => this.playMelody(RETRO_FANFARE, 'retro', 0.4) || 0.8) : 0
-    this.duckFor(3.5 + totalChars * 0.06 + fanfareDuration)
+    this.duckFor(1.2 + spoken + (item.segments.length - 1) * (SEGMENT_GAP_MS / 1000) + fanfareDuration)
     const chimeDuration = perfTime('chime', () => this.playMelody(ATTENTION_CHIME, 'attention', 0.32) || 0.3)
     perfTime('pa-bed', () => this.startPaBed())
 
@@ -1406,50 +1462,40 @@ export class AudioEngine {
       'a:tmr-speak-start',
       () => {
         if (epoch !== this.announceEpoch) return
-        // Clear only leftovers (e.g. the unlock primer) — by construction
-        // nothing of ours is speaking when a new sequence starts.
-        //
-        // Every timer in this chain measures how LATE it ran (`lag:` in the
-        // log's costs), because the per-station freezes all carry the tags of
-        // this teardown and a tag alone cannot tell a culprit from a witness:
-        // a callback that fires the instant a 320 ms block ENDS lands inside
-        // the same window as one that caused it. A lag near 320 means this
-        // chain was stuck behind the block, not the reason for it.
-        //
-        // Nothing to say: end here without going near the speech engine.
+        // Nothing to say — the chime-only setting, or a sprite that never
+        // arrived. Either way the announcement still happened.
         if (item.segments.length === 0) {
           this.finishAnnouncement()
           return
         }
-        const utterances = perfTime('speak-init', () => {
-          speechSynthesis.cancel()
-          return item.segments.map((seg) => this.buildUtterance(seg.lang, seg.text))
-        })
-
-        const speakAt = (i: number) => {
-          // Epoch guard: an aborted announcement must not keep speaking from
-          // inside its own onend chain.
+        const sayLine = (i: number) => {
+          // Epoch guard: an aborted announcement must not keep talking from
+          // inside its own chain.
           if (epoch !== this.announceEpoch) return
-          if (i >= utterances.length || (item.valid && !item.valid())) {
+          if (i >= item.segments.length || (item.valid && !item.valid())) {
             this.finishAnnouncement()
             return
           }
-          const utter = utterances[i]
-          let advanced = false
-          const advance = () => {
-            if (advanced) return
-            advanced = true
-            perfTimeout('a:tmr-segment', () => speakAt(i + 1), SEGMENT_GAP_MS)
-          }
-          utter.onend = advance
-          // Fallback in case `onend` never fires (a known flakiness in some browsers' queued-utterance handling).
-          window.setTimeout(advance, item.segments[i].text.length * 140 + 2200)
-          perfTime('speak', () => speechSynthesis.speak(utter))
+          const seconds = this.scheduleLine(item.segments[i])
+          // Driven by the clips' own length instead of waiting on an `onend`
+          // the browser might never fire — the old path needed a fallback
+          // timer for exactly that.
+          perfTimeout('a:tmr-segment', () => sayLine(i + 1), seconds * 1000 + SEGMENT_GAP_MS)
         }
-        speakAt(0)
+        sayLine(0)
       },
       (fanfareDuration + chimeDuration) * 1000 + 150,
     )
+  }
+
+  /** How long a line runs, from the table — known before a single sample plays. */
+  private lineDuration(seg: AnnounceSegment): number {
+    let n = 0
+    for (const piece of seg.pieces) {
+      if (typeof piece === 'number') n += piece
+      else n += PA_CLIPS[seg.lang]?.[piece.split(':')[0]]?.[piece.split(':')[1]]?.dur ?? 0
+    }
+    return n
   }
 
   /** Breathing gap after an announcement, then the next queued one (if any) takes the mic. */
@@ -1481,7 +1527,7 @@ export class AudioEngine {
       this.stopPaBed()
       this.announceQueue.length = 0
       this.announcing = false
-      if ('speechSynthesis' in window) speechSynthesis.cancel()
+      this.stopPaVoice()
       this.ctx.suspend().catch(() => {})
     } else {
       this.resumeContext()

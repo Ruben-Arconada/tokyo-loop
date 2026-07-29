@@ -17,10 +17,11 @@ import { CANONICAL_SCENARIO, FORCE_CANONICAL, tagGroup, type WorldScenario } fro
 import { TextureUploadWatch } from './textureWatch'
 import { Scenery } from './Scenery'
 import { DayNightCycle } from './DayNightCycle'
-import { audio } from '../audio/AudioEngine'
+import { audio, type AnnounceSegment } from '../audio/AudioEngine'
+import { ARC_SIZE, NAME_REPEAT_GAP } from '../data/paClips'
 import { Controls } from '../ui/Controls'
 import { UI } from '../ui/UI'
-import { STATIONS } from '../data/stations'
+import { STATIONS, type StationDef } from '../data/stations'
 import { getStationMelody, DOOR_CHIME_OPEN, DOOR_CHIME_CLOSE, BOARDING_DONE_CUE } from '../data/melodies'
 import { makeBallastTexture, makeScuffedPanelTexture, makeDestinationTexture, makeGroundTexture, makeTracksideWearTexture, WINDOW_DUSK_UNIFORM } from './signage'
 
@@ -54,12 +55,6 @@ function detectSecondLang(): PaSecondLang {
   return (navigator.language || 'en').toLowerCase().startsWith('es') ? 'es' : 'en'
 }
 
-/** Door-side wording per language, so every announcement really states the side. */
-function doorSidePhrases(side: 'left' | 'right'): { ja: string; en: string; es: string } {
-  return side === 'left'
-    ? { ja: '左側', en: 'left', es: 'izquierdo' }
-    : { ja: '右側', en: 'right', es: 'derecho' }
-}
 
 const CAMERA_KEY = 'yamanote-camera'
 const SCHEDULE_KEY = 'yamanote-schedule'
@@ -499,14 +494,33 @@ export class Game {
     this.renderOnce()
   }
 
-  /** Japanese plus the player's language — see the PA note at the top of the file. */
-  private paSegments(ja: string, en: string, es: string) {
-    // 'off' keeps the chime and the PA bed and speaks nothing — the station
-    // still announces itself, it just does not talk.
+  /**
+   * One announcement, as clips: Japanese first — it is the host country's
+   * line — then the player's language.
+   *
+   * The Japanese line names the station TWICE with a breath between, the way
+   * a real one does; the other languages say it once. `opener` is the only
+   * thing that separates a departure from an arrival.
+   *
+   * 'off' returns nothing at all: the chime and the PA bed still play, the
+   * station still announces itself, it just does not talk.
+   */
+  private paLines(station: StationDef, opener: 'next' | 'soon'): AnnounceSegment[] {
+    if (this.paLang === 'off') return []
+    const name = `name${Math.floor(STATIONS.indexOf(station) / ARC_SIZE)}:${station.id}`
+    const side = `frag:${station.doorSide}`
+    return [
+      { lang: 'ja', pieces: [`frag:${opener}`, name, NAME_REPEAT_GAP, name, 'frag:doors', side, 'frag:end'] },
+      { lang: this.paLang, pieces: [`frag:${opener}`, name, 0.18, 'frag:doors', side] },
+    ]
+  }
+
+  /** The two fixed words, in both languages. */
+  private paClosingLines(): AnnounceSegment[] {
     if (this.paLang === 'off') return []
     return [
-      { lang: 'ja' as const, text: ja },
-      this.paLang === 'es' ? { lang: 'es' as const, text: es } : { lang: 'en' as const, text: en },
+      { lang: 'ja', pieces: ['frag:closing'] },
+      { lang: this.paLang, pieces: ['frag:closing'] },
     ]
   }
 
@@ -591,6 +605,10 @@ export class Game {
   private start() {
     this.schedule.reset(this.train.targetStationIndex)
     audio.unlock()
+    // The audio context only exists from here on, so this is the first moment
+    // the announcement sprites can be asked for — the per-station preload in
+    // step() would otherwise not fire again until the SECOND station.
+    this.lastMarkedStation = -1
     // Bake the rainy-day sprite sheet while nothing is happening: the front
     // director can start rain mid-drive, and a canvas bake + texture upload
     // on that frame would be a hitch with PerfLog pointing at nothing.
@@ -899,45 +917,28 @@ export class Game {
   /** The session's one-time welcome cue: next stop, with a retro chiptune fanfare. */
   private handleWelcomeAnnounce() {
     const next = STATIONS[this.train.targetStationIndex]
-    const sides = doorSidePhrases(next.doorSide)
-    audio.announce(
-      this.paSegments(
-        `次は、${next.nameJa}、${next.nameJa}です。お出口は${sides.ja}です。`,
-        `The next station is ${next.nameEn}. Doors will open on the ${sides.en} side.`,
-        `Próxima estación: ${next.nameEn}. Las puertas se abrirán por el lado ${sides.es}.`,
-      ),
-      { fanfare: true, kind: 'depart' },
-    )
+    audio.announce(this.paLines(next, 'next'), { fanfare: true, kind: 'depart' })
   }
 
   /** Always names the door side. Japanese first — it's the host country's line — then the player's language. */
   private handleDepartAnnounce(nextIdx: number) {
     const next = STATIONS[nextIdx]
-    const sides = doorSidePhrases(next.doorSide)
-    audio.announce(
-      this.paSegments(
-        `次は、${next.nameJa}、${next.nameJa}です。お出口は${sides.ja}です。`,
-        `The next station is ${next.nameEn}. Doors will open on the ${sides.en} side.`,
-        `Próxima estación: ${next.nameEn}. Las puertas se abrirán por el lado ${sides.es}.`,
-      ),
-      { kind: 'depart', valid: () => this.train.targetStationIndex === nextIdx },
-    )
+    audio.announce(this.paLines(next, 'next'), {
+      kind: 'depart',
+      valid: () => this.train.targetStationIndex === nextIdx,
+    })
   }
 
   private handleArrivingAnnounce(idx: number) {
-    const station = STATIONS[idx]
-    const sides = doorSidePhrases(station.doorSide)
-    const transferJa = station.transferLines?.length ? ` ${station.transferLines.join('、')}はお乗り換えです。` : ''
-    const transferEn = station.transferLines?.length ? ` Please change here for ${station.transferLines.join(', ')}.` : ''
-    audio.announce(
-      this.paSegments(
-        `まもなく、${station.nameJa}、${station.nameJa}です。${transferJa} お出口は${sides.ja}です。`,
-        `We will soon arrive at ${station.nameEn}.${transferEn} The doors on the ${sides.en} side will open.`,
-        `Llegamos a ${station.nameEn}. Las puertas se abrirán por el lado ${sides.es}.`,
-      ),
+    // The transfer lines used to be read out here. They were half the recorded
+    // audio for something the game does nothing else with, so the arrival
+    // announcement is now just the station and the door side — shorter, and
+    // the whole PA fits in a fifth of the space.
+    audio.announce(this.paLines(STATIONS[idx], 'soon'), {
       // Still relevant only while that station is the one we're heading for.
-      { kind: 'arriving', valid: () => this.train.targetStationIndex === idx },
-    )
+      kind: 'arriving',
+      valid: () => this.train.targetStationIndex === idx,
+    })
   }
 
   private handleDoorsOpen(idx: number, info: DoorActionInfo) {
@@ -967,7 +968,7 @@ export class Game {
     // clearly instead of competing with the next loop iteration.
     audio.stopMelodyLoop()
     audio.announce(
-      this.paSegments('ドアが閉まります。ご注意ください。', 'The doors are closing.', 'Las puertas se cierran.'),
+      this.paClosingLines(),
       { kind: 'closing' },
     )
   }
@@ -2059,6 +2060,15 @@ export class Game {
     if (this.train.targetStationIndex !== this.lastMarkedStation) {
       this.lastMarkedStation = this.train.targetStationIndex
       perfMark('station')
+      // Ask for the announcement audio of the arc we are in and the one after
+      // it, so a station's name is resident before it is due and the other
+      // twenty-four are not. Already-loaded arcs cost nothing to re-request.
+      const arc = Math.floor(this.train.targetStationIndex / ARC_SIZE)
+      const arcs = Math.ceil(STATIONS.length / ARC_SIZE)
+      audio.preloadAnnouncements(this.paLang === 'off' ? ['ja'] : ['ja', this.paLang], [
+        arc,
+        (arc + 1) % arcs,
+      ])
     }
     perfPhase('f:city', () => this.city.update(dt, this.dayNight.nightFactor, this.train.targetStationIndex))
     // Real seconds, not clock-scaled: the train runs in real time, so if
