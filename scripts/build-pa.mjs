@@ -162,6 +162,10 @@ const round = (n) => Math.round(n * 1000) / 1000
 function main() {
   rmSync(TMP, { recursive: true, force: true })
   mkdirSync(TMP, { recursive: true })
+  // Wiped, not merged: changing how the clips are grouped used to leave the
+  // previous layout's sprites behind, and the service worker precached them —
+  // dead weight that every player downloaded.
+  rmSync(OUT_AUDIO, { recursive: true, force: true })
   mkdirSync(OUT_AUDIO, { recursive: true })
 
   const stations = readStations()
