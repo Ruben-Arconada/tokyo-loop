@@ -34,34 +34,27 @@ const MAX_DROPS = 64
 /** Overlay resolution cap — glass drops don't need retina, and the canvas is blended over everything. */
 const DPR_CAP = 1.25
 
-/** What the cab asks of the pane this frame, beyond the weather. */
+/**
+ * What the cab asks of this overlay beyond the weather: the sun flare. Only
+ * SCREEN-space optics live here now — the pane's own dressing (tint, wiper
+ * haze, frost) moved onto the 3D glass in CabInterior after Rubén caught the
+ * screen-space version "accompanying" his head turns: an axis-aligned canvas
+ * rectangle can neither foreshorten nor keep frame-perfect step with the
+ * camera. A flare, being a lens artifact, is exactly what SHOULD live in
+ * screen space.
+ */
 export interface GlassState {
-  /** 0..1 — winter's grip: frost crystals + edge condensation. */
-  frost: number
   /** 0..1 — flare strength (0 = sun absent/behind/overcast/tunnel). */
   flare: number
   /** Flare centre in canvas NDC (-1..1), only read when flare > 0. */
   flareX: number
   flareY: number
-  /** 0..1 — the frost reads brighter after dark or it vanishes (Haruto, r2). */
-  night: number
   /**
    * Multiplier on the flare CORE only. Game lowers it when a low sun stands
    * in a tower district — the poor man's occlusion (Haruto, round 3). The
    * veil and ghosts keep their strength; only the "naked disc" concedes.
    */
   coreMul: number
-}
-
-/** Tiny deterministic PRNG for the frost speckle — artwork, not gameplay. */
-function frostRng(seed: number) {
-  let s = seed >>> 0
-  return () => {
-    s = (s + 0x6d2b79f5) >>> 0
-    let t = Math.imul(s ^ (s >>> 15), 1 | s)
-    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
-    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
-  }
 }
 
 export class WindshieldFX {
@@ -80,26 +73,7 @@ export class WindshieldFX {
   private w = 0
   private h = 0
   private dpr = 1
-  /** The pane repaints only when something about it changes — a parked frame costs nothing. */
-  private glassDirty = true
-  private lastFrost = -1
   private lastFlare = 0
-  private lastClipX0 = 99
-  private lastClipY0 = 99
-  private lastClipX1 = 99
-  private lastClipY1 = 99
-  /**
-   * The pane's own dressing (tint, vignette, wiper haze, frost) rendered ONCE
-   * into an offscreen layer and blitted per frame. Without this, a snowy cab
-   * — the exact scene this exists for — rebuilt ~6 gradients and ~170 frost
-   * crystals every frame, because falling snow forces a full repaint path
-   * (Marco, round 1). The layer re-renders only when the head moves, the
-   * frost takes a visible step, or the canvas resizes.
-   */
-  private glassLayer = document.createElement('canvas')
-  private glassLayerCtx = this.glassLayer.getContext('2d')!
-  private layerFrostQ = -1
-  private layerNightQ = -1
   /** A mode switch (cab ↔ outside) leaves paint beyond the clip — clear it once. */
   private lastWasClipped = false
   /** Last frame's pane rect in pixels — the clear must cover ITS union with the new one. */
@@ -140,7 +114,6 @@ export class WindshieldFX {
     this.h = Math.max(1, Math.round((vv?.height ?? window.innerHeight) * this.dpr))
     this.canvas.width = this.w
     this.canvas.height = this.h
-    this.glassDirty = true
   }
 
   /**
@@ -157,29 +130,26 @@ export class WindshieldFX {
    */
   update(dt: number, intensity: number, snow: boolean, speed01: number, visible: boolean, clip: { x0: number; y0: number; x1: number; y1: number } | null = null, glass: GlassState | null = null) {
     const rainActive = visible && intensity > 0.02
-    // The pane's own dressing belongs to the cab — which is exactly when a
-    // clip rect is handed in. Outside views get drops only (legacy behaviour).
-    const dressed = visible && clip !== null && glass !== null
-    const frost = dressed ? glass!.frost : 0
-    const flare = dressed ? glass!.flare : 0
-    if (!rainActive && this.alive === 0 && !dressed) {
+    // The flare belongs to the cab — which is exactly when a clip rect is
+    // handed in. Outside views get drops only (legacy behaviour).
+    const flare = visible && clip !== null && glass !== null ? glass.flare : 0
+    // Nothing on screen and nothing to erase: hide entirely. A dry, flare-less
+    // cab pays nothing for this overlay. lastFlare keeps us alive one more
+    // frame so a dying flare gets erased before the canvas goes away.
+    if (!rainActive && this.alive === 0 && flare <= 0.01 && this.lastFlare <= 0.01) {
       if (this.shown) {
         this.shown = false
         this.canvas.style.display = 'none'
+        // Hidden paint would survive to the next show — force the full
+        // clear path when we come back.
+        this.lastWasClipped = false
       }
+      this.lastFlare = 0
       return
     }
     if (!this.shown) {
       this.shown = true
       this.canvas.style.display = 'block'
-      this.glassDirty = true
-    }
-
-    // Skip the whole repaint when nothing moves: no drops, no flare this
-    // frame or last, frost settled, head still. The canvas persists, so the
-    // glass stays painted for free.
-    if (!rainActive && this.alive === 0 && flare <= 0.01 && this.lastFlare <= 0.01 && !this.glassDirty && Math.abs(frost - this.lastFrost) < 0.01 && clip !== null && Math.abs(clip.x0 - this.lastClipX0) < 0.002 && Math.abs(clip.y0 - this.lastClipY0) < 0.002 && Math.abs(clip.x1 - this.lastClipX1) < 0.002 && Math.abs(clip.y1 - this.lastClipY1) < 0.002) {
-      return
     }
 
     // Spawn: heavier weather beads the glass faster; at speed more drops
@@ -237,29 +207,16 @@ export class WindshieldFX {
       ctx.beginPath()
       ctx.rect(px0, py0, px1 - px0, py1 - py0)
       ctx.clip()
-      if (dressed) {
-        this.ensureGlassLayer(px0, py0, px1, py1, frost, glass!.night)
-        // Always a SCALED blit: the layer's size may lag the rect by the
-        // hysteresis slack, and stretching ≤4 px over a whole pane is
-        // invisible while it keeps the re-render triggers down to frost/night.
-        ctx.drawImage(this.glassLayer, px0, py0, px1 - px0, py1 - py0)
-        if (flare > 0.01) {
-          const fx = glass!.flareX * 0.5 * this.w + this.w * 0.5
-          const fy = this.h * 0.5 - glass!.flareY * 0.5 * this.h
-          this.drawFlare(fx, fy, flare, (px0 + px1) / 2, (py0 + py1) / 2, glass!.coreMul)
-        }
+      if (flare > 0.01) {
+        const fx = glass!.flareX * 0.5 * this.w + this.w * 0.5
+        const fy = this.h * 0.5 - glass!.flareY * 0.5 * this.h
+        this.drawFlare(fx, fy, flare, (px0 + px1) / 2, (py0 + py1) / 2, glass!.coreMul)
       }
-      this.lastClipX0 = clip.x0
-      this.lastClipY0 = clip.y0
-      this.lastClipX1 = clip.x1
-      this.lastClipY1 = clip.y1
     } else {
       ctx.clearRect(0, 0, this.w, this.h)
       this.lastWasClipped = false
     }
-    this.lastFrost = frost
     this.lastFlare = flare
-    this.glassDirty = false
     const cx = this.w / 2
     const cy = this.h * 0.42 // vanishing point sits a little above center
 
@@ -307,109 +264,6 @@ export class WindshieldFX {
     }
     ctx.globalAlpha = 1
     if (clip) ctx.restore()
-  }
-
-  /**
-   * Re-renders the offscreen dressing layer only when its inputs actually
-   * changed: the pane's pixel SIZE, a hundredth of frost, a twentieth of
-   * night. The layer is drawn in pane-local space and sized to the pane —
-   * not the screen — so a head-turn only moves the blit, and the offscreen
-   * memory is the glass, not the whole canvas (Marco, round 2).
-   */
-  private ensureGlassLayer(x0: number, y0: number, x1: number, y1: number, frost: number, night: number) {
-    const lw = Math.max(1, Math.ceil(x1 - x0))
-    const lh = Math.max(1, Math.ceil(y1 - y0))
-    const fq = Math.round(frost * 100)
-    const nq = Math.round(night * 20)
-    // ±4 px hysteresis on size: a head sweep walks the projected pane width
-    // across ceil() boundaries, and without the slack that re-rendered the
-    // whole dressing every frame of the sweep (Marco, round 3). The blit
-    // always scales to the exact rect, so the slack never shows.
-    if (Math.abs(this.glassLayer.width - lw) <= 4 && Math.abs(this.glassLayer.height - lh) <= 4 && fq === this.layerFrostQ && nq === this.layerNightQ) {
-      return
-    }
-    // Setting the size clears the canvas; matching sizes need an explicit wipe.
-    if (this.glassLayer.width !== lw || this.glassLayer.height !== lh) {
-      this.glassLayer.width = lw
-      this.glassLayer.height = lh
-    } else {
-      this.glassLayerCtx.clearRect(0, 0, lw, lh)
-    }
-    this.paintGlass(this.glassLayerCtx, 0, 0, lw, lh, fq / 100, nq / 20)
-    this.layerFrostQ = fq
-    this.layerNightQ = nq
-  }
-
-  /**
-   * The pane itself. Everything is a whisper on purpose — the moment you
-   * consciously notice the glass, it's overdone. Frost is the exception:
-   * winter is allowed to make a show of the corners while the cab stays warm.
-   */
-  private paintGlass(ctx: CanvasRenderingContext2D, x0: number, y0: number, x1: number, y1: number, frost: number, night: number) {
-    const w = x1 - x0
-    const h = y1 - y0
-    if (w <= 2 || h <= 2) return
-    // A breath of sky tint along the top edge, the way laminated glass bands.
-    const band = ctx.createLinearGradient(0, y0, 0, y0 + h * 0.22)
-    band.addColorStop(0, 'rgba(122,160,186,0.10)')
-    band.addColorStop(1, 'rgba(122,160,186,0)')
-    ctx.fillStyle = band
-    ctx.fillRect(x0, y0, w, h * 0.22)
-    // Corner shading pulls the eye to the middle of the pane.
-    const vig = ctx.createRadialGradient((x0 + x1) / 2, (y0 + y1) / 2, Math.min(w, h) * 0.42, (x0 + x1) / 2, (y0 + y1) / 2, Math.hypot(w, h) * 0.62)
-    vig.addColorStop(0, 'rgba(4,8,14,0)')
-    vig.addColorStop(1, 'rgba(4,8,14,0.11)')
-    ctx.fillStyle = vig
-    ctx.fillRect(x0, y0, w, h)
-    // Old wiper haze: two faint arcs of slightly lighter glass. Deterministic
-    // constants — this is artwork, and it must not shimmer between repaints.
-    ctx.strokeStyle = 'rgba(205,224,240,0.028)'
-    for (let i = 0; i < 2; i++) {
-      ctx.lineWidth = h * (0.06 - i * 0.018)
-      ctx.beginPath()
-      ctx.arc(x0 + w * (0.34 + i * 0.36), y1 + h * 0.72, h * (0.92 + i * 0.1), Math.PI * 1.22, Math.PI * 1.78)
-      ctx.stroke()
-    }
-    if (frost > 0.01) {
-      // Condensation collects along the edges, heaviest at the sill where
-      // the breath of the cab meets the cold pane.
-      // Blue-leaning, not pure white: against a whiteout sky the frost still
-      // has to read as frost (Lena, round 1). After dark it leans brighter,
-      // or the crystals drown in the night sky (Haruto, round 2).
-      const nightLift = 1 + 0.45 * night
-      const edge = (gx0: number, gy0: number, gx1: number, gy1: number, a: number) => {
-        const g = ctx.createLinearGradient(gx0, gy0, gx1, gy1)
-        g.addColorStop(0, `rgba(203,225,243,${Math.min(1, a * frost * nightLift)})`)
-        g.addColorStop(1, 'rgba(203,225,243,0)')
-        return g
-      }
-      ctx.fillStyle = edge(0, y1, 0, y1 - h * 0.2, 0.23)
-      ctx.fillRect(x0, y1 - h * 0.2, w, h * 0.2)
-      ctx.fillStyle = edge(0, y0, 0, y0 + h * 0.12, 0.16)
-      ctx.fillRect(x0, y0, w, h * 0.12)
-      ctx.fillStyle = edge(x0, 0, x0 + w * 0.07, 0, 0.19)
-      ctx.fillRect(x0, y0, w * 0.07, h)
-      ctx.fillStyle = edge(x1, 0, x1 - w * 0.07, 0, 0.19)
-      ctx.fillRect(x1 - w * 0.07, y0, w * 0.07, h)
-      // Frost crystals creep in from the corners — fixed seed, so the same
-      // winter always draws the same window.
-      const rnd = frostRng(0xc0ffee)
-      const count = Math.floor(170 * frost)
-      ctx.fillStyle = 'rgba(222,238,252,0.55)'
-      for (let i = 0; i < count; i++) {
-        const cornerX = rnd() < 0.5 ? x0 : x1
-        const cornerY = rnd() < 0.62 ? y1 : y0
-        const reach = rnd() * rnd() // squared: crystals thin out fast away from the corner
-        const px = cornerX + (cornerX === x0 ? 1 : -1) * reach * w * 0.3 + (rnd() - 0.5) * w * 0.05
-        const py = cornerY + (cornerY === y0 ? 1 : -1) * rnd() * rnd() * h * 0.34 + (rnd() - 0.5) * h * 0.04
-        const r = (0.6 + rnd() * 1.7) * this.dpr
-        ctx.globalAlpha = Math.min(1, (0.1 + 0.34 * (1 - reach)) * frost * nightLift)
-        ctx.beginPath()
-        ctx.arc(px, py, r, 0, Math.PI * 2)
-        ctx.fill()
-      }
-      ctx.globalAlpha = 1
-    }
   }
 
   /**

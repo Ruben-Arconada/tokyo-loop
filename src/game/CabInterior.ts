@@ -172,10 +172,28 @@ export interface CabInstrumentState {
    * make the inside feel like somewhere you want to stay (Rubén, 2026-07-30).
    */
   coldOutside: number
+  /** 0..1 — winter's grip on the pane; Game eases it, the pane repaints on 1/100 steps. */
+  frost: number
+}
+
+/** Tiny deterministic PRNG for the frost speckle — artwork, not gameplay. */
+function frostRng(seed: number) {
+  let s = seed >>> 0
+  return () => {
+    s = (s + 0x6d2b79f5) >>> 0
+    let t = Math.imul(s ^ (s >>> 15), 1 | s)
+    t = (t + Math.imul(t ^ (t >>> 7), 61 | t)) ^ t
+    return ((t ^ (t >>> 14)) >>> 0) / 4294967296
+  }
 }
 
 export class CabInterior {
   readonly group = new THREE.Group()
+
+  private readonly glassCanvas = document.createElement('canvas')
+  private glassTex!: THREE.CanvasTexture
+  private glassFrostQ = 0
+  private glassNightQ = 0
 
   private readonly mascon = new THREE.Object3D()
   private readonly brakeHandle = new THREE.Object3D()
@@ -670,28 +688,109 @@ export class CabInterior {
   }
 
   /**
-   * The tint, sized to the glass it belongs to rather than to a guess. It fades
-   * out toward the edges: a constant-alpha quad drew a hard vertical exposure
-   * line across the view whenever the head turned toward a side window.
+   * The pane itself, carrying its own dressing as a texture: the faint tint
+   * (fading toward the edges — a constant-alpha quad drew a hard vertical
+   * exposure line when the head turned), the top band, corner shading, old
+   * wiper haze, and winter's frost. This all lived on the 2D screen overlay
+   * first, clipped to the pane's projected bbox — and Rubén caught it on his
+   * first lap: a screen-space rectangle can neither foreshorten nor keep up
+   * with a head turn, so the dressing "accompanied" the look-around instead
+   * of sitting on the glass. On the 3D pane it is nailed down by the
+   * renderer itself. Repainted only when frost (1/100) or night (1/20) take
+   * a visible step; a still cab costs nothing.
    */
   private buildGlass() {
-    const cnv = document.createElement('canvas')
-    cnv.width = 64
-    cnv.height = 8
-    const cctx = cnv.getContext('2d')!
-    const grad = cctx.createLinearGradient(0, 0, 64, 0)
-    grad.addColorStop(0, '#000')
-    grad.addColorStop(0.26, '#fff')
-    grad.addColorStop(0.74, '#fff')
-    grad.addColorStop(1, '#000')
-    cctx.fillStyle = grad
-    cctx.fillRect(0, 0, 64, 8)
-    const alpha = new THREE.CanvasTexture(cnv)
-    const mat = new THREE.MeshBasicMaterial({ color: 0x9fc4ff, transparent: true, opacity: 0.05, alphaMap: alpha, depthWrite: false })
+    this.glassCanvas.width = 1024
+    this.glassCanvas.height = 400
+    this.paintGlassDressing(0, 0)
+    this.glassTex = new THREE.CanvasTexture(this.glassCanvas)
+    const mat = new THREE.MeshBasicMaterial({ map: this.glassTex, transparent: true, depthWrite: false, toneMapped: false })
     const glass = new THREE.Mesh(new THREE.PlaneGeometry(WINDSCREEN.outer * 2.1, (SCREEN_TOP - SCREEN_BOTTOM) * 1.06), mat)
     glass.position.set(0, (SCREEN_TOP + SCREEN_BOTTOM) / 2, SCREEN_Z + 0.05)
     this.group.add(glass)
-    this.disposables.push(alpha, mat, glass.geometry)
+    this.disposables.push(this.glassTex, mat, glass.geometry)
+  }
+
+  /** Repaints the pane's texture when its state takes a visible step. */
+  private setGlassState(frost: number, night: number) {
+    const fq = Math.round(frost * 100)
+    const nq = Math.round(night * 20)
+    if (fq === this.glassFrostQ && nq === this.glassNightQ) return
+    this.glassFrostQ = fq
+    this.glassNightQ = nq
+    this.paintGlassDressing(fq / 100, nq / 20)
+    this.glassTex.needsUpdate = true
+  }
+
+  private paintGlassDressing(frost: number, night: number) {
+    const ctx = this.glassCanvas.getContext('2d')!
+    const w = this.glassCanvas.width
+    const h = this.glassCanvas.height
+    ctx.clearRect(0, 0, w, h)
+    // The base tint, fading toward the sides like the old alphaMap did.
+    const base = ctx.createLinearGradient(0, 0, w, 0)
+    base.addColorStop(0, 'rgba(159,196,255,0)')
+    base.addColorStop(0.26, 'rgba(159,196,255,0.05)')
+    base.addColorStop(0.74, 'rgba(159,196,255,0.05)')
+    base.addColorStop(1, 'rgba(159,196,255,0)')
+    ctx.fillStyle = base
+    ctx.fillRect(0, 0, w, h)
+    // A breath of sky along the top edge, the way laminated glass bands.
+    const band = ctx.createLinearGradient(0, 0, 0, h * 0.22)
+    band.addColorStop(0, 'rgba(122,160,186,0.10)')
+    band.addColorStop(1, 'rgba(122,160,186,0)')
+    ctx.fillStyle = band
+    ctx.fillRect(0, 0, w, h * 0.22)
+    // Corner shading pulls the eye to the middle of the pane.
+    const vig = ctx.createRadialGradient(w / 2, h / 2, Math.min(w, h) * 0.42, w / 2, h / 2, Math.hypot(w, h) * 0.62)
+    vig.addColorStop(0, 'rgba(4,8,14,0)')
+    vig.addColorStop(1, 'rgba(4,8,14,0.11)')
+    ctx.fillStyle = vig
+    ctx.fillRect(0, 0, w, h)
+    // Old wiper haze: two faint arcs of slightly lighter glass.
+    ctx.strokeStyle = 'rgba(205,224,240,0.028)'
+    for (let i = 0; i < 2; i++) {
+      ctx.lineWidth = h * (0.06 - i * 0.018)
+      ctx.beginPath()
+      ctx.arc(w * (0.34 + i * 0.36), h * 1.72, h * (0.92 + i * 0.1), Math.PI * 1.22, Math.PI * 1.78)
+      ctx.stroke()
+    }
+    if (frost > 0.01) {
+      // Blue-leaning, brighter after dark (Lena and Haruto's tuning survives
+      // the move — same colours, now in pane space where they belong).
+      const nightLift = 1 + 0.45 * night
+      const edge = (gx0: number, gy0: number, gx1: number, gy1: number, a: number) => {
+        const g = ctx.createLinearGradient(gx0, gy0, gx1, gy1)
+        g.addColorStop(0, `rgba(203,225,243,${Math.min(1, a * frost * nightLift)})`)
+        g.addColorStop(1, 'rgba(203,225,243,0)')
+        return g
+      }
+      ctx.fillStyle = edge(0, h, 0, h * 0.8, 0.23)
+      ctx.fillRect(0, h * 0.8, w, h * 0.2)
+      ctx.fillStyle = edge(0, 0, 0, h * 0.12, 0.16)
+      ctx.fillRect(0, 0, w, h * 0.12)
+      ctx.fillStyle = edge(0, 0, w * 0.07, 0, 0.19)
+      ctx.fillRect(0, 0, w * 0.07, h)
+      ctx.fillStyle = edge(w, 0, w * 0.93, 0, 0.19)
+      ctx.fillRect(w * 0.93, 0, w * 0.07, h)
+      // Frost crystals creep in from the corners — fixed seed, artwork.
+      const rnd = frostRng(0xc0ffee)
+      const count = Math.floor(170 * frost)
+      ctx.fillStyle = 'rgba(222,238,252,0.55)'
+      for (let i = 0; i < count; i++) {
+        const cornerX = rnd() < 0.5 ? 0 : w
+        const cornerY = rnd() < 0.62 ? h : 0
+        const reach = rnd() * rnd()
+        const px = cornerX + (cornerX === 0 ? 1 : -1) * reach * w * 0.3 + (rnd() - 0.5) * w * 0.05
+        const py = cornerY + (cornerY === 0 ? 1 : -1) * rnd() * rnd() * h * 0.34 + (rnd() - 0.5) * h * 0.04
+        const r = 0.9 + rnd() * 2.6
+        ctx.globalAlpha = Math.min(1, (0.1 + 0.34 * (1 - reach)) * frost * nightLift)
+        ctx.beginPath()
+        ctx.arc(px, py, r, 0, Math.PI * 2)
+        ctx.fill()
+      }
+      ctx.globalAlpha = 1
+    }
   }
 
   // ── Per-frame ─────────────────────────────────────────────────────────────
@@ -811,6 +910,10 @@ export class CabInterior {
     // now only the warm pool on top of it, and it follows max(night, tunnel)
     // rather than their sum — adding them made a night-time tunnel brightest of
     // all, which is nonsense twice over.
+    // The pane's dressing follows winter and dusk; repaint is quantised so a
+    // steady cab never touches the texture.
+    this.setGlassState(s.frost, s.nightFactor)
+
     const dark = Math.max(s.nightFactor, s.tunnelFactor)
     const room = 1 - dark * 0.55
     // Warm as it dims: after dark a cab is lit by its own tungsten, not by a

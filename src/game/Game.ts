@@ -267,7 +267,7 @@ export class Game {
   /** Reused every rainy frame — the windscreen's screen-space box. */
   private readonly wsClip = { x0: -1, y0: -1, x1: 1, y1: 1 }
   /** What the cab asks of the pane beyond the weather: frost, flare. */
-  private readonly glassState = { frost: 0, flare: 0, flareX: 0, flareY: 0, night: 0, coreMul: 1 }
+  private readonly glassState = { frost: 0, flare: 0, flareX: 0, flareY: 0, coreMul: 1 }
   /** Blended 0..1 urbanity at the cab, refreshed each frame by f:ambience. */
   private zoneUrbanity = 0
   private readonly sunNdc = new THREE.Vector3()
@@ -1595,6 +1595,10 @@ export class Game {
       // A closed winter sky presses the warmth harder — the amber must
       // survive even a whiteout JPEG (Yui, round 2).
       coldOutside: this.season === 'winter' ? 1 + 0.35 * this.dayNight.overcast : 0,
+      // Eased in the windshield block (last frame's value: the frost creeps
+      // over seconds, one frame of lag is nothing). The pane repaints itself
+      // on quantised steps.
+      frost: this.glassState.frost,
     })
     if (this.train.targetStationIndex !== this.lastDestinationIdx) {
       this.lastDestinationIdx = this.train.targetStationIndex
@@ -2196,6 +2200,13 @@ export class Game {
     this.precipitation.setCabView(this.cameraMode === 'cab')
     perfPhase('f:precip', () => this.precipitation.update(dt, this.camera.position, this.dayNight.nightFactor))
     perfPhase('f:windshield', () => {
+      // The head's pose was applied to the camera earlier this frame, but
+      // matrixWorldInverse is only refreshed by render() — one frame late.
+      // Rubén read that lag as the overlay "accompanying" his look-around:
+      // refresh it here so the clip rect and the flare are projected with
+      // the SAME pose this frame will draw. render() redoes this anyway.
+      this.camera.updateMatrixWorld()
+      this.camera.matrixWorldInverse.copy(this.camera.matrixWorld).invert()
       // Rain belongs on the glass, not on the instrument panel.
       if (this.cameraMode === 'cab') this.cab.windscreenNdc(this.camera, this.wsClip)
       // Frost creeps in and thaws slowly — winter's grip on the pane, gone
@@ -2231,7 +2242,6 @@ export class Game {
         }
       }
       this.glassState.flare = flare
-      this.glassState.night = this.dayNight.nightFactor
       this.windshield.update(dt, this.wsIntensity, this.wsSnow, this.train.speed01, this.cameraMode === 'cab', this.cameraMode === 'cab' ? this.wsClip : null, this.glassState)
     })
     this.updateHeadlight()
