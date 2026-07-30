@@ -164,11 +164,12 @@ orden `spring → summer → autumn → winter`, y al terminar se restaura
 
 La captura original de 0.2.1 se hizo en un perfil ya usado, no en uno vacío;
 `?canon` ignoró las cuatro preferencias relevantes: semilla, estación del
-año, clima y frentes automáticos. El navegador integrado no estuvo
-disponible durante esta corrección para afirmar una segunda captura limpia:
-el procedimiento anterior queda como reproducción independiente pendiente,
-no como prueba ya ejecutada. Otros estados guardados — cámara, tutoriales,
-audio o récord— son dinámicos y no entran en el fingerprint.
+año, clima y frentes automáticos. Una verificación independiente posterior
+sobre `200b3e2` repitió el procedimiento con un origen nuevo/storage vacío y
+dos reconstrucciones completas: los ocho valores coincidieron entre cargas y
+contra la tabla (4/4 semántico y estructural). Otros estados guardados —
+cámara, tutoriales, audio o récord— son dinámicos y no entran en el
+fingerprint.
 
 ## 4. Pasajeros híbridos — volumen cerca, sprite lejos
 
@@ -268,6 +269,28 @@ No se verificó:
 - fps sostenidos, temperatura o memoria en WebKit móvil;
 - PerfLog de invierno+nieve+noche con esta geometría;
 - funcionamiento offline en un dispositivo móvil tras matar la PWA.
+
+### Verificación independiente posterior — `200b3e2`
+
+Sin modificar el repo:
+
+- hashes con storage vacío: dos cargas, 8/8 valores repetidos, 4/4 contra
+  referencia;
+- Nishiki a 25,7 u: 13 figuras 3D, seis draws y 9.256 tri;
+- seco → lluvia → seco: paraguas visibles `0 → 7 → 0`;
+- los siete colores de `instanceColor` coincidieron exactamente con
+  `PASSENGER_UMBRELLAS[row]`; rows 3/5/8 (`null`) no inventaron paraguas;
+- lejos, a ~300 u: `mask=0`, pools 3D `count=0` y `aModel=0`; cerca:
+  `mask=2`, `count=13`;
+- frame completo 230 draws seco → 231 con lluvia: el +1 pertenece a
+  `Precipitation`, no al paraguas;
+- consola sin errores.
+
+La automatización estrangulaba `requestAnimationFrame` al perder foco. Para
+evitar leer matrices antiguas se invocaron los métodos de producción
+`update`, `applyWeather` y `setWaitingCounts` y se inspeccionó la matriz
+cruda. `Matrix4.decompose()` no es autoridad para una instancia oculta con
+escala cero: puede devolver escala 1 como fallback degenerado.
 
 ## 7. Qué NO se debe interpretar
 
