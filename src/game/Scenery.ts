@@ -13,8 +13,9 @@ import { tagGroup } from './worldHash'
 const N = STATIONS.length
 
 // Vertical neon sign copy — generic Japanese shop-sign words (izakaya, karaoke,
-// ramen, pachinko, sushi, coffee), not real brands.
-const NEON_SIGNS: { text: string; bg: string; fg: string }[] = [
+// ramen, pachinko, sushi, coffee), not real brands. Exported because the night
+// halos (glowCards.ts) tint each design's glow with its own tube colour.
+export const NEON_SIGNS: { text: string; bg: string; fg: string }[] = [
   { text: '居酒屋', bg: '#8a1f24', fg: '#ffd9a0' },
   { text: 'カラオケ', bg: '#182a66', fg: '#7de0ff' },
   { text: 'ラーメン', bg: '#a33f14', fg: '#fff2c8' },

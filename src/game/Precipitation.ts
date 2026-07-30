@@ -39,8 +39,10 @@ uniform float uFallSpeed;// what "standing still" looks like, so gravity alone n
 uniform float uDensity;  // 0..1 fraction of instances kept alive
 uniform vec3 uCamPos;
 uniform float uSnow;     // 0 = rain, 1 = snow
+uniform float uNearFade; // 1 in cab view: nothing falls INSIDE the cab
 varying vec2 vUv;
 varying float vRound;    // 1 = round flake, 0 = long streak
+varying float vNear;     // proximity fade (see uNearFade)
 void main() {
   vUv = uv;
   // Thinning out the curtain by hiding instances is what makes "drizzle vs
@@ -82,6 +84,9 @@ void main() {
   // NOTE: edge0 < edge1, then inverted. smoothstep with edge0 > edge1 is
   // UNDEFINED in GLSL — it returned NaN here and swallowed the whole curtain.
   vRound = 1.0 - smoothstep(1.15, 2.6, len / width);
+  // In the cab the roof is real: a particle inside arm's reach is inside the
+  // room, so it fades to nothing rather than hovering over the driver's desk.
+  vNear = mix(1.0, smoothstep(1.3, 2.8, length(mv.xyz)), uNearFade);
   mv.xy += vec2(-axis.y, axis.x) * position.x * width + axis * (position.y - 0.5) * len;
   gl_Position = projectionMatrix * mv;
 }
@@ -92,12 +97,13 @@ uniform float uOpacity;
 uniform vec3 uTint;
 varying vec2 vUv;
 varying float vRound;
+varying float vNear;
 void main() {
   // One quad, two readings: a soft-edged streak, or a round flake once the
   // thing is short enough to have no direction worth showing.
   float streak = (1.0 - abs(vUv.x - 0.5) * 2.0) * smoothstep(0.0, 0.15, vUv.y) * smoothstep(1.0, 0.85, vUv.y);
   float flake = 1.0 - smoothstep(0.32, 0.5, length(vUv - 0.5));
-  float a = mix(streak * 0.5, flake * 0.9, vRound) * uOpacity;
+  float a = mix(streak * 0.5, flake * 0.9, vRound) * uOpacity * vNear;
   if (a < 0.01) discard;
   gl_FragColor = vec4(uTint, a);
 }
@@ -132,6 +138,15 @@ export class Precipitation {
     uSnow: { value: 0 },
     uOpacity: { value: 0 },
     uTint: { value: new THREE.Color(0xcfd8e4) },
+    // 1 in the cab view: particles born between the eye and the windscreen
+    // fade out instead of floating INSIDE the cab (Lena, round 2 — one flake
+    // over the ceiling in the blizzard's star capture).
+    uNearFade: { value: 0 },
+  }
+
+  /** The cab has a roof: fade particles that spawn inside arm's reach. */
+  setCabView(on: boolean) {
+    this.uniforms.uNearFade.value = on ? 1 : 0
   }
 
   constructor(scene: THREE.Scene) {
