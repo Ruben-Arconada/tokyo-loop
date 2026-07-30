@@ -3,7 +3,7 @@ import { RoomEnvironment } from 'three/examples/jsm/environments/RoomEnvironment
 import { Track, TrackOffsetCurve, CatenaryCurve, HILL_PEAK, EMBANKMENT, embankmentSurface, terrainRelief, trenchPortalOffset } from './Track'
 import { Train, notchLabel, MAX_NOTCH, MAX_SPEED_KMH, SPEED_SCALE, OPEN_INSTANT_SECONDS, OPEN_QUICK_SECONDS, CLOSE_WINDOW_SECONDS, CLOSE_HURRY_SECONDS, RAIL_ADVISORY_KMH, type DoorActionInfo, type RailCondition } from './Train'
 import { WindshieldFX } from './WindshieldFX'
-import { City } from './City'
+import { City, PLATFORM_GEOM } from './City'
 import { Passengers } from './Passengers'
 import { Precipitation } from './Precipitation'
 import { TrainConsist, CAB_OFFSET } from './TrainConsist'
@@ -111,8 +111,6 @@ const DOOR_OPEN_INSTANT_POINTS = 30
 const DOOR_OPEN_QUICK_POINTS = 15
 const DOOR_CLOSE_SHARP_POINTS = 30
 /** Boarding takes longer in the rush hours: base + crowd-scaled extra. */
-/** Platform edge offset from the track centreline (City's TRACK_CLEARANCE). */
-const PLATFORM_INNER = 3
 /** Height of the driver's eye above the rail head. */
 const CAB_EYE_Y = 3.15
 /** Orbit radius of the outside view, and what it aims at. */
@@ -1746,7 +1744,7 @@ export class Game {
     // can never end up staring at the sky or away down the line.
     const aim = this.camAim
       .copy(pPoint)
-      .addScaledVector(pNormal, pSide * (PLATFORM_INNER + 1.6))
+      .addScaledVector(pNormal, pSide * (PLATFORM_GEOM.inner + 1.6))
       .addScaledVector(pTangent, CCTV_BACK * 0.55)
     aim.y += 1.6
     // `aim` is fully consumed as the base direction before being reused below.

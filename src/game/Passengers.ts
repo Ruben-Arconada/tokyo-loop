@@ -4,6 +4,7 @@ import { STATIONS, prevStationIndex } from '../data/stations'
 import { PLATFORM_GEOM } from './City'
 import { DOOR_ZS } from './TrainConsist'
 import { HybridPassengers021, type HybridPassengerReport } from './HybridPassengers021'
+import { PASSENGER_UMBRELLAS } from './passengerWardrobe'
 
 // ————————————————————————————————————————————————————————————————
 // Sprite passengers: little hand-drawn commuters generated entirely in
@@ -143,21 +144,21 @@ interface Variant {
 
 const VARIANTS: Variant[] = [
   // salaryman — navy suit, briefcase
-  { skin: '#f0c8a8', hair: '#26221f', hairStyle: 'short', top: '#2c3444', topShade: '#232a38', collar: '#f2f2ec', bottom: '#2c3444', bottomStyle: 'pants', bag: 'briefcase', bagColor: '#4a3527', build: 1.0, stature: 1.0, umbrella: '#1d2738' },
+  { skin: '#f0c8a8', hair: '#26221f', hairStyle: 'short', top: '#2c3444', topShade: '#232a38', collar: '#f2f2ec', bottom: '#2c3444', bottomStyle: 'pants', bag: 'briefcase', bagColor: '#4a3527', build: 1.0, stature: 1.0, umbrella: PASSENGER_UMBRELLAS[0] },
   // office worker — gray blazer, tote
-  { skin: '#f2cbab', hair: '#3b2d24', hairStyle: 'bob', top: '#6b7280', topShade: '#59616e', collar: '#e8e6df', bottom: '#4b5563', bottomStyle: 'skirt', legWear: '#3a3a42', bag: 'tote', bagColor: '#8a4a4a', build: 0.9, stature: 0.94, umbrella: '#7a3040' },
+  { skin: '#f2cbab', hair: '#3b2d24', hairStyle: 'bob', top: '#6b7280', topShade: '#59616e', collar: '#e8e6df', bottom: '#4b5563', bottomStyle: 'skirt', legWear: '#3a3a42', bag: 'tote', bagColor: '#8a4a4a', build: 0.9, stature: 0.94, umbrella: PASSENGER_UMBRELLAS[1] },
   // high-school girl — sailor uniform, satchel
-  { skin: '#f2cbab', hair: '#2a2018', hairStyle: 'ponytail', top: '#f5f5f0', topShade: '#e2e2da', collar: '#27324a', bottom: '#27324a', bottomStyle: 'skirt', legWear: '#2b2b33', bag: 'satchel', bagColor: '#6d4a2f', build: 0.85, stature: 0.88, umbrella: '#cfd8e2' },
+  { skin: '#f2cbab', hair: '#2a2018', hairStyle: 'ponytail', top: '#f5f5f0', topShade: '#e2e2da', collar: '#27324a', bottom: '#27324a', bottomStyle: 'skirt', legWear: '#2b2b33', bag: 'satchel', bagColor: '#6d4a2f', build: 0.85, stature: 0.88, umbrella: PASSENGER_UMBRELLAS[2] },
   // high-school boy — white shirt, backpack
   { skin: '#edc4a0', hair: '#1e1a16', hairStyle: 'short', top: '#f2f2ec', topShade: '#dddbd2', bottom: '#2b2f3a', bottomStyle: 'pants', bag: 'backpack', bagColor: '#3f5a63', build: 0.9, stature: 0.9 },
   // elderly man — earth-tone vest, gentle stoop
-  { skin: '#e8bc9a', hair: '#b9b4ac', hairStyle: 'gray', top: '#5d4f3f', topShade: '#4c4034', collar: '#cfc8b8', bottom: '#57544c', bottomStyle: 'pants', bag: 'none', build: 0.95, stature: 0.9, hunch: 1, umbrella: '#3b4034' },
+  { skin: '#e8bc9a', hair: '#b9b4ac', hairStyle: 'gray', top: '#5d4f3f', topShade: '#4c4034', collar: '#cfc8b8', bottom: '#57544c', bottomStyle: 'pants', bag: 'none', build: 0.95, stature: 0.9, hunch: 1, umbrella: PASSENGER_UMBRELLAS[4] },
   // youth — warm hoodie
   { skin: '#edc4a0', hair: '#3a2b20', hairStyle: 'short', top: '#b3432e', topShade: '#93392a', bottom: '#33383f', bottomStyle: 'pants', bag: 'none', build: 1.0, stature: 0.97 },
   // woman in a long coat — bun, tote
-  { skin: '#f2cbab', hair: '#443128', hairStyle: 'bun', top: '#7d5a68', topShade: '#6b4c59', longCoat: true, bottom: '#3f3a44', bottomStyle: 'pants', bag: 'tote', bagColor: '#8a6a42', build: 0.92, stature: 0.96, umbrella: '#5a4a66' },
+  { skin: '#f2cbab', hair: '#443128', hairStyle: 'bun', top: '#7d5a68', topShade: '#6b4c59', longCoat: true, bottom: '#3f3a44', bottomStyle: 'pants', bag: 'tote', bagColor: '#8a6a42', build: 0.92, stature: 0.96, umbrella: PASSENGER_UMBRELLAS[6] },
   // traveler — cap and backpack
-  { skin: '#eec6a6', hair: '#57422e', hairStyle: 'cap', capColor: '#3c6e51', top: '#d9d3c6', topShade: '#c7c1b3', bottom: '#56606a', bottomStyle: 'pants', bag: 'backpack', bagColor: '#a34d3f', build: 1.05, stature: 1.0, umbrella: '#274a3f' },
+  { skin: '#eec6a6', hair: '#57422e', hairStyle: 'cap', capColor: '#3c6e51', top: '#d9d3c6', topShade: '#c7c1b3', bottom: '#56606a', bottomStyle: 'pants', bag: 'backpack', bagColor: '#a34d3f', build: 1.05, stature: 1.0, umbrella: PASSENGER_UMBRELLAS[7] },
 ]
 
 const SHOE = '#1c1a18'
@@ -838,6 +839,7 @@ export class Passengers {
   setWet(wet: boolean) {
     if (wet === this.wet) return
     this.wet = wet
+    this.hybrid.setWet(wet)
     if (wet && !this.sheetWet) this.sheetWet = makePassengerSheet(true)
     this.uniforms.uMap.value = wet ? this.sheetWet! : this.sheetDry
   }

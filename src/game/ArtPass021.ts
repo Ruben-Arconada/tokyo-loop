@@ -3,10 +3,11 @@ import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import type { Track } from './Track'
 import { groundHeightAt } from './Track'
 import { STATIONS } from '../data/stations'
+import { PLATFORM_GEOM } from './City'
 import { worldStream } from './Rng'
 import { tagGroup } from './worldHash'
 import type { Season } from './Seasons'
-import { assertStaticArtBudget, type Art021StaticReport } from './art021Contract'
+import { enforceStaticArtBudget, type Art021StaticReport } from './art021Contract'
 
 /**
  * 0.2.1 visual vertical slice.
@@ -23,10 +24,10 @@ import { assertStaticArtBudget, type Art021StaticReport } from './art021Contract
 
 const SUSUKINO = 2
 const NISHIKI = 3
-const PLATFORM_INNER = 3
-const PLATFORM_OUTER = 14
+const PLATFORM_INNER = PLATFORM_GEOM.inner
+const PLATFORM_OUTER = PLATFORM_GEOM.outer
 const PLATFORM_MID = (PLATFORM_INNER + PLATFORM_OUTER) / 2
-const STATION_LEN = 70
+const STATION_LEN = PLATFORM_GEOM.len
 const BAY = 14
 
 const UNIT_BOX = new THREE.BoxGeometry(1, 1, 1)
@@ -625,7 +626,11 @@ export class ArtPass021 {
       designDrawsDay: meshes - this.snowMeshes.length,
       designDrawsWinter: meshes,
     }
-    assertStaticArtBudget(this.report)
+    enforceStaticArtBudget(
+      this.report,
+      import.meta.env.DEV,
+      (message) => console.error(`[ArtPass021] PRESUPUESTO EXCEDIDO; producción continúa: ${message}`),
+    )
     if (import.meta.env?.DEV) console.info(`[ArtPass021] ${JSON.stringify(this.report)}`)
   }
 

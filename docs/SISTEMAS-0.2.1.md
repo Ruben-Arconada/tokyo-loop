@@ -32,7 +32,7 @@ mundo; viven en el repo para que la intención no se pierda entre chats.
 
 ### Susukino
 
-![Objetivo visual de Susukino](art-0.2.1/susukino-target.png)
+![Objetivo visual de Susukino](art-0.2.1/susukino-target.webp)
 
 ![Implementación 0.2.1 de Susukino](art-0.2.1/susukino-implemented.png)
 
@@ -49,7 +49,7 @@ Prompt normalizado y reproducible:
 
 ### Nishiki
 
-![Objetivo visual de Nishiki](art-0.2.1/nishiki-target.png)
+![Objetivo visual de Nishiki](art-0.2.1/nishiki-target.webp)
 
 ![Implementación 0.2.1 de Nishiki](art-0.2.1/nishiki-implemented.png)
 
@@ -63,6 +63,10 @@ Prompt normalizado y reproducible:
 > profundas, celosías, noren, equipos domésticos, cercas y cableado. Paleta de
 > yeso cálido, madera, teja azul-gris y pequeñas luces ámbar. Sin personas, sin
 > texto nuevo y sin complejidad orgánica.
+
+Las dos referencias objetivo se conservan en WebP calidad 82, inspeccionadas
+a tamaño original: pasan de 3,4 MB en PNG a 187 KB combinadas. Las capturas
+`*-implemented` se mantienen en ~82 KB cada una.
 
 ### Decisión sobre `img2threejs`
 
@@ -104,6 +108,9 @@ Decisiones que importan:
 
 - Las estaciones codifican **cinco crujías de 14 m**; no se escaló una
   maqueta pequeña para fingir 70 m.
+- `PLATFORM_GEOM` en `City.ts` es la única fuente de `inner`, `outer` y
+  `len`: estación procedural, vertical autoral y los dos LOD de pasajeros
+  consumen esas mismas cotas. No se redeclaran 3/14/70.
 - Los barrios cercanos están a 15–23 m de vía; el skyline genérico se empuja
   a 54–96 m y vuelve a ser fondo.
 - En el tramo Susukino→Nishiki el skyline entrega su tier a `shitamachi` antes
@@ -121,6 +128,12 @@ Decisiones que importan:
   debe sombrear su propio andén.
 - Las superficies emisivas se limitan para conservar ámbar/cian/magenta bajo
   tone mapping; a 1,6 de intensidad se recortaban todas a blanco.
+- La estación procedural **no se borra entera** bajo Susukino/Nishiki:
+  aporta la losa, franjas, señales, lámparas y mobiliario compartidos. Su
+  cubierta plana se conserva deliberadamente como respaldo opaco bajo los
+  pliegues autorales: las superficies se cruzan, pero no son coplanares, así
+  que no hay z-fighting; en invierno su recolor blanco además evita rendijas
+  oscuras entre placas de nieve. Es sustrato medido, no geometría olvidada.
 
 La malla estática cambió deliberadamente y por eso se re-capturaron las cuatro
 referencias canónicas:
@@ -132,8 +145,30 @@ referencias canónicas:
 | otoño | `0c78532f` | `927deefa` |
 | invierno | `61da4b27` | `b6e46a69` |
 
-`?canon&checkWorld` ejecuta el mismo `__checkWorld()` y deja el resultado en
-`data-world-check`, útil para automatización con mundo JS aislado.
+### Reproducción independiente de esas ocho referencias
+
+No se recorren estaciones: se digiere **el mundo completo** cuatro veces, en
+orden `spring → summer → autumn → winter`, y al terminar se restaura
+`spring`. Procedimiento literal:
+
+1. Cierra servidores anteriores y ejecuta
+   `npm run dev -- --host 127.0.0.1 --port 5173 --strictPort`.
+2. En ese origen, borra datos previos una vez con
+   `localStorage.clear(); sessionStorage.clear()` y cierra la pestaña.
+3. Abre exactamente
+   `http://127.0.0.1:5173/?canon&checkWorld`.
+4. Espera a que `<html data-world-check>` contenga cuatro resultados y copia
+   **los valores calculados** de `semantic`/`structural`, no el veredicto.
+5. Recarga la misma URL: los ocho valores deben repetirse y todos los
+   `semanticOk`/`structuralOk` deben ser `true`.
+
+La captura original de 0.2.1 se hizo en un perfil ya usado, no en uno vacío;
+`?canon` ignoró las cuatro preferencias relevantes: semilla, estación del
+año, clima y frentes automáticos. El navegador integrado no estuvo
+disponible durante esta corrección para afirmar una segunda captura limpia:
+el procedimiento anterior queda como reproducción independiente pendiente,
+no como prueba ya ejecutada. Otros estados guardados — cámara, tutoriales,
+audio o récord— son dinámicos y no entran en el fingerprint.
 
 ## 4. Pasajeros híbridos — volumen cerca, sprite lejos
 
@@ -150,9 +185,11 @@ No se añadió una multitud decorativa encima de la jugable:
   pasajero como sprite.
 
 El kit tiene torso, cabeza, pelo, brazos, piernas y un pool de accesorios.
-Bolso, dos ojos y dos zapatos comparten ese último pool: más lectura sin una
-séptima llamada. Nueve combinaciones de cuerpo/abrigo/pelo rompen el maniquí
-único.
+Bolso, dos ojos, dos zapatos y el paraguas plegado de dos piezas comparten ese
+último pool: más lectura sin una séptima llamada. En lluvia o nieve, el mismo
+arquetipo conserva el mismo color de paraguas al cruzar el umbral de LOD;
+quien deliberadamente no lo llevaba como sprite tampoco lo recibe en 3D.
+Nueve combinaciones de cuerpo/abrigo/pelo rompen el maniquí único.
 
 Contrato móvil:
 
@@ -161,8 +198,8 @@ Contrato móvil:
 | Figuras cubiertas | 26 |
 | Distancia de modelo | 108 unidades |
 | Draws dentro del LOD | 6 |
-| Capacidad máxima | 8.632 tri |
-| Una estación típica (13 figuras) | 4.316 tri |
+| Capacidad máxima | 9.256 tri |
+| Una estación típica (13 figuras) | 4.628 tri |
 | A 300 m | 0 draws 3D; sprites originales |
 
 Las matrices activas se reempaquetan al principio de cada pool y `count` baja
@@ -205,24 +242,32 @@ ajusta primero 108 m y el pase de sombras, no se degrada la silueta.
 - `test/art021Contract.test.ts`: rompe por draw/tri/figuras y prueba 0/1/2/3
   estaciones activas en la frontera del LOD.
 - Los builders validan sus **informes reales post-merge** al arrancar; el test
-  no construye una escena falsa y pretende medirla.
+  no construye una escena falsa y pretende medirla. Una infracción lanza en
+  desarrollo; producción escribe `console.error` y conserva la escena
+  jugable, porque un exceso de presupuesto no justifica una pantalla blanca.
 - En dev, `<html data-art021>` expone esos dos informes reales.
 - En dev, `<html data-render-info>` actualiza cada 500 ms el último frame
   (estación/cámara/draws/tri/lines/points/sombra). No existe en producción.
 - El flujo `art021-backdrop` evita que los offsets de composición consuman
   sorteos de `city`; Susukino/Nishiki no rebarajan por accidente el resto.
 
-Verificación al cerrar:
+Verificación ejecutada al cerrar:
 
-- `npm test`: 44/44.
+- `npm test`: 47/47.
 - TypeScript estricto: limpio.
-- Build Vite: limpio.
+- `npm run build` de Vite: limpio antes y después del commit.
 - `?canon&checkWorld`: 4/4 semántico y estructural.
 - cámara CCTV de las dos estaciones: despejada.
-- PWA 0.2.1: worker válido y lista de bundles precacheados verificada. La
-  generación/nombre JS definitivos se anotan en el traspaso tras CI: ambos
-  incluyen el commit del build, así que hardcodearlos dentro del mismo commit
-  los dejaría obsoletos al crearlo.
+- PWA 0.2.1: `dist/sw.js` válido, lista de bundles precacheados comprobada,
+  CI con test+build verde, worker y bundle final descargados de Pages, y
+  producción abierta/iniciada hasta Nishiki.
+
+No se verificó:
+
+- iPhone o Android físicos;
+- fps sostenidos, temperatura o memoria en WebKit móvil;
+- PerfLog de invierno+nieve+noche con esta geometría;
+- funcionamiento offline en un dispositivo móvil tras matar la PWA.
 
 ## 7. Qué NO se debe interpretar
 
@@ -235,9 +280,18 @@ Verificación al cerrar:
 - Un `renderMs` bajo en iPhone no exonera a la GPU diferida; se mantiene la
   lectura de PerfLog v5 documentada en el ciclo anterior.
 
-## 8. Siguiente extensión recomendada
+## 8. Propuesta de extensión — NO es la hoja de ruta firmada
 
-Tras la vuelta física en iPhone:
+Lo siguiente es una propuesta técnica, subordinada a los cuatro pendientes
+que el panel dejó firmados. Van **antes** de extraer kits o abrir una tercera
+familia:
+
+1. tanda A/B de sectorización con cielo despejado y mediodía;
+2. PerfLog de invierno+nieve+noche, repetido con la geometría 0.2.1;
+3. cerrar la fracción de vía como fuente común de los sistemas por zona;
+4. audio por zonas consumiendo `zoneUrbanity`.
+
+Solo después:
 
 1. extraer `StationKit`/`DistrictKit` desde esta vertical, sin copiar
    `ArtPass021` treinta veces;

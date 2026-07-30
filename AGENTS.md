@@ -40,6 +40,12 @@ Reglas nacidas en 0.2.1:
 6. **No uses una referencia image-to-3D como escena terminada.** Puede alimentar
    un hero prop aislado; estación/barrio se construyen con módulos editables,
    anclados y fusionables. Criterio y prompts en `SISTEMAS-0.2.1.md`.
+7. **Una sola huella de andén.** `PLATFORM_GEOM` en `City.ts` gobierna
+   procedural, ArtPass y ambos LOD de pasajeros. No redeclares 3/14/70.
+8. **Presupuesto no significa pantalla blanca.** Los informes runtime lanzan
+   en desarrollo; producción registra la infracción y sigue. El test debe
+   ejercer `enforceStatic/HybridArtBudget`, la misma unidad que llama el
+   builder.
 
 ## ⚠️ El origen es COMPARTIDO con los demás proyectos (incidente 2026-07-28)
 
@@ -168,6 +174,10 @@ mundo estático, ~110 grupos sin etiquetar) están **cerrados**. El contrato hoy
 - **`?canon&checkWorld`** ejecuta el mismo chequeo y escribe el resultado en
   `data-world-check`; `data-art021` y `data-render-info` exponen en dev el
   presupuesto real post-merge y el último frame para auditorías automatizadas.
+  Receta independiente literal: servidor en `127.0.0.1:5173`, vaciar
+  localStorage/sessionStorage, abrir
+  `http://127.0.0.1:5173/?canon&checkWorld` dos veces. Mide el mundo entero en
+  `spring→summer→autumn→winter`, no «cuatro estaciones» ferroviarias.
 - **`npm test`** ejecuta las propiedades de partición sin navegador
   (`test/worldHash.test.ts`, runner nativo de node, sin dependencias nuevas):
   las mismas instancias en 1, 2 y 8 sectores dan un solo hash, contiguas o

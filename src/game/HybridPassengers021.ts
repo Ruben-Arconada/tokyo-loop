@@ -2,9 +2,10 @@ import * as THREE from 'three'
 import {
   ART021_STATIONS,
   art021ModelMask,
-  assertHybridArtBudget,
+  enforceHybridArtBudget,
   type Art021HybridReport,
 } from './art021Contract'
+import { PASSENGER_UMBRELLAS, passengerUmbrellaColor } from './passengerWardrobe'
 
 /**
  * The close-range half of the 0.2.1 crowd.
@@ -101,6 +102,7 @@ export class HybridPassengers021 {
   private representationDirty = true
   private layoutMask = -1
   private time = 0
+  private wet = false
 
   constructor(
     scene: THREE.Scene,
@@ -158,10 +160,10 @@ export class HybridPassengers021 {
     this.hair = makeMesh(new THREE.SphereGeometry(0.5, 8, 5, 0, Math.PI * 2, 0, Math.PI * 0.62), count, 0.92)
     this.arms = makeMesh(new THREE.CylinderGeometry(0.5, 0.5, 1, 6), count * 2)
     this.legs = makeMesh(new THREE.CylinderGeometry(0.5, 0.5, 1, 6), count * 2)
-    // One accessory pool carries bag + two eyes + two shoes per figure. That
-    // turns the old mannequin silhouette into a readable little person at
-    // platform distance without paying a seventh draw.
-    this.bags = makeMesh(new THREE.BoxGeometry(1, 1, 1), count * 5)
+    // One accessory pool carries bag + two eyes + two shoes + the two-part
+    // furled umbrella. Wet clothing therefore crosses the sprite/3D LOD
+    // without paying a seventh draw.
+    this.bags = makeMesh(new THREE.BoxGeometry(1, 1, 1), count * 7)
     this.meshes = [this.torso, this.heads, this.hair, this.arms, this.legs, this.bags]
 
     const dynamicGroup = new THREE.Group()
@@ -177,8 +179,13 @@ export class HybridPassengers021 {
       draws: this.meshes.length,
       triangles: this.meshes.reduce((sum, mesh) => sum + trianglesOf(mesh), 0),
       stations: SLICE_STATIONS,
+      wetUmbrellas: true,
     }
-    assertHybridArtBudget(this.report)
+    enforceHybridArtBudget(
+      this.report,
+      import.meta.env.DEV,
+      (message) => console.error(`[HybridPassengers021] PRESUPUESTO EXCEDIDO; producción continúa: ${message}`),
+    )
     if (import.meta.env?.DEV) console.info(`[HybridPassengers021] ${JSON.stringify(this.report)}`)
   }
 
@@ -192,11 +199,13 @@ export class HybridPassengers021 {
     this.torso.setColorAt(index, color(TOP[row]))
     this.heads.setColorAt(index, color(SKIN[row]))
     this.hair.setColorAt(index, color(HAIR[row]))
-    this.bags.setColorAt(index * 5, color(BAGS[row]))
-    this.bags.setColorAt(index * 5 + 1, color('#171513'))
-    this.bags.setColorAt(index * 5 + 2, color('#171513'))
-    this.bags.setColorAt(index * 5 + 3, color(BOTTOM[row]).multiplyScalar(0.55))
-    this.bags.setColorAt(index * 5 + 4, color(BOTTOM[row]).multiplyScalar(0.55))
+    this.bags.setColorAt(index * 7, color(BAGS[row]))
+    this.bags.setColorAt(index * 7 + 1, color('#171513'))
+    this.bags.setColorAt(index * 7 + 2, color('#171513'))
+    this.bags.setColorAt(index * 7 + 3, color(BOTTOM[row]).multiplyScalar(0.55))
+    this.bags.setColorAt(index * 7 + 4, color(BOTTOM[row]).multiplyScalar(0.55))
+    this.bags.setColorAt(index * 7 + 5, color(PASSENGER_UMBRELLAS[row] ?? '#000000'))
+    this.bags.setColorAt(index * 7 + 6, color('#322d28'))
     this.arms.setColorAt(index * 2, color(TOP[row]))
     this.arms.setColorAt(index * 2 + 1, color(TOP[row]))
     this.legs.setColorAt(index * 2, color(BOTTOM[row]))
@@ -211,6 +220,10 @@ export class HybridPassengers021 {
     const dirty = this.representationDirty
     this.representationDirty = false
     return dirty
+  }
+
+  setWet(wet: boolean) {
+    this.wet = wet
   }
 
   private write(
@@ -324,12 +337,19 @@ export class HybridPassengers021 {
       this.write(this.arms, drawIndex * 2 + 1, shoulder, 1.02 * s, 0, 0.14 * build * s, 0.61 * s, 0.14 * s, armR, 0, point ? -0.18 : 0, visible)
 
       const hasBag = row < HAS_BAG.length && HAS_BAG[row]
-      const accessory = drawIndex * 5
+      const accessory = drawIndex * 7
       this.write(this.bags, accessory, 0.38 * build * s, 0.75 * s, 0.06, 0.28 * s, 0.42 * s, 0.18 * s, 0, 0, 0, visible * (hasBag ? 1 : 0))
       this.write(this.bags, accessory + 1, -0.09 * s, 1.52 * s, 0.32 * s, 0.045 * s, 0.045 * s, 0.025 * s, bow, 0, 0, visible)
       this.write(this.bags, accessory + 2, 0.09 * s, 1.52 * s, 0.32 * s, 0.045 * s, 0.045 * s, 0.025 * s, bow, 0, 0, visible)
       this.write(this.bags, accessory + 3, -hip, 0.08 * s, 0.09 * s, 0.2 * build * s, 0.14 * s, 0.34 * s, 0, 0, 0, visible)
       this.write(this.bags, accessory + 4, hip, 0.08 * s, 0.09 * s, 0.2 * build * s, 0.14 * s, 0.34 * s, 0, 0, 0, visible)
+      const hasUmbrella = passengerUmbrellaColor(row, this.wet) !== null
+      const umbrellaSide = hasBag ? -1 : 1
+      const umbrellaVisible = visible * (hasUmbrella ? 1 : 0)
+      // Furled under the canopy, matching the sprite sheet: wrapped canopy
+      // plus the darker shaft/handle, carried in the free hand.
+      this.write(this.bags, accessory + 5, umbrellaSide * 0.46 * s, 0.58 * s, 0.02, 0.11 * s, 0.72 * s, 0.11 * s, 0, 0, umbrellaSide * 0.1, umbrellaVisible)
+      this.write(this.bags, accessory + 6, umbrellaSide * 0.49 * s, 0.28 * s, 0.02, 0.035 * s, 0.38 * s, 0.035 * s, 0, 0, umbrellaSide * 0.1, umbrellaVisible)
       if (layoutChanged) this.paint(drawIndex, figure)
       drawIndex++
     }
@@ -342,7 +362,7 @@ export class HybridPassengers021 {
     this.hair.count = drawIndex
     this.arms.count = drawIndex * 2
     this.legs.count = drawIndex * 2
-    this.bags.count = drawIndex * 5
+    this.bags.count = drawIndex * 7
     if (drawIndex > 0) {
       for (const mesh of this.meshes) mesh.instanceMatrix.needsUpdate = true
     }

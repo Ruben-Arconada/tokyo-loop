@@ -31,6 +31,8 @@ export interface Art021HybridReport {
   draws: number
   triangles: number
   stations: readonly number[]
+  /** Close-range figures keep the wet-day wardrobe when their sprite disappears. */
+  wetUmbrellas: boolean
 }
 
 /** Pure twin of the runtime LOD decision, kept here so the mobile contract can mutate it in Node. */
@@ -55,6 +57,9 @@ export function assertStaticArtBudget(report: Art021StaticReport) {
 }
 
 export function assertHybridArtBudget(report: Art021HybridReport) {
+  if (!report.wetUmbrellas) {
+    throw new Error('HybridPassengers021: el LOD 3D pierde los paraguas de día mojado')
+  }
   if (report.figures !== ART021_BUDGET.hybridFigures) {
     throw new Error(`HybridPassengers021: ${report.figures} figuras != ${ART021_BUDGET.hybridFigures}`)
   }
@@ -64,4 +69,42 @@ export function assertHybridArtBudget(report: Art021HybridReport) {
   if (report.triangles > ART021_BUDGET.hybridTriangles) {
     throw new Error(`HybridPassengers021: ${report.triangles} triángulos > ${ART021_BUDGET.hybridTriangles}`)
   }
+}
+
+/**
+ * Runtime builders know their REAL post-merge cost; unit tests do not. Keep
+ * that valuable check without turning an art-budget regression into a blank
+ * production screen: development fails loudly, production reports and keeps
+ * the last playable scene alive.
+ */
+function enforceArtBudget(
+  assertion: () => void,
+  crashOnViolation: boolean,
+  reportViolation: (message: string) => void = console.error,
+) {
+  try {
+    assertion()
+    return true
+  } catch (error) {
+    if (crashOnViolation) throw error
+    const message = error instanceof Error ? error.message : String(error)
+    reportViolation(message)
+    return false
+  }
+}
+
+export function enforceStaticArtBudget(
+  report: Art021StaticReport,
+  crashOnViolation: boolean,
+  reportViolation?: (message: string) => void,
+) {
+  return enforceArtBudget(() => assertStaticArtBudget(report), crashOnViolation, reportViolation)
+}
+
+export function enforceHybridArtBudget(
+  report: Art021HybridReport,
+  crashOnViolation: boolean,
+  reportViolation?: (message: string) => void,
+) {
+  return enforceArtBudget(() => assertHybridArtBudget(report), crashOnViolation, reportViolation)
 }

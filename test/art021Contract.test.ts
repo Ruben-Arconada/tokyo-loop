@@ -6,6 +6,8 @@ import {
   art021ModelMask,
   assertHybridArtBudget,
   assertStaticArtBudget,
+  enforceHybridArtBudget,
+  enforceStaticArtBudget,
   type Art021HybridReport,
   type Art021StaticReport,
 } from '../src/game/art021Contract.ts'
@@ -21,8 +23,9 @@ const STATIC_OK: Art021StaticReport = {
 const HYBRID_OK: Art021HybridReport = {
   figures: 26,
   draws: 6,
-  triangles: 8_632,
+  triangles: 9_256,
   stations: [2, 3],
+  wetUmbrellas: true,
 }
 
 test('el contrato acepta los informes reales de la rebanada 0.2.1', () => {
@@ -39,6 +42,26 @@ test('la multitud híbrida no puede crecer en silencio', () => {
   assert.throws(() => assertHybridArtBudget({ ...HYBRID_OK, figures: 25 }), /figuras/)
   assert.throws(() => assertHybridArtBudget({ ...HYBRID_OK, draws: ART021_BUDGET.hybridDraws + 1 }), /draws/)
   assert.throws(() => assertHybridArtBudget({ ...HYBRID_OK, triangles: ART021_BUDGET.hybridTriangles + 1 }), /triángulos/)
+  assert.throws(() => assertHybridArtBudget({ ...HYBRID_OK, wetUmbrellas: false }), /paraguas/)
+})
+
+test('un presupuesto excedido rompe dev pero producción avisa y conserva la escena', () => {
+  const brokenHybrid = {
+    ...HYBRID_OK,
+    triangles: ART021_BUDGET.hybridTriangles + 1,
+  }
+  const brokenStatic = {
+    ...STATIC_OK,
+    triangles: ART021_BUDGET.staticTriangles + 1,
+  }
+  assert.throws(() => enforceHybridArtBudget(brokenHybrid, true), /triángulos/)
+  assert.throws(() => enforceStaticArtBudget(brokenStatic, true), /triángulos/)
+
+  const warnings: string[] = []
+  assert.equal(enforceHybridArtBudget(brokenHybrid, false, (message) => { warnings.push(message) }), false)
+  assert.equal(enforceStaticArtBudget(brokenStatic, false, (message) => { warnings.push(message) }), false)
+  assert.equal(warnings.length, 2)
+  assert.ok(warnings.every((message) => /triángulos/.test(message)))
 })
 
 test('el LOD devuelve los sprites a 300 m y activa solo la estación cercana', () => {

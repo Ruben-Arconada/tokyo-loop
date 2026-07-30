@@ -88,8 +88,9 @@ export const WORLD_REFERENCES: Record<Season, SeasonReference> = {
 // ————————————————————————————————————————————————————————————————
 
 export const CAPTURE_RECIPE =
-  'Carga limpia con ?canon en dev y ejecuta __checkWorld() en la consola. ' +
-  'Para RE-capturar tras un cambio deliberado del mundo, copia la tabla que imprime en worldReferences.ts.'
+  'Arranca dev en 127.0.0.1:5173, vacía localStorage/sessionStorage y abre ' +
+  'http://127.0.0.1:5173/?canon&checkWorld. El mundo completo se mide en ' +
+  'spring→summer→autumn→winter; repite la carga y copia los ocho valores calculados a worldReferences.ts.'
 
 export interface ReferenceResult {
   season: Season

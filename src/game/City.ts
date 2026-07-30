@@ -53,7 +53,10 @@ const ROOF_WIDTH = ROOF_OUTER - ROOF_INNER
 const COLUMN_ZS = [-28, -14, 0, 14, 28]
 const LAMP_ZS = [-28, -14, 0, 14, 28]
 
-/** Platform footprint shared with the sprite passengers (Passengers.ts), so people always stand on the actual slab. */
+/**
+ * Single platform footprint for procedural stations, authored 0.2.1 canopies
+ * and both passenger LODs. Changing the slab here must move all three.
+ */
 export const PLATFORM_GEOM = {
   top: PLATFORM_TOP,
   inner: PLATFORM_INNER,
