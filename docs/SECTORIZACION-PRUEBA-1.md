@@ -114,3 +114,40 @@ Cuatro poses del anillo, escenario canónico, 1280×720, vista de cabina.
 
 Y en consola: `__game.sectorReport` dice qué se partió y qué se saltó y por qué;
 `__semanticHash().total` tiene que salir **`494d8caa`** en los cuatro casos.
+
+---
+
+## El botón de la sonda ahora ES esta prueba (2026-07-30)
+
+Decisión de Rubén: el botón «Prueba de tirones» del menú de pausa cambia de
+trabajo. Su hipótesis original está cerrada (los tirones eran
+`speechSynthesis`, arreglado y publicado), así que ahora se llama
+**«Prueba A/B de sectores»** y responde a la pregunta abierta: ¿compra tiempo
+de frame la sectorización EN EL MÓVIL?
+
+**Cómo funciona**: los mismos 8 tramos Kiyomizu ↔ Fushimi Inari de siempre,
+pero **alternando por tramo** — impares con el anillo entero, pares
+sectorizado a 6. No son dos vueltas separadas a propósito: este teléfono pasa
+de 58,8 fps a 43-44 en seis minutos con MENOS carga (estrangulamiento térmico
+medido), así que una vuelta A y una vuelta B compararían un chip frío contra
+uno caliente. Intercalado, la deriva cae igual sobre las dos condiciones.
+
+**Qué sale en el log (PerfLog v5)**: un objeto `segments` con una fila por
+condición — frames, media, p95, máximo, over17/over33:
+
+```json
+"segments": {
+  "sectors:off": { "frames": 3876, "meanMs": …, "p95Ms": …, "over17": … },
+  "sectors:on":  { "frames": 3288, "meanMs": …, "p95Ms": …, "over17": … }
+}
+```
+
+El interruptor (`setSectorsEnabled`) SEPARA del árbol la copia que no toca —
+no la esconde: `visible = false` dejaba las dos copias en el grafo y el hash
+semántico contaba cada instancia dos veces (lo cazó el test de node al
+momento). Al terminar o cancelar la sonda, el mundo vuelve SIEMPRE al estado
+entero.
+
+**Protocolo para Rubén**: quitar el silencio → menú de pausa → «🧪 Prueba A/B
+de sectores» → esperar ~2 min → «Copiar log» → pegarlo en el chat. Igual que
+siempre.

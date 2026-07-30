@@ -32,7 +32,7 @@ export interface UICallbacks {
   onTeleport: (stationIndex: number) => void
   /** Frame-time recording: start/stop, hand over the log, throw it away. */
   onPerfToggle: () => void
-  /** The automated hitch probe: the game drives the whole diagnostic itself. */
+  /** The automated probe: the game drives the whole diagnostic itself. Today it A/Bs the ring sectorisation; it used to hunt the per-station hitch, which is closed. */
   onProbeStart: () => void
   onPerfExport: () => string
   onPerfClear: () => void
@@ -674,7 +674,7 @@ export class UI {
         <div class="perf-block">
           <span class="perf-title">Rendimiento</span>
           <button class="btn-perf">Medir rendimiento</button>
-          <button class="btn-probe">🧪 Prueba de tirones (auto, ~2 min)</button>
+          <button class="btn-probe">🧪 Prueba A/B de sectores (auto, ~2 min)</button>
           <p class="perf-headline">Sin datos todavía.</p>
           <div class="perf-actions hidden">
             <button class="btn-perf-copy">Copiar log</button>

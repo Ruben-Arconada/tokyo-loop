@@ -186,6 +186,16 @@ function formatHeadline(s: PerfSummary): string {
 
 export class PerfLog {
   recording = false
+  /**
+   * A/B segmentation: frames are ALSO aggregated under the current segment
+   * label. Set by whoever drives the experiment (the probe flips it between
+   * 'sectors:on' and 'sectors:off' each leg); null books frames nowhere extra.
+   * Interleaved legs land in the same two buckets however many times the
+   * condition flips, which is the whole point — the thermal drift this phone
+   * suffers falls on both alike.
+   */
+  private segment: string | null = null
+  private segments = new Map<string, { frames: number; totalMs: number; maxMs: number; over17: number; over33: number; hist: Uint32Array }>()
   /** Frames captured in the current recording — 0 means there is nothing to hand over yet. */
   frames = 0
   private hist = new Uint32Array(BUCKETS + 1)
@@ -318,6 +328,20 @@ export class PerfLog {
     this.texUploadsSeen = s.texUploads
     if (s.shadowPass) this.shadowFrames++
 
+    if (this.segment) {
+      let seg = this.segments.get(this.segment)
+      if (!seg) {
+        seg = { frames: 0, totalMs: 0, maxMs: 0, over17: 0, over33: 0, hist: new Uint32Array(BUCKETS + 1) }
+        this.segments.set(this.segment, seg)
+      }
+      seg.frames++
+      seg.totalMs += s.frameMs
+      if (s.frameMs > seg.maxMs) seg.maxMs = s.frameMs
+      if (s.frameMs > 17) seg.over17++
+      if (s.frameMs > 33) seg.over33++
+      seg.hist[bucket]++
+    }
+
     this.binFrames++
     this.binMs += s.frameMs
     if (s.frameMs > this.binMax) this.binMax = s.frameMs
@@ -371,6 +395,10 @@ export class PerfLog {
   }
 
   /** Notes that a game event happened right now (cheap: two array writes). */
+  setSegment(label: string | null) {
+    this.segment = label
+  }
+
   mark(tag: string) {
     if (!this.recording) return
     this.markHead = (this.markHead + 1) % MARK_RING
@@ -569,6 +597,32 @@ export class PerfLog {
         .slice()
         .sort((a, b) => Math.max(b[1], b[2]) - Math.max(a[1], a[2]))
         .slice(0, MAX_HITCHES),
+      // The A/B verdict, one entry per condition: frames, mean ms, p95, max,
+      // and the over-17/over-33 counts. Interleaved leg by leg, so the two
+      // rows lived through the same thermal history and CAN be compared —
+      // which is the entire reason the probe exists in its current form.
+      segments: Object.fromEntries(
+        [...this.segments.entries()].map(([label, g]) => {
+          let acc = 0
+          let p95 = 0
+          const target = g.frames * 0.95
+          for (let i = 0; i < g.hist.length; i++) {
+            acc += g.hist[i]
+            if (acc >= target) {
+              p95 = (i + 0.5) * BUCKET_MS
+              break
+            }
+          }
+          return [label, {
+            frames: g.frames,
+            meanMs: Math.round((g.totalMs / Math.max(1, g.frames)) * 100) / 100,
+            p95Ms: Math.round(p95 * 10) / 10,
+            maxMs: Math.round(g.maxMs),
+            over17: g.over17,
+            over33: g.over33,
+          }]
+        }),
+      ),
       // tag: [veces, msTotal, msPeor] — el bloqueo síncrono medido EN SU MÓVIL.
       costs: Object.fromEntries(
         [...this.costs.entries()].sort((a, b) => b[1][1] - a[1][1]).map(([k, v]) => [k, v.map((n) => Math.round(n * 10) / 10)]),

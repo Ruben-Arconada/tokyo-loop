@@ -8,7 +8,7 @@ import { Passengers } from './Passengers'
 import { Precipitation } from './Precipitation'
 import { TrainConsist, CAB_OFFSET } from './TrainConsist'
 import { CabInterior } from './CabInterior'
-import { requestedSectors, sectorizeWorld, type SectorizeReport } from './sectorize'
+import { requestedSectors, sectorizeWorld, setSectorsEnabled, type SectorizeReport } from './sectorize'
 import type { CameraMode } from './cameraModes'
 import { PerfLog, setActivePerfLog, perfMark, perfPhase } from './PerfLog'
 import { PassengerFlow, TRAIN_CAPACITY } from './PassengerFlow'
@@ -1742,6 +1742,25 @@ export class Game {
 
   /** Kiyomizu and Fushimi Inari, alternating: two stations far enough apart to share nothing. */
   private static readonly PROBE_STATIONS = [9, 18]
+  /**
+   * The button's job CHANGED with the sectorisation experiment (Rubén's call).
+   * The per-station hitch it used to hunt is closed — it was speechSynthesis,
+   * fixed and shipped — so the probe now answers the question that is open:
+   * does cutting the ring into sectors buy frame time ON THIS PHONE?
+   *
+   * A/B INTERLEAVED, leg by leg: odd legs drive with the ring whole, even legs
+   * with it sectorised, alternating within one run. Two separate runs would be
+   * worthless here — this phone throttles from 58.8 fps to 43-44 in six
+   * minutes with LESS on screen, so condition B would always run on a hotter
+   * chip than condition A and the lap would measure the thermals. Interleaving
+   * folds the drift equally into both.
+   *
+   * The old protocol's own rules still carry: alternate two stations so the
+   * destination roll rebuilds, stay in the cab, reach each announcement, never
+   * pause. `perfMark('sectors:on'/'sectors:off')` stamps every leg so the log
+   * splits cleanly by condition.
+   */
+  private static readonly PROBE_AB = true
   /** Four visits each — the first two arrive cold, the rest with everything already warm. */
   private static readonly PROBE_LEGS = 8
   /** After the announcement fires, keep going: the speech itself starts a couple of seconds later. */
@@ -1752,7 +1771,7 @@ export class Game {
   /** Frames to draw in the cab BEFORE recording starts — see `arming` in startProbe. */
   private static readonly PROBE_ARM_FRAMES = 3
 
-  private probe: { leg: number; linger: number; legTime: number; arming: number; cameraBefore: CameraMode } | null = null
+  private probe: { leg: number; linger: number; legTime: number; arming: number; cameraBefore: CameraMode; abReady: boolean } | null = null
 
   /**
    * Runs the whole diagnostic by itself: forces the cab view, starts the
@@ -1768,7 +1787,10 @@ export class Game {
     // view, the cab's own textures and shaders reach the GPU on its first
     // draw, and starting the log before that would open the lap with a spike
     // that belongs to the camera switch and not to any station.
-    this.probe = { leg: -1, linger: 0, legTime: 0, arming: Game.PROBE_ARM_FRAMES, cameraBefore }
+    // The A/B needs both worlds on hand. Built lazily HERE, not at startup:
+    // the pass costs a couple hundred ms and only the probe wants it.
+    const abReady = Game.PROBE_AB && (this.sectorReport.pairs.length > 0 || (this.sectorReport = sectorizeWorld(this.scene, { sectors: 6 })).pairs.length > 0)
+    this.probe = { leg: -1, linger: 0, legTime: 0, arming: Game.PROBE_ARM_FRAMES, cameraBefore, abReady }
   }
 
   private nextProbeLeg() {
@@ -1780,11 +1802,23 @@ export class Game {
     }
     p.linger = Game.PROBE_LINGER_SECONDS
     p.legTime = 0
+    // Flip BEFORE the teleport: the jump already absorbs a discontinuity, so
+    // the swap's own cost lands in the between-legs seam and not mid-drive.
+    if (p.abReady) {
+      const sectorsOn = p.leg % 2 === 1
+      setSectorsEnabled(this.sectorReport, sectorsOn)
+      // The mark annotates hitches; the SEGMENT is what splits the frame
+      // statistics into the log's A and B rows.
+      const label = sectorsOn ? 'sectors:on' : 'sectors:off'
+      perfMark(label)
+      this.perf.setSegment(label)
+    }
     this.teleportToStation(Game.PROBE_STATIONS[p.leg % Game.PROBE_STATIONS.length])
     // Full power: the leg is 300 units and we want it driven, not crawled.
     this.train.setNotch(MAX_NOTCH)
     this.controls.syncNotch(MAX_NOTCH)
-    this.ui.showProbeToast(`Prueba de tirones${this.muted ? ' (SILENCIADA)' : ''} — tramo ${p.leg + 1} de ${Game.PROBE_LEGS}`)
+    const abLabel = p.abReady ? (p.leg % 2 === 1 ? ' · sectores ON' : ' · sectores OFF') : ''
+    this.ui.showProbeToast(`Prueba A/B sectores${this.muted ? ' (SILENCIADA)' : ''} — tramo ${p.leg + 1} de ${Game.PROBE_LEGS}${abLabel}`)
   }
 
   private updateProbe(dt: number) {
@@ -1833,6 +1867,12 @@ export class Game {
     this.train.setNotch(0)
     this.controls.syncNotch(0)
     if (this.perf.recording) this.togglePerfRecording()
+    // However the run ended, the world goes back to WHOLE: the sectorised
+    // copy is a measurement rig, not (yet) how the game ships.
+    if (p.abReady) {
+      setSectorsEnabled(this.sectorReport, false)
+      this.perf.setSegment(null)
+    }
     this.setCameraMode(p.cameraBefore)
   }
 

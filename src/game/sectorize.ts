@@ -48,6 +48,20 @@ export interface SectorizeOptions {
 
 export interface SectorizeReport {
   sectors: number
+  /**
+   * Original pool and the pieces cut from it, kept so the whole thing can be
+   * flipped at RUNTIME.
+   *
+   * The first version removed and disposed the originals, which made the
+   * experiment a reload away from its own control. That is fatal on the device
+   * that has to judge it: this phone throttles hard — 58.8 fps in the first two
+   * minutes against 43-44 by minute six, with LESS on screen — so an A run and
+   * a B run taken minutes apart compare a cold phone against a hot one and
+   * measure the thermals, not the change. Holding both lets a single probe
+   * interleave the conditions leg by leg, which is the only way the comparison
+   * survives the drift.
+   */
+  pairs: { parent: THREE.Object3D; original: THREE.InstancedMesh; pieces: THREE.InstancedMesh[] }[]
   /** Pools that were cut, and into how many live pieces. */
   split: { group: string; instances: number; pieces: number }[]
   /** Pools left whole, with the reason. */
@@ -71,7 +85,7 @@ export function sectorizeWorld(scene: THREE.Scene, opts: SectorizeOptions): Sect
   const minInstances = opts.minInstances ?? 24
   const minSpanRadius = opts.minSpanRadius ?? 600
 
-  const report: SectorizeReport = { sectors, split: [], skipped: [], meshesBefore: 0, meshesAfter: 0, instancesMoved: 0 }
+  const report: SectorizeReport = { sectors, pairs: [], split: [], skipped: [], meshesBefore: 0, meshesAfter: 0, instancesMoved: 0 }
   if (sectors === 1) return report
 
   // Collect first: replacing meshes while traversing the tree they live in is
@@ -136,6 +150,7 @@ export function sectorizeWorld(scene: THREE.Scene, opts: SectorizeOptions): Sect
     for (let i = 0; i < n; i++) buckets[sectorOf(mats[i * 16 + 12], mats[i * 16 + 14], sectors)].push(i)
 
     const parent = mesh.parent!
+    const made: THREE.InstancedMesh[] = []
     let pieces = 0
     for (let s = 0; s < sectors; s++) {
       const idx = buckets[s]
@@ -162,13 +177,17 @@ export function sectorizeWorld(scene: THREE.Scene, opts: SectorizeOptions): Sect
       piece.userData = { ...mesh.userData }
       piece.name = mesh.name ? `${mesh.name}#${s}` : ''
       parent.add(piece)
+      made.push(piece)
       pieces++
     }
 
+    // The original is DETACHED, not hidden. Hiding it left it in the scene
+    // graph, and the world fingerprint walks the graph — so every instance got
+    // counted twice and the semantic hash moved, which the Node test caught
+    // immediately. Whatever is in the tree IS the world; the spare copy waits
+    // outside it.
     parent.remove(mesh)
-    // Geometry and material are shared with the pieces — disposing them here
-    // would take the pieces down with them. Only the per-instance buffers die.
-    mesh.dispose()
+    report.pairs.push({ parent, original: mesh, pieces: made })
 
     report.split.push({ group, instances: n, pieces })
     report.meshesAfter += pieces
@@ -184,4 +203,25 @@ export function requestedSectors(): number {
   if (!raw) return 1
   const n = Number.parseInt(raw, 10)
   return Number.isFinite(n) && n >= 1 && n <= 32 ? n : 1
+}
+
+/**
+ * Flips between the sectorised pieces and the whole pools they came from.
+ *
+ * ⚠️ For MEASUREMENT only, and only within one scenario. The seasonal repaint
+ * holds references to the original meshes, so a season change while the pieces
+ * are live would recolour pools that are not the ones being drawn. The probe
+ * runs in the canonical scenario with automatic weather off, which is exactly
+ * why that is safe there and nowhere else yet.
+ */
+export function setSectorsEnabled(report: SectorizeReport, on: boolean) {
+  for (const { parent, original, pieces } of report.pairs) {
+    if (on) {
+      parent.remove(original)
+      for (const p of pieces) if (!p.parent) parent.add(p)
+    } else {
+      for (const p of pieces) parent.remove(p)
+      if (!original.parent) parent.add(original)
+    }
+  }
 }

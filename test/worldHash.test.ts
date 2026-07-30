@@ -10,7 +10,7 @@ import {
   CANONICAL_SCENARIO,
   type WorldScenario,
 } from '../src/game/worldHash.ts'
-import { sectorizeWorld } from '../src/game/sectorize.ts'
+import { sectorizeWorld, setSectorsEnabled } from '../src/game/sectorize.ts'
 
 // ————————————————————————————————————————————————————————————————
 // The contract the ring sectorisation is about to lean on, as a test instead
@@ -301,4 +301,34 @@ test('un pool que ya es local no se parte: pagaría draw calls sin ganar culling
   const report = sectorizeWorld(scene, { sectors: 8 })
   assert.equal(report.split.length, 0)
   assert.match(report.skipped[0].reason, /ya es local/)
+})
+
+test('el interruptor A/B restaura el mundo EXACTO en cada vuelta', () => {
+  const ringPool = (group: string, n: number) => {
+    const mesh = new THREE.InstancedMesh(BOX, MAT, n)
+    const o = new THREE.Object3D()
+    for (let i = 0; i < n; i++) {
+      const a = (i / n) * Math.PI * 2
+      o.position.set(Math.cos(a) * 4000, 0, Math.sin(a) * 4000)
+      o.updateMatrix()
+      mesh.setMatrixAt(i, o.matrix)
+    }
+    mesh.instanceMatrix.needsUpdate = true
+    return tagGroup(mesh, group)
+  }
+  const scene = sceneOf(ringPool('houses', 96))
+  const whole = semanticFingerprint(scene, CANONICAL_SCENARIO)
+
+  const report = sectorizeWorld(scene, { sectors: 8 })
+  const sectored = semanticFingerprint(scene, CANONICAL_SCENARIO)
+  assert.equal(sectored.total, whole.total, 'sectorizado, el semántico debe ser el mismo')
+
+  // La sonda A/B va a darle al interruptor una vez por tramo: dieciséis
+  // conmutaciones tienen que dejar exactamente el mismo mundo cada vez.
+  for (let i = 0; i < 8; i++) {
+    setSectorsEnabled(report, false)
+    assert.equal(semanticFingerprint(scene, CANONICAL_SCENARIO).total, whole.total, `apagado, vuelta ${i}`)
+    setSectorsEnabled(report, true)
+    assert.equal(semanticFingerprint(scene, CANONICAL_SCENARIO).total, whole.total, `encendido, vuelta ${i}`)
+  }
 })
