@@ -141,9 +141,10 @@ const CCTV_YAW_LIMIT = 0.62
 const CCTV_PITCH_MIN = -0.28
 const CCTV_PITCH_MAX = 0.2
 /** Security lenses are wide; the game's normal view is not. */
-// Security lenses are wide. Was 84; Rubén asked for it to read wider still
-// (2026-07-30), same request that added the desaturation + grain in the CSS.
-const CCTV_FOV = 88
+// Security lenses are wide. Was 84, then 88 — Rubén could not tell the
+// difference from the cab's 68 at 88, so it now overshoots into clearly-a-
+// cheap-wide-lens territory (2026-07-30).
+const CCTV_FOV = 95
 const NORMAL_FOV = 68
 /** Shared read-only up vector for camera solves — never mutated. */
 const WORLD_UP = new THREE.Vector3(0, 1, 0)
@@ -943,9 +944,11 @@ export class Game {
       return
     }
     if (this.cameraMode === 'platform') {
-      // Same camera-not-head convention as the exterior view for the horizontal axis.
+      // Same camera-not-head convention as the exterior view for the horizontal
+      // axis. The vertical one is the OPPOSITE sign by Rubén's decision
+      // (2026-07-30, pending since 0.1.9): finger down tilts the lens down.
       this.platYaw = THREE.MathUtils.clamp(this.platYaw + dx * 0.0035, -CCTV_YAW_LIMIT, CCTV_YAW_LIMIT)
-      this.platPitch = THREE.MathUtils.clamp(this.platPitch - dy * 0.003, CCTV_PITCH_MIN, CCTV_PITCH_MAX)
+      this.platPitch = THREE.MathUtils.clamp(this.platPitch + dy * 0.003, CCTV_PITCH_MIN, CCTV_PITCH_MAX)
       if (!this.running) this.renderOnce()
       return
     }
