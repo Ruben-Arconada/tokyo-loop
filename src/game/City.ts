@@ -110,6 +110,8 @@ export class City {
   private canopyPools: SeasonalPool[] = []
   /** The city's own draw sequence — see Rng.ts. Vegetation cannot move a tower. */
   private rngCity = worldStream('city')
+  /** 0.2.1 composition overrides must not reshuffle the rest of `city`. */
+  private rngArt021Backdrop = worldStream('art021-backdrop')
 
   constructor(scene: THREE.Scene, track: Track) {
     this.scene = scene
@@ -181,11 +183,13 @@ export class City {
 
     for (let s = 0; s < N; s++) {
       const station = STATIONS[s]
-      const group = this.themeGroups.get(station.theme.district)!
+      const nextStation = STATIONS[(s + 1) % N]
       // The theme palette doubles as each district's identity, but raw it
       // multiplies down to near-black against the facade texture — lift it
       // so daylight shows actual color instead of silhouettes.
-      group.material.color.setHex(station.theme.buildingColor).multiplyScalar(1.75)
+      this.themeGroups.get(station.theme.district)!.material.color
+        .setHex(station.theme.buildingColor)
+        .multiplyScalar(1.75)
 
       const zone = TIER_PARAMS[station.theme.tier]
       const markerA = this.track.markerFor(s).tFraction
@@ -194,7 +198,17 @@ export class City {
       const buildingsHere = Math.max(2, Math.round((span * trackLen) / 55 * zone.density))
 
       for (let b = 0; b < buildingsHere; b++) {
-        const t = markerA + span * ((b + 0.5) / buildingsHere)
+        const localT = (b + 0.5) / buildingsHere
+        const t = markerA + span * localT
+        // The authored 0.2.1 slice hands the skyline over from Susukino's
+        // urban blocks to Nishiki's low shitamachi before the station comes
+        // into view. Previously every gap inherited its departure station,
+        // so 130 m towers stood almost on Nishiki's platform and erased the
+        // market silhouette. Keep this hand-off explicit until the same
+        // authored near/far composition is rolled around the whole loop.
+        const visualStation = s === 2 && localT >= 0.46 ? nextStation : station
+        const visualZone = TIER_PARAMS[visualStation.theme.tier]
+        const group = this.themeGroups.get(visualStation.theme.district)!
         const point = this.track.pointAt(t)
         const tangent = this.track.tangentAt(t)
         const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize()
@@ -205,6 +219,10 @@ export class City {
         // found. Seaward = the side pointing away from the loop's center.
         const seaward = station.theme.district === 'bay' && (normal.x * point.x + normal.z * point.z) * side > 0
         let offset = seaward ? 30 + this.rngCity() * 40 : 34 + this.rngCity() * 70
+        // In the vertical slice generic boxes are backdrop, not the front
+        // row. The authored facades own the first 30 m; moving legacy towers
+        // back costs no draw calls and restores readable layers/depth.
+        if (s === 1 || s === 2) offset = Math.max(offset, 54 + this.rngArt021Backdrop() * 42)
         // Over the Shibuya trench the ground plane has a HOLE out to ±26
         // measured from the CHORD, and the track bows 16.61 units off that
         // chord: a corner reaching 15.6 needs offset − 16.61 − 15.6 > 26,
@@ -213,8 +231,8 @@ export class City {
         // Height comes from the ZONE first (this is the structural contrast
         // that reads at any hour), with landmark stations getting an extra
         // flourish within their own tier's range rather than overriding it.
-        const heightSpan = zone.maxH - zone.minH
-        const height = zone.minH + this.rngCity() * heightSpan * (station.landmark ? 1.25 : 1)
+        const heightSpan = visualZone.maxH - visualZone.minH
+        const height = visualZone.minH + this.rngCity() * heightSpan * (visualStation.landmark ? 1.25 : 1)
         const width = 10 + this.rngCity() * 12
         const depth = 10 + this.rngCity() * 12
 
@@ -230,15 +248,15 @@ export class City {
         dummy.rotation.y = this.rngCity() * Math.PI
         dummy.updateMatrix()
 
-        const globalIdx = counters.get(station.theme.district)!
+        const globalIdx = counters.get(visualStation.theme.district)!
         if (globalIdx < perTheme) {
           group.instanced.setMatrixAt(globalIdx, dummy.matrix)
           const shade = 0.85 + this.rngCity() * 0.3
           tintColor.setHex(0xffffff).multiplyScalar(shade)
           group.instanced.setColorAt(globalIdx, tintColor)
-          counters.set(station.theme.district, globalIdx + 1)
+          counters.set(visualStation.theme.district, globalIdx + 1)
         } else if (import.meta.env.DEV) {
-          console.warn(`City: hit perTheme=${perTheme} cap for district "${station.theme.district}" — some background buildings were skipped.`)
+          console.warn(`City: hit perTheme=${perTheme} cap for district "${visualStation.theme.district}" — some background buildings were skipped.`)
         }
       }
     }

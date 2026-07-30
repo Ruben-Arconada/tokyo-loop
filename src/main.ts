@@ -24,6 +24,14 @@ const game = new Game(app)
 if (import.meta.env.DEV) {
   ;(window as unknown as Record<string, unknown>).__game = game
   ;(window as unknown as Record<string, unknown>).__THREE = THREE
+  // Browser automation runs in an isolated JS world on some engines, so the
+  // ordinary console handles above are not always reachable. A read-only DOM
+  // report gives auditors the real post-build budgets without adding a
+  // production byte or inventing a duplicate scene in a unit test.
+  document.documentElement.dataset.art021 = JSON.stringify({
+    static: game.artReport,
+    hybrid: game.passengerArtReport,
+  })
   // The audio singleton has no other reachable handle, and every sound in the
   // game is synthesized — reading gain nodes from the console is the only way
   // to check a mix without ears on the device.
@@ -85,9 +93,20 @@ if (import.meta.env.DEV) {
     })
     // Put the world back the way it was found, so a check is never a change.
     game.setSeasonForCapture(before)
+    const summary = summariseReferences(results)
+    document.documentElement.dataset.worldCheck = JSON.stringify({ results, summary })
     console.table(results)
-    console.log(summariseReferences(results))
+    console.log(summary)
     return results
+  }
+
+  // `?canon&checkWorld` is the automation-friendly twin of typing
+  // `__checkWorld()` by hand. It writes the same result to data-world-check,
+  // which is inspectable even when browser tooling has an isolated JS world.
+  if (new URLSearchParams(location.search).has('checkWorld')) {
+    requestAnimationFrame(() => {
+      ;((window as unknown as Record<string, unknown>).__checkWorld as () => unknown)()
+    })
   }
 }
 

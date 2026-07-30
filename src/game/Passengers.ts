@@ -3,6 +3,7 @@ import type { Track } from './Track'
 import { STATIONS, prevStationIndex } from '../data/stations'
 import { PLATFORM_GEOM } from './City'
 import { DOOR_ZS } from './TrainConsist'
+import { HybridPassengers021, type HybridPassengerReport } from './HybridPassengers021'
 
 // ————————————————————————————————————————————————————————————————
 // Sprite passengers: little hand-drawn commuters generated entirely in
@@ -103,6 +104,7 @@ export interface PassengerContext {
 
 interface StationFrame {
   matrix: THREE.Matrix4
+  origin: THREE.Vector3
   xAxis: THREE.Vector3
   zAxis: THREE.Vector3
   side: number
@@ -576,6 +578,8 @@ export class Passengers {
   private aOffset!: THREE.InstancedBufferAttribute
   private aData!: THREE.InstancedBufferAttribute
   private aMisc!: THREE.InstancedBufferAttribute
+  private aModel!: THREE.InstancedBufferAttribute
+  private hybrid!: HybridPassengers021
   private slots: WaitingSlot[] = []
   private staffPose: number[] = []
   private staffTimer: number[] = []
@@ -613,6 +617,7 @@ export class Passengers {
       const zAxis = new THREE.Vector3().setFromMatrixColumn(obj.matrixWorld, 2)
       this.frames.push({
         matrix: obj.matrixWorld.clone(),
+        origin: point.clone(),
         xAxis,
         zAxis,
         side: STATIONS[s].doorSide === 'left' ? 1 : -1,
@@ -670,6 +675,19 @@ export class Passengers {
       misc[i * 2 + 1] = 1
     }
 
+    this.hybrid = new HybridPassengers021(
+      scene,
+      camera,
+      TOTAL,
+      WAITING_PER_STATION,
+      STAFF_BASE,
+      this.aOffset,
+      this.aData,
+      this.aMisc,
+      this.frames,
+    )
+    this.aModel = new THREE.InstancedBufferAttribute(this.hybrid.representation, 1)
+
     const makeInstancedGeo = (base: THREE.BufferGeometry) => {
       const geo = new THREE.InstancedBufferGeometry()
       geo.index = base.index
@@ -678,6 +696,7 @@ export class Passengers {
       geo.setAttribute('aOffset', this.aOffset)
       geo.setAttribute('aData', this.aData)
       geo.setAttribute('aMisc', this.aMisc)
+      geo.setAttribute('aModel', this.aModel)
       geo.instanceCount = TOTAL
       return geo
     }
@@ -690,13 +709,14 @@ export class Passengers {
         attribute vec3 aOffset;
         attribute vec3 aData; // row, mode, phase
         attribute vec2 aMisc; // scale, flip
+        attribute float aModel; // 1 = represented by the close-range 3D kit
         uniform float uTime;
         varying vec2 vUv;
         #include <fog_pars_vertex>
         void main() {
           float mode = aData.y;
           // Mode 2 is "not here"; mode 3 (posed) is visible like the rest.
-          float scale = aMisc.x * (abs(mode - 2.0) < 0.5 ? 0.0 : 1.0);
+          float scale = aMisc.x * (abs(mode - 2.0) < 0.5 ? 0.0 : 1.0) * (1.0 - aModel);
           // Idle shuffles between 2 frames; walking runs the 4-frame cycle.
           // Idle shuffles 2 frames, walking runs the 4-frame cycle, and a
           // posed sprite (the attendant) holds whatever frame aData.z names.
@@ -799,6 +819,15 @@ export class Passengers {
     scene.add(shadows)
 
     this.refreshAmbient()
+  }
+
+  get hybridReport(): HybridPassengerReport {
+    return this.hybrid.report
+  }
+
+  private updateHybrid(dt: number) {
+    this.hybrid.update(dt)
+    if (this.hybrid.consumeRepresentationDirty()) this.aModel.needsUpdate = true
   }
 
   /**
@@ -1027,7 +1056,10 @@ export class Passengers {
       }
     }
 
-    if (this.walkers.length === 0) return
+    if (this.walkers.length === 0) {
+      this.updateHybrid(dt)
+      return
+    }
 
     // Camera right (XZ), for choosing which way profile sprites face.
     this.tmpDir.setFromMatrixColumn((this.camera as THREE.PerspectiveCamera).matrixWorld, 0)
@@ -1077,5 +1109,6 @@ export class Passengers {
       }
       this.writeLocal(w.index, w.station, w.local.x, w.local.y)
     }
+    this.updateHybrid(dt)
   }
 }

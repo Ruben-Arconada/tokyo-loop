@@ -1,6 +1,13 @@
 # Estrategia gráfica — Tokyo Loop
 
-Objetivo: estética "muy buena" (referente: la atmósfera de Cloudpunk/Nivalis de ION LANDS) sin bajar de 60 fps en móvil de gama media. Estado actual (v0.1.5, ver cifras vigentes en `SISTEMAS-V014-V015.md`): 150-164 draw calls según vista (presupuesto ~160, regla de Marco), ~670k triángulos diurnos CON pase de sombras (~400k de noche), todo instanciado, texturas canvas procedurales.
+Objetivo: estética "muy buena" (referente: la atmósfera de Cloudpunk/Nivalis de
+ION LANDS) sin bajar de 60 fps en móvil de gama media.
+
+**Estado 0.2.1:** la cifra vieja de 150–164 draws ya no es vigente. En la misma
+cabina y posición, 0.2.0 daba 200 draws/~670k tri con sombras; la vertical
+0.2.1 da 207–211/~688–720k a 300 m. El coste exacto, LOD de personajes y
+condiciones están en `SISTEMAS-0.2.1.md`. El presupuesto se decide con frame
+time/térmica de iPhone; el recuento sigue siendo la alarma estructural.
 
 ## ¿Voxels? No — y por qué
 
@@ -21,7 +28,11 @@ Cloudpunk **parece** voxels pero no renderiza cubos: son mallas optimizadas (gre
 
 ## Presupuesto de rendimiento y trucos (mantener 60 fps)
 
-- Presupuesto objetivo gama media: ≤120 draw calls, ≤500k tris, postpro ≤3 ms.
+- El antiguo objetivo absoluto ≤120 draws/≤500k tri ya no describe el mundo
+  actual y no debe citarse como si pasara. La regla vigente para una extensión
+  artística es: presupuesto incremental explícito, A/B en el mismo encuadre y
+  validación física de frame time/térmica. En 0.2.1: +3,5…5,5 % draws y
+  +2,9…7,4 % tri a 300 m.
 - **Sectorización del anillo**: dividir los pools instanciados por sectores del loop (p. ej. 8 arcos) y esconder los no visibles — la cámara nunca ve más de ~1/4 del anillo. Recupera presupuesto para todo lo demás. (Mayor ganancia pendiente.)
 - **Sombra**: mantener 1024 y bias actual; actualizar la shadow camera cada 2-3 frames si hiciera falta rascar ms.
 - **LOD barato**: las casas a >500 m pueden colapsar a cajas sin tejado (segundo pool); evaluar solo si el sector visible se carga.
@@ -36,6 +47,11 @@ Sí me puedes pasar assets; requisitos para que entren sin dolor:
 - **Optimización**: los paso por `gltf-transform` (Draco/meshopt + KTX2) antes de integrarlos.
 - **Fuentes recomendadas** si no quieres encargar arte: Kenney (CC0, kits city/trains), Quaternius (CC0 low-poly), Kay Lousberg (kits japoneses low-poly). Para sabor voxel: cualquier artista de MagicaVoxel en itch.io — un kit de 10-15 edificios japoneses voxel para los landmarks daría el guiño Cloudpunk sin migrar nada.
 - Dónde rinden más los assets externos, por orden: 1) el **tren** visto en andenes/reflejos, 2) edificios héroe de las 7 estaciones landmark, 3) props de andén (bancos, máquinas, tornos), 4) vehículos de calle aparcados.
+- **Image-to-3D / `img2threejs`**: no convertir una captura completa de juego.
+  Probar un solo hero prop sobre fondo limpio, sin personas ni vegetación,
+  frente y 3/4 claros; después separar, escalar, decimar, meshopt y medir
+  contra el módulo procedimental. La decisión aplicada y los prompts están en
+  `SISTEMAS-0.2.1.md`.
 
 ## Orden de ejecución propuesto
 
@@ -43,7 +59,12 @@ Sí me puedes pasar assets; requisitos para que entren sin dolor:
 |---|-----|----------|---------|
 | 1 | Bloom selectivo nocturno + viñeta | 2-4 h | Transforma la noche |
 | 2 | Height fog + glow cards | 2 h | Profundidad a todas horas |
-| 3 | Sectorización del anillo | 3 h | Presupuesto para el resto |
+| 3 | Sectorización del anillo | medida detrás de bandera; falta veredicto iPhone | Presupuesto para el resto |
 | 4 | Modo lluvia + suelo húmedo | 4-6 h | El "momento Cloudpunk" |
 | 5 | Kit de edificios externo (landmarks) | según assets | Identidad por estación |
 | 6 | Charcos/reflejos y pulido final | 2-3 h | Acabado |
+
+La vertical modular Susukino→Nishiki y el primer LOD híbrido de pasajeros ya
+están hechos en 0.2.1. El siguiente paso no es sumar otra técnica global:
+primero se conduce esta pareja en el iPhone, luego se extrae el kit y se prueba
+una tercera familia `green`/`bay`.

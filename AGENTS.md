@@ -11,7 +11,10 @@ Sistemas y decisiones de diseño: `docs/SISTEMAS-V014-V015.md`,
 `docs/ESTRATEGIA-GRAFICA.md`, `docs/DIRECCION-ARTE.md` y — para TODO lo
 gráfico del ciclo 0.2.0 (atmósfera por distrito, halos, cristal de cabina,
 regla de anclaje al suelo) — **`docs/SISTEMAS-0.2.0.md`**, que además lista
-las condiciones firmadas por el panel. Quien toque gráficos lo lee primero.
+las condiciones firmadas por el panel; y **`docs/SISTEMAS-0.2.1.md`** para la
+vertical Susukino→Nishiki, el kit modular, los pasajeros híbridos, sus
+presupuestos y la comparación exacta contra 0.2.0. Quien toque gráficos lee
+los dos últimos primero.
 
 Dos reglas de ese ciclo que NO se pueden olvidar:
 
@@ -22,6 +25,21 @@ Dos reglas de ese ciclo que NO se pueden olvidar:
    pantalla** (va 1 frame por detrás y no se escorza). En el canvas 2D solo
    óptica de pantalla: gotas y flare. El aderezo del cristal es textura del
    plano 3D en CabInterior.
+
+Reglas nacidas en 0.2.1:
+
+3. **La fachada que mira a la vía se valida desde la cámara real.** En
+   `frameAt`, el frente de un edificio colocado a `side * offset` está en
+   `side * width/2`; el signo contrario escondió todo el detalle detrás.
+4. **El volumen de estación incluye sus cámaras.** Las filas de barrio terminan
+   antes del footprint de 70 m y no pueden invadir el CCTV fijo. Cabina,
+   exterior y andén se revisan siempre.
+5. **Detalle móvil = fusionado y con LOD.** La vertical estática no puede pasar
+   10/12 draws ni 50k tri; el personaje 3D vuelve a sprite fuera de 108 u y no
+   puede pasar 6 draws/10k tri. Los límites viven en `art021Contract.ts`.
+6. **No uses una referencia image-to-3D como escena terminada.** Puede alimentar
+   un hero prop aislado; estación/barrio se construyen con módulos editables,
+   anclados y fusionables. Criterio y prompts en `SISTEMAS-0.2.1.md`.
 
 ## ⚠️ El origen es COMPARTIDO con los demás proyectos (incidente 2026-07-28)
 
@@ -147,6 +165,9 @@ mundo estático, ~110 grupos sin etiquetar) están **cerrados**. El contrato hoy
   compara con la tabla de `src/game/worldReferences.ts` y deja el mundo como
   estaba. Las cuatro hacen falta: una partición puede conservar primavera y
   romper el repintado estacional, que reescribe doce búferes de color.
+- **`?canon&checkWorld`** ejecuta el mismo chequeo y escribe el resultado en
+  `data-world-check`; `data-art021` y `data-render-info` exponen en dev el
+  presupuesto real post-merge y el último frame para auditorías automatizadas.
 - **`npm test`** ejecuta las propiedades de partición sin navegador
   (`test/worldHash.test.ts`, runner nativo de node, sin dependencias nuevas):
   las mismas instancias en 1, 2 y 8 sectores dan un solo hash, contiguas o

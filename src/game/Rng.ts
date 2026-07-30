@@ -125,6 +125,9 @@ export type WorldStream =
   | 'tunnel' // the bore's concrete grime
   | 'sky' // DayNightCycle.ts: the star field
   | 'clouds' // Scenery.ts: the cloud slabs — its OWN stream
+  | 'art021-backdrop' // 0.2.1: composition-only offsets for the legacy skyline
+  | 'art021-susukino-edge' // 0.2.1: near-track urban vertical slice
+  | 'art021-nishiki-edge' // 0.2.1: near-track market vertical slice
 
 /**
  * A seeded stand-in for `Math.random` that also carries the small helpers the

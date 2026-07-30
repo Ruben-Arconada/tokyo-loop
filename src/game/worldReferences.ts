@@ -51,12 +51,20 @@ export interface SeasonReference {
  * · the platform map board became a floor-standing totem (it hovered 0.85
  *   over the slab with no leg).
  * Same recipe, all four seasons re-taken in one clean `?canon` load.
+ *
+ * Re-captured 2026-07-30 for the deliberate 0.2.1 visual slice:
+ * · two authored, merged stations and near-track districts at Susukino/Nishiki;
+ * · the legacy skyline pushed into the far layer there, with the district
+ *   hand-off occurring before Nishiki instead of carrying 130 m towers to it;
+ * · the four new snow meshes participate only in winter.
+ * Hybrid passengers are dynamic by contract and therefore do not enter these
+ * static references. Captured through `?canon&checkWorld`.
  */
 export const WORLD_REFERENCES: Record<Season, SeasonReference> = {
-  spring: { semantic: '6c6e4064', structural: '81ecf986' },
-  summer: { semantic: 'cf3482df', structural: '2e199c1f' },
-  autumn: { semantic: '7562d812', structural: 'f5f712ff' },
-  winter: { semantic: 'cc6fdcb6', structural: 'de5a5ecc' },
+  spring: { semantic: '3d7118d1', structural: '490ad6bf' },
+  summer: { semantic: 'cfd7949a', structural: '8f127d66' },
+  autumn: { semantic: '0c78532f', structural: '927deefa' },
+  winter: { semantic: '61da4b27', structural: 'b6e46a69' },
 }
 
 // ————————————————————————————————————————————————————————————————

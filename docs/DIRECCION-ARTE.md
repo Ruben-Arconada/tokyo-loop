@@ -2,6 +2,18 @@
 
 Complementa a `docs/ESTRATEGIA-GRAFICA.md` (que cubre postprocesado/atmósfera). Este documento fija el **contraste de zonas**: cómo el jugador siente que pasa de una zona rural/tranquila a una intermedia y a una urbana densa, a cualquier hora del día.
 
+## Estado 0.2.1: el tier ya no basta por sí solo
+
+El sistema de abajo sigue siendo el fondo barato de todo el anillo. La vertical
+Susukino→Nishiki añade la capa cercana authored que faltaba: estaciones de 70 m
+con estructura propia, fachadas que miran realmente a vía y barrios modulares
+fusionados. Contrato, imágenes y coste exacto en
+[`SISTEMAS-0.2.1.md`](SISTEMAS-0.2.1.md).
+
+La regla para extenderlo es **fondo por tier + primer plano por kit de
+distrito**. No se pretende conseguir identidad cambiando solo altura/tinte, ni
+copiar un diorama único treinta veces.
+
 ## El principio: contraste estructural, no lumínico
 
 La iluminación (día/noche) ya varía mucho — pero eso NO basta para dar sensación de "cambiar de barrio", porque de noche todo se ve oscuro por igual. El contraste real tiene que estar en la **geometría y densidad**, para que se note a las 12:00 igual que a las 23:00.
@@ -12,9 +24,9 @@ Cada estación ya tenía un `district` (business/downtown/shitamachi/green/youth
 
 | Tier | Distritos | Estaciones | Sensación |
 |---|---|---|---|
-| `quiet` | shitamachi, green | 11 (Nippori, Komagome, Ueno, Meguro...) | Barrio bajo, casas con tejado kawara, pinos y sakura, sin neón, cielo abierto |
-| `mid` | business, bay | 12 (Tokyo, Gotanda, Shinagawa...) | Torres medias, mezcla casas/oficinas, algo de neón |
-| `urban` | downtown, youth | 7 (Shinjuku, Shibuya, Ikebukuro, Akihabara...) | Cañón de rascacielos, cero casas, neón saturado |
+| `quiet` | shitamachi, green | 11 (Nishiki, Nara, Koyasan, Kiyomizu...) | Barrio bajo, casas con tejado kawara, pinos y sakura, sin neón, cielo abierto |
+| `mid` | business, bay | 12 (Tokyo, Yokohama, Kamakura, Enoshima...) | Torres medias, mezcla casas/oficinas, algo de neón |
+| `urban` | downtown, youth | 7 (Susukino, Fukuoka, Nagoya, Dotonbori...) | Cañón de rascacielos, cero casas, neón saturado |
 
 ## Qué varía por tier (implementado)
 
@@ -28,7 +40,9 @@ Parámetros centralizados en `TIER_PARAMS` (`City.ts`) y tablas hermanas en `Sce
 
 ## Verificado visualmente
 
-Comparativa Komagome (quiet) vs Shinjuku (urban) a la misma hora: Komagome muestra casas, un pino y matorral con edificios de fondo bajos y dispersos; Shinjuku es pared de rascacielos de borde a borde sin una sola casa. El contraste es inmediato y no depende de si es de día o de noche.
+La comparación de referencia actual es Nishiki (quiet) vs Susukino (urban) a
+la misma hora: además del tier de fondo, 0.2.1 prueba machiya/madera/aleros
+contra acero/vidrio/balcones/servicios. El contraste ya no depende del neón.
 
 ## Por qué no voxels (recordatorio)
 
@@ -38,4 +52,7 @@ Sigue en pie el veredicto de `ESTRATEGIA-GRAFICA.md`: Cloudpunk/Nivalis no son v
 
 - Postes de catenaria/utility más espaciados o ausentes en tramos quiet (hoy son uniformes en todo el anillo).
 - Un cuarto tier opcional "bay" diferenciado de "mid" para Shinagawa/Tamachi/Hamamatsucho (agua, grúas, contenedores) si se quiere una cuarta paleta distinta.
-- Assets externos (ver `ESTRATEGIA-GRAFICA.md`) encajarían muy bien como "hero buildings" específicos de cada tier: un edificio de oficinas más trabajado para mid, un torii/machiya para quiet, un rascacielos con más detalle para urban.
+- Extraer `StationKit`/`DistrictKit` desde `ArtPass021`, una vez validado el
+  coste en iPhone, y probar una tercera familia `green` o `bay`.
+- Assets externos o image-to-3D solo como hero props aislados (ver
+  `ESTRATEGIA-GRAFICA.md`), nunca como sustituto monolítico del kit.

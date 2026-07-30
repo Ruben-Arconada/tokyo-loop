@@ -12,6 +12,8 @@ import { requestedSectors, sectorizeWorld, setSectorsEnabled, type SectorizeRepo
 import { probeLegPlan } from './probePlan'
 import { AmbienceTrack } from './zoneAmbience'
 import { GlowCards } from './glowCards'
+import { ArtPass021, type ArtPass021Report } from './ArtPass021'
+import type { HybridPassengerReport } from './HybridPassengers021'
 import { NEON_SIGNS } from './Scenery'
 import type { CameraMode } from './cameraModes'
 import { PerfLog, setActivePerfLog, perfMark, perfPhase } from './PerfLog'
@@ -185,6 +187,7 @@ export class Game {
   private glowCards!: GlowCards
   private train: Train
   private city: City
+  private artPass021: ArtPass021
   private passengers: Passengers
   private scenery: Scenery
   private dayNight: DayNightCycle
@@ -264,6 +267,9 @@ export class Game {
   private lastDestinationIdx = -1
   /** What the sectorisation pass actually did — read by the dev harness. */
   sectorReport!: SectorizeReport
+  /** Auditable cost and scope of the 0.2.1 visual vertical slice. */
+  artReport!: ArtPass021Report
+  passengerArtReport!: HybridPassengerReport
   /** Reused every rainy frame — the windscreen's screen-space box. */
   private readonly wsClip = { x0: -1, y0: -1, x1: 1, y1: 1 }
   /** What the cab asks of the pane beyond the weather: frost, flare. */
@@ -431,7 +437,10 @@ export class Game {
       (localStorage.getItem(SCHEDULE_KEY) as ScheduleLevel) || 'normal',
     )
     this.passengers = new Passengers(this.scene, this.track, this.camera)
+    this.passengerArtReport = this.passengers.hybridReport
     this.scenery = new Scenery(this.scene, this.track)
+    this.artPass021 = new ArtPass021(this.scene, this.track)
+    this.artReport = this.artPass021.report
     this.dayNight = new DayNightCycle(this.scene)
     this.consist = new TrainConsist(this.scene, this.track)
     this.buildTrackVisual()
@@ -721,6 +730,7 @@ export class Game {
     this.scenery.setSeason(this.season)
     this.scenery.setWeather(this.weather)
     this.city.setSeason(this.season)
+    this.artPass021.setSeason(this.season)
     for (const pool of this.terrainPools) applySeasonToPool(pool, this.season)
     // The rail corridor joins the winter: ballast whites over (overdriven
     // against its dark texture) and the beaten-earth band fades under snow.
@@ -1999,6 +2009,18 @@ export class Game {
     // Sampled AFTER the draw: renderer.info resets per render, so these are
     // the counts for the frame that was just put on screen.
     const info = this.renderer.info.render
+    if (import.meta.env.DEV && tickStart - this.lastDevRenderReport > 500) {
+      this.lastDevRenderReport = tickStart
+      document.documentElement.dataset.renderInfo = JSON.stringify({
+        station: this.train.targetStationIndex,
+        camera: this.cameraMode,
+        draws: info.calls,
+        triangles: info.triangles,
+        lines: info.lines,
+        points: info.points,
+        shadowPass: this.dayNight.sunLight.castShadow,
+      })
+    }
     this.perf.record({
       frameMs: rawDt * 1000,
       renderMs,
@@ -2032,6 +2054,8 @@ export class Game {
   /** End of the previous animation callback, and how long that whole callback took. */
   private lastTickEnd = 0
   private lastTickCpuMs = 0
+  /** Dev-only cadence for the DOM-readable renderer snapshot. */
+  private lastDevRenderReport = 0
 
   /**
    * Presentation layer: runs once per rendered frame with the real frame
@@ -2150,6 +2174,7 @@ export class Game {
       ])
     }
     perfPhase('f:city', () => this.city.update(dt, this.dayNight.nightFactor, this.train.targetStationIndex))
+    perfPhase('f:art021', () => this.artPass021.update(this.dayNight.nightFactor))
     // Real seconds, not clock-scaled: the train runs in real time, so if
     // arrivals followed the accelerated day the platform would win by default.
     perfPhase('f:flow', () => this.flow.update(dt, this.dayNight.timeOfDay))
