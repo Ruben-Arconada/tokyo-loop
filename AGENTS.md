@@ -7,8 +7,21 @@ El juego se llama **Japan Loop** desde 2026-07-26, pero el repo, la URL, el
 `package.json` y el nombre de caché conservan "tokyo-loop" **a propósito**:
 renombrar el repo rompería la PWA ya instalada en los móviles y la URL de Pages.
 
-Sistemas y decisiones de diseño: `docs/SISTEMAS-V014-V015.md` y
-`docs/ESTRATEGIA-GRAFICA.md`.
+Sistemas y decisiones de diseño: `docs/SISTEMAS-V014-V015.md`,
+`docs/ESTRATEGIA-GRAFICA.md`, `docs/DIRECCION-ARTE.md` y — para TODO lo
+gráfico del ciclo 0.2.0 (atmósfera por distrito, halos, cristal de cabina,
+regla de anclaje al suelo) — **`docs/SISTEMAS-0.2.0.md`**, que además lista
+las condiciones firmadas por el panel. Quien toque gráficos lo lee primero.
+
+Dos reglas de ese ciclo que NO se pueden olvidar:
+
+1. **Todo lo que se apoya en el suelo pregunta al suelo** (`groundHeightAt`
+   cerca de la vía, `terrainRelief` lejos). Los carteles de neón flotaron
+   desde su creación por una Y absoluta — los halos nocturnos los delataron.
+2. **Lo que pertenece a una superficie 3D no puede vivir en un overlay 2D de
+   pantalla** (va 1 frame por detrás y no se escorza). En el canvas 2D solo
+   óptica de pantalla: gotas y flare. El aderezo del cristal es textura del
+   plano 3D en CabInterior.
 
 ## ⚠️ El origen es COMPARTIDO con los demás proyectos (incidente 2026-07-28)
 
