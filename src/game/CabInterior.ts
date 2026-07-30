@@ -290,9 +290,9 @@ export class CabInterior {
     parts.push(box(W * 2, sillH, T, 0, FLOOR + sillH / 2, SCREEN_Z))
     const headH = CEIL - SCREEN_TOP
     parts.push(box(W * 2, headH, T, 0, SCREEN_TOP + headH / 2, SCREEN_Z))
-    // Centre pillar between the panes, and the jambs outboard of them.
+    // Jambs outboard of the glass. No centre pillar: the pane is panoramic
+    // now — see the note on WINDSCREEN for why the pillar lost.
     const glassH = SCREEN_TOP - SCREEN_BOTTOM
-    parts.push(box(WINDSCREEN.inner * 2, glassH, T, 0, SCREEN_BOTTOM + glassH / 2, SCREEN_Z))
     for (const side of [-1, 1]) {
       const jambW = W - WINDSCREEN.outer
       parts.push(box(jambW, glassH, T, side * (WINDSCREEN.outer + jambW / 2), SCREEN_BOTTOM + glassH / 2, SCREEN_Z))
@@ -351,14 +351,14 @@ export class CabInterior {
     // Tucked right up against the header so it shades without cropping.
     parts.push(tilted(W * 1.9, 0.06, 0.30, -0.26, 0, SCREEN_TOP - 0.035, SCREEN_Z + 0.17))
 
-    // ── 遮光幕 — the roller blinds, stowed. Two rolls of cloth on spindles, one
-    // over each pane. Cheap geometry for the single most recognisable thing in
-    // a Japanese cab, and they give the header a volume that stops the whole
+    // ── 遮光幕 — the roller blind, stowed. One roll of cloth on a spindle
+    // spanning the pane. Cheap geometry for the single most recognisable thing
+    // in a Japanese cab, and it gives the header a volume that stops the whole
     // frame reading as cardboard.
-    for (const side of [-1, 1]) {
+    {
       const roll = new THREE.CylinderGeometry(0.05, 0.05, WINDSCREEN.paneW * 0.92, 10)
       roll.rotateZ(Math.PI / 2)
-      roll.translate(side * WINDSCREEN.paneX, SCREEN_TOP - 0.10, SCREEN_Z + 0.11)
+      roll.translate(0, SCREEN_TOP - 0.10, SCREEN_Z + 0.11)
       parts.push(roll)
     }
 

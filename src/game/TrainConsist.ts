@@ -51,36 +51,28 @@ export const NOSE_LEN = 1.5
  * agreement is the whole point of sitting inside this train rather than a
  * generic box — so the numbers live here and both sides read them.
  *
- * Two panes with a centre pillar between them, which is the face of a Japanese
- * commuter EMU. `INNER` and `OUTER` are the |x| the glass spans; the pillar is
- * everything inside `INNER`.
+ * One panoramic pane. It was two panes with a centre pillar — the classic
+ * JNR commuter face — but a real driver sits OFFSET from a pillar like that,
+ * and this cab pins the eye to the axis (off-centre made the track read as
+ * crooked), which planted the pillar exactly on the vanishing point. It was
+ * slimmed from 0.56 to 0.16 and it still owned the horizon, so it is gone:
+ * the view won over the prototype (Rubén, 2026-07-30).
  */
 export const WINDSCREEN = {
   /** Pane centre height above the rail head. */
   centreY: 3.12,
   /**
-   * The centre pillar used to be 0.56 wide. From outside that reads as a face;
-   * from the driver's seat it is a post planted on the vanishing point, because
-   * the eye is pinned to the axis.
-   *
-   * It is slimmed by moving the panes INWARD, not by widening them. Widening
-   * was the first attempt and it pushed the outer edge of the glass to |x| =
-   * 2.11, which is 0.14 PAST the shoulder of a nose that is a rounded box of
-   * radius 0.34 — the windscreen flew off the side of the train. Sliding the
-   * same 1.68-wide pane inward gets the pillar down to 0.16, thinner still,
-   * with the glass ending at 1.76 and comfortably on the bodywork.
+   * The glass must end at |x| ≤ 1.76: the nose is a rounded box of shoulder
+   * radius 0.34, and an earlier widening pushed the edge to 2.11 — 0.14 PAST
+   * the shoulder — and the windscreen flew off the side of the train. This
+   * span is the two old panes' outer edges, so the jambs did not move.
    */
-  paneW: HALF_W * 0.78,
+  paneW: HALF_W * 1.634,
   paneH: 1.35,
-  /** Pane centre offset from the axis. */
-  paneX: HALF_W * 0.427,
   /** Glass plane, measured from the nose's mounting face. */
   z: NOSE_LEN + 0.01,
-  get inner() {
-    return this.paneX - this.paneW / 2
-  },
   get outer() {
-    return this.paneX + this.paneW / 2
+    return this.paneW / 2
   },
   get top() {
     return this.centreY + this.paneH / 2
@@ -265,11 +257,9 @@ function buildNose(): THREE.BufferGeometry {
 /** Windscreen glass + the destination board, both dark. */
 function buildNoseGlass(): THREE.BufferGeometry {
   const parts: THREE.BufferGeometry[] = []
-  // Two-pane windscreen with a centre pillar — the face of the thing. The cab
-  // interior builds its own frame from these same numbers.
-  for (const side of [-1, 1]) {
-    parts.push(box(WINDSCREEN.paneW, WINDSCREEN.paneH, 0.1, side * WINDSCREEN.paneX, WINDSCREEN.centreY, WINDSCREEN.z))
-  }
+  // Panoramic windscreen — the face of the thing. The cab interior builds its
+  // own frame from these same numbers.
+  parts.push(box(WINDSCREEN.paneW, WINDSCREEN.paneH, 0.1, 0, WINDSCREEN.centreY, WINDSCREEN.z))
   // Destination board above the screen, and the route board under it.
   parts.push(box(NOSE_BOARD.w, NOSE_BOARD.h, 0.1, 0, NOSE_BOARD.y, WINDSCREEN.z))
   // 運転士側窓 on each flank. The cab cuts this same opening in its interior

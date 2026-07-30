@@ -285,6 +285,7 @@ export class UI {
         <div class="notch-readout">N</div>
       </div>
       <div class="cctv hidden" aria-hidden="true">
+        <span class="cctv-noise"></span>
         <span class="cctv-corner tl"></span><span class="cctv-corner tr"></span>
         <div class="cctv-banner">
           <span class="cctv-rec"><i></i>REC</span>
@@ -839,6 +840,9 @@ export class UI {
   /** The station-camera dressing: shown only while looking through it. */
   setCctv(on: boolean) {
     this.cctvEl.classList.toggle('hidden', !on)
+    // The look itself (desaturation) rides on the body so the stylesheet can
+    // reach the GL canvas, which this class never holds.
+    document.body.classList.toggle('cctv-look', on)
   }
 
   setCctvLabel(station: string) {

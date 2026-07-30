@@ -9,6 +9,7 @@ import { Precipitation } from './Precipitation'
 import { TrainConsist, CAB_OFFSET } from './TrainConsist'
 import { CabInterior } from './CabInterior'
 import { requestedSectors, sectorizeWorld, setSectorsEnabled, type SectorizeReport } from './sectorize'
+import { probeLegPlan } from './probePlan'
 import type { CameraMode } from './cameraModes'
 import { PerfLog, setActivePerfLog, perfMark, perfPhase } from './PerfLog'
 import { PassengerFlow, TRAIN_CAPACITY } from './PassengerFlow'
@@ -140,7 +141,9 @@ const CCTV_YAW_LIMIT = 0.62
 const CCTV_PITCH_MIN = -0.28
 const CCTV_PITCH_MAX = 0.2
 /** Security lenses are wide; the game's normal view is not. */
-const CCTV_FOV = 84
+// Security lenses are wide. Was 84; Rubén asked for it to read wider still
+// (2026-07-30), same request that added the desaturation + grain in the CSS.
+const CCTV_FOV = 88
 const NORMAL_FOV = 68
 /** Shared read-only up vector for camera solves — never mutated. */
 const WORLD_UP = new THREE.Vector3(0, 1, 0)
@@ -1748,12 +1751,13 @@ export class Game {
    * fixed and shipped — so the probe now answers the question that is open:
    * does cutting the ring into sectors buy frame time ON THIS PHONE?
    *
-   * A/B INTERLEAVED, leg by leg: odd legs drive with the ring whole, even legs
-   * with it sectorised, alternating within one run. Two separate runs would be
-   * worthless here — this phone throttles from 58.8 fps to 43-44 in six
-   * minutes with LESS on screen, so condition B would always run on a hotter
-   * chip than condition A and the lap would measure the thermals. Interleaving
-   * folds the drift equally into both.
+   * A/B INTERLEAVED within one run: two separate runs would be worthless here
+   * — this phone throttles from 58.8 fps to 43-44 in six minutes with LESS on
+   * screen, so condition B would always run on a hotter chip than condition A
+   * and the lap would measure the thermals. The leg schedule (which station,
+   * which world) lives in probePlan.ts with its own tests, after the first
+   * real run shipped with station and condition locked in phase and measured
+   * scenery instead of sectorisation.
    *
    * The old protocol's own rules still carry: alternate two stations so the
    * destination roll rebuilds, stay in the cab, reach each announcement, never
@@ -1802,22 +1806,27 @@ export class Game {
     }
     p.linger = Game.PROBE_LINGER_SECONDS
     p.legTime = 0
+    // The schedule lives in probePlan.ts with its own tests, because the first
+    // real run shipped confounded: station and condition both came from
+    // `leg % 2`, so sectors:off only ever measured the Kiyomizu climb and
+    // sectors:on only ever the Fushimi run. Now stations alternate every leg
+    // and the condition runs ABBA over them.
+    const plan = probeLegPlan(p.leg, Game.PROBE_STATIONS.length)
     // Flip BEFORE the teleport: the jump already absorbs a discontinuity, so
     // the swap's own cost lands in the between-legs seam and not mid-drive.
     if (p.abReady) {
-      const sectorsOn = p.leg % 2 === 1
-      setSectorsEnabled(this.sectorReport, sectorsOn)
+      setSectorsEnabled(this.sectorReport, plan.sectorsOn)
       // The mark annotates hitches; the SEGMENT is what splits the frame
       // statistics into the log's A and B rows.
-      const label = sectorsOn ? 'sectors:on' : 'sectors:off'
+      const label = plan.sectorsOn ? 'sectors:on' : 'sectors:off'
       perfMark(label)
       this.perf.setSegment(label)
     }
-    this.teleportToStation(Game.PROBE_STATIONS[p.leg % Game.PROBE_STATIONS.length])
+    this.teleportToStation(Game.PROBE_STATIONS[plan.stationSlot])
     // Full power: the leg is 300 units and we want it driven, not crawled.
     this.train.setNotch(MAX_NOTCH)
     this.controls.syncNotch(MAX_NOTCH)
-    const abLabel = p.abReady ? (p.leg % 2 === 1 ? ' · sectores ON' : ' · sectores OFF') : ''
+    const abLabel = p.abReady ? (plan.sectorsOn ? ' · sectores ON' : ' · sectores OFF') : ''
     this.ui.showProbeToast(`Prueba A/B sectores${this.muted ? ' (SILENCIADA)' : ''} — tramo ${p.leg + 1} de ${Game.PROBE_LEGS}${abLabel}`)
   }
 
