@@ -163,6 +163,53 @@ anotó como «el semántico de la semilla por defecto» y al re-medirlo en el
 mismo commit con almacenamiento limpio daba `851a0eed`; nunca se supo por qué.
 Por eso la tabla vive en el repo y la compara `__checkWorld()`, no el ojo.
 
+## 🧩 Sectorización del anillo (prueba 1 medida, tras bandera)
+
+Informe completo con tablas: `docs/SECTORIZACION-PRUEBA-1.md`. Lo esencial:
+
+- El culling de frustum siempre estuvo BIEN; no tenía dónde morder: cada uno de
+  los ~89 `InstancedMesh` abarca el anillo entero, así que su esfera envolvente
+  siempre corta el frustum. Medido: 78 de 89 pools se dibujaban ENTEROS.
+- **`src/game/sectorize.ts`** parte los pools como PASE POSTERIOR sobre la
+  escena construida, detrás de **`?sectors=N`** y **apagado por defecto**.
+  Salta lo `dynamic`, lo sin `tagGroup`, pools <24 instancias y los ya locales.
+  NO toca `Points`/`Line`/`InstancedBufferGeometry` (ver alcance, arriba).
+- Contrato verificado: semántico `494d8caa` idéntico a 1/4/6/8; el estructural
+  cambia con cada N. Triángulos −34 %…−62 %; draws suben a 200–298. **El
+  veredicto lo da el iPhone con tiempo de frame**, no un Mac contando draws.
+- **El botón «Prueba A/B de sectores»** (antes «de tirones», su hipótesis se
+  cerró) alterna anillo entero/partido POR TRAMO — intercalado a propósito: la
+  térmica del iPhone (58,8→43 fps en 6 min) haría trampa en dos vueltas
+  separadas. El log (PerfLog v5) sale con `segments: {'sectors:off', 'sectors:on'}`.
+- ⚠️ `setSectorsEnabled` SEPARA del árbol la copia que no toca (esconderla con
+  `visible=false` duplicaba el mundo ante el fingerprint, que recorre el
+  grafo). Y es SOLO para medir dentro de un escenario: el repintado estacional
+  guarda referencias a las mallas originales.
+- Siguiente paso decidido: repartir por FRACCIÓN DE VÍA (`t`), no por ángulo —
+  el anillo es un estadio, no un círculo, y por eso 6 gana a 8 en unas poses y
+  pierde en otras.
+
+## 🚃 La cabina y el tren comparten cotas — no las dupliques
+
+`src/game/CabInterior.ts` construye la cabina del conductor DERIVANDO todo de
+las constantes exportadas de `TrainConsist.ts`: `WINDSCREEN` (las dos lunas y
+el montante — las lee también `buildNoseGlass`, así que cambiar `paneX`/`paneW`
+cambia la cara del tren POR FUERA), `CAB_SIDE_WINDOW` (la ventanilla del
+maquinista: el hueco interior y el cristal exterior son la misma constante),
+`CAB_LEN_IN_CAR` (el acristalamiento de salón se retranquea para no pasar por
+encima de la cabina), `HALF_W`/`FLOOR_Y`/`ROOF_Y`/`WALL_T`/`NOSE_LEN`.
+**Ningún número de la cabina se elige a ojo**; si algo no casa, la constante
+compartida es el sitio donde arreglarlo.
+
+Trampas que ya costaron una iteración cada una: la cabina es UNLIT con el
+sombreado horneado en colores de vértice (iluminarla con el sol del mundo la
+hacía cambiar de color según el rumbo y salir 5× más clara bajo tierra que a
+mediodía); `box().rotateX()` gira alrededor del ojo del conductor, usa
+`tilted()`; nada montado a menos de medio grosor del panel o queda DENTRO;
+戸締灯 se enciende con puertas CERRADAS; el manómetro es BC/MR (la aguja SUBE
+al frenar); los testigos son aditivos para no tapar su leyenda; y la lluvia de
+`WindshieldFX` se recorta al cristal vía `CabInterior.windscreenNdc()`.
+
 ## Publicar
 
 Ritual completo en la memoria del proyecto. Resumen: `npm test` +
