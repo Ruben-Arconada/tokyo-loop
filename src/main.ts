@@ -101,12 +101,12 @@ if (import.meta.env.DEV) {
   }
 
   // `?canon&checkWorld` is the automation-friendly twin of typing
-  // `__checkWorld()` by hand. It writes the same result to data-world-check,
-  // which is inspectable even when browser tooling has an isolated JS world.
+  // `__checkWorld()` by hand. Game's constructor has already built the whole
+  // scene synchronously, so run it now: requestAnimationFrame is deliberately
+  // NOT used because background automation tabs can freeze rAF indefinitely
+  // and leave data-world-check empty.
   if (new URLSearchParams(location.search).has('checkWorld')) {
-    requestAnimationFrame(() => {
-      ;((window as unknown as Record<string, unknown>).__checkWorld as () => unknown)()
-    })
+    ;((window as unknown as Record<string, unknown>).__checkWorld as () => unknown)()
   }
 }
 

@@ -292,6 +292,12 @@ evitar leer matrices antiguas se invocaron los métodos de producción
 cruda. `Matrix4.decompose()` no es autoridad para una instancia oculta con
 escala cero: puede devolver escala 1 como fallback degenerado.
 
+Ese estrangulamiento también dejó vacío el primer `data-world-check`: el
+auto-run estaba envuelto en un único rAF y hubo que llamar manualmente a la
+misma función. Quedó corregido después de la auditoría: con `?checkWorld` la
+escena ya está construida síncronamente y el chequeo se ejecuta directamente,
+sin depender de un frame visible.
+
 ## 7. Qué NO se debe interpretar
 
 - No están “arregladas las treinta estaciones”. Está probado el **sistema**

@@ -177,7 +177,9 @@ mundo estático, ~110 grupos sin etiquetar) están **cerrados**. El contrato hoy
   Receta independiente literal: servidor en `127.0.0.1:5173`, vaciar
   localStorage/sessionStorage, abrir
   `http://127.0.0.1:5173/?canon&checkWorld` dos veces. Mide el mundo entero en
-  `spring→summer→autumn→winter`, no «cuatro estaciones» ferroviarias.
+  `spring→summer→autumn→winter`, no «cuatro estaciones» ferroviarias. El
+  auto-check se ejecuta directamente tras el constructor: no lo vuelvas a
+  meter en `requestAnimationFrame`, que se congela en tabs de automatización.
 - **`npm test`** ejecuta las propiedades de partición sin navegador
   (`test/worldHash.test.ts`, runner nativo de node, sin dependencias nuevas):
   las mismas instancias en 1, 2 y 8 sectores dan un solo hash, contiguas o
