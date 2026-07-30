@@ -38,12 +38,25 @@ export interface SeasonReference {
  * Re-captured the same day when polylines joined the walk: the utility wires
  * and the bridge cables are `LineSegments`, which the traversal used to skip,
  * so the first table described the world minus its wires.
+ *
+ * Re-captured 2026-07-30 after the GROUNDING BATCH — a deliberate world
+ * change in one sweep (Rubén's lap report + the full grounding audit):
+ * · neon signs down to earth via groundHeightAt + a real pylon per banner
+ *   (new group `neon-sign-poles`) — they hung at an absolute height until
+ *   the night halos exposed them as levitating lights;
+ * · Kobe tower and the Kanazawa spire read the rolling relief instead of a
+ *   flat-earth −0.58 (the noise swings ±11.5/±14 out there);
+ * · platform slabs grew a 0.6 foundation (they ended at rail height, a
+ *   ribbon of daylight under all 30 platforms);
+ * · the platform map board became a floor-standing totem (it hovered 0.85
+ *   over the slab with no leg).
+ * Same recipe, all four seasons re-taken in one clean `?canon` load.
  */
 export const WORLD_REFERENCES: Record<Season, SeasonReference> = {
-  spring: { semantic: '494d8caa', structural: 'dfce1556' },
-  summer: { semantic: '5cd79b31', structural: '087e9d3f' },
-  autumn: { semantic: 'fe5b2886', structural: 'ddeaf5c7' },
-  winter: { semantic: '312b1646', structural: '1346d80c' },
+  spring: { semantic: '6c6e4064', structural: '81ecf986' },
+  summer: { semantic: 'cf3482df', structural: '2e199c1f' },
+  autumn: { semantic: '7562d812', structural: 'f5f712ff' },
+  winter: { semantic: 'cc6fdcb6', structural: 'de5a5ecc' },
 }
 
 // ————————————————————————————————————————————————————————————————

@@ -261,7 +261,11 @@ export class City {
     ;(platformMat.map as THREE.Texture).repeat.set(3, 22)
     // Cheap sharpness at grazing angles — the platform floor is always seen nearly edge-on from the cab.
     ;(platformMat.map as THREE.Texture).anisotropy = 8
-    const platformSlab = new THREE.InstancedMesh(new THREE.BoxGeometry(PLATFORM_DEPTH, 1.2, PLATFORM_LEN), platformMat, N)
+    // 1.8 deep, not 1.2: the slab used to END at rail height while the
+    // trackside wear band sits 0.42 lower — a ribbon of daylight under every
+    // platform, visible at the ends and along the outer face (grounding
+    // audit, 2026-07-30). The extra 0.6 is foundation, buried past the band.
+    const platformSlab = new THREE.InstancedMesh(new THREE.BoxGeometry(PLATFORM_DEPTH, 1.8, PLATFORM_LEN), platformMat, N)
     platformSlab.instanceColor = new THREE.InstancedBufferAttribute(new Float32Array(N * 3), 3)
     platformSlab.receiveShadow = true
 
@@ -310,7 +314,9 @@ export class City {
     const clockFaceMat = new THREE.MeshStandardMaterial({ color: 0xf5f3ec, emissive: 0x111111, roughness: 0.5 })
     const clockFace = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.4, 0.4, 0.06, 20), clockFaceMat, N)
     const mapBoardMat = new THREE.MeshStandardMaterial({ color: 0xeceadf, roughness: 0.7 })
-    const mapBoard = new THREE.InstancedMesh(new THREE.BoxGeometry(0.08, 1.1, 1.6), mapBoardMat, N)
+    // Floor-standing wayfinding totem: the old 1.1-tall board hovered 0.85
+    // over the slab with no leg under it (grounding audit, 2026-07-30).
+    const mapBoard = new THREE.InstancedMesh(new THREE.BoxGeometry(0.08, 2.3, 1.6), mapBoardMat, N)
 
     // ——— Per-style character props ———
     // Rustic: a gabled ridge riding the flat canopy (so roofs stop being
@@ -457,7 +463,7 @@ export class City {
       const sx = (x: number) => side * x
       const faceTrackYRot = -side * (Math.PI / 2)
 
-      put(platformSlab, s, group, new THREE.Vector3(sx(PLATFORM_MID), 0.6, 0))
+      put(platformSlab, s, group, new THREE.Vector3(sx(PLATFORM_MID), PLATFORM_TOP - 0.9, 0))
       put(safetyStrip, s, group, new THREE.Vector3(sx(PLATFORM_INNER + 0.3), 1.24, 0))
       put(tactileStrip, s, group, new THREE.Vector3(sx(PLATFORM_INNER + 0.9), 1.23, 0))
       put(roof, s, group, new THREE.Vector3(sx(ROOF_MID), ROOF_Y, 0))
@@ -513,7 +519,7 @@ export class City {
       put(vending, s, group, new THREE.Vector3(sx(PLATFORM_OUTER - 1.2), PLATFORM_TOP + 0.95, -8))
       put(clockPole, s, group, new THREE.Vector3(sx(PLATFORM_OUTER - 1.2), PLATFORM_TOP + 1.3, 22))
       put(clockFace, s, group, new THREE.Vector3(sx(PLATFORM_OUTER - 1.2), PLATFORM_TOP + 2.65, 22), 0, 0, side * Math.PI / 2)
-      put(mapBoard, s, group, new THREE.Vector3(sx(PLATFORM_MID - 1.5), PLATFORM_TOP + 1.4, -28))
+      put(mapBoard, s, group, new THREE.Vector3(sx(PLATFORM_MID - 1.5), PLATFORM_TOP + 1.15, -28))
 
       const prev = STATIONS[prevStationIndex(s)]
       const next = STATIONS[nextStationIndex(s)]

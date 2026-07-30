@@ -488,7 +488,10 @@ export class Scenery {
     const towerBase = this.outwardFrom('kobe', -420)
     const tower = new THREE.Group()
     tower.position.copy(towerBase)
-    tower.position.y = -0.58 // feet buried just under the ground plane
+    // The rolling relief moves ±11.5 at this distance — a flat-earth −0.58
+    // left the feet floating or drowned depending on the seed's noise
+    // (grounding audit, 2026-07-30). Read the actual terrain and sink in.
+    tower.position.y = BASE_GROUND_Y + terrainRelief(towerBase.x, towerBase.z, 420) - 1.6
     const legSpread = 42
     for (const [lx, lz] of [[-1, -1], [1, -1], [-1, 1], [1, 1]]) {
       const leg = new THREE.Mesh(new THREE.CylinderGeometry(2.2, 4.5, 120, 6), this.towerGlowMat)
@@ -515,7 +518,10 @@ export class Scenery {
     const skytreeBase = this.outwardFrom('kanazawa', 950).add(new THREE.Vector3(-300, 0, -700))
     const skytree = new THREE.Group()
     skytree.position.copy(skytreeBase)
-    skytree.position.y = -0.58
+    // Same story as the port tower: out here the relief swings the full ±14.
+    // (600 = far enough that the relief ramp is saturated, like the ground
+    // plane's own vertices at this distance.)
+    skytree.position.y = BASE_GROUND_Y + terrainRelief(skytreeBase.x, skytreeBase.z, 600) - 2
     const st1 = new THREE.Mesh(new THREE.CylinderGeometry(9, 22, 260, 8), this.skytreeGlowMat)
     st1.position.y = 130
     skytree.add(st1)
@@ -1289,6 +1295,14 @@ export class Scenery {
     const dummy = new THREE.Object3D()
     const meshes: THREE.InstancedMesh[] = []
     const counters: number[] = []
+    // The pylon the comment above always promised. The signs used to hang at
+    // an ABSOLUTE height with nothing under them — dark planes nobody read by
+    // day, until the night halos lit them up as a swarm of levitating lights
+    // (Rubén, first lap after the ambience build). Centre-mounted pole,
+    // double-faced banner: the standard Japanese pylon sign.
+    const poleMat = new THREE.MeshStandardMaterial({ color: 0x2b2e33, roughness: 0.85 })
+    const poles = new THREE.InstancedMesh(new THREE.CylinderGeometry(0.09, 0.12, 1, 6), poleMat, (perDesign * NEON_SIGNS.length) / 2)
+    let poleCount = 0
     for (const design of NEON_SIGNS) {
       const tex = makeNeonSignTexture(design.text, design.bg, design.fg)
       const mat = new THREE.MeshStandardMaterial({
@@ -1327,7 +1341,13 @@ export class Scenery {
         const pos = p.clone().addScaledVector(normal, side * off)
         const yaw = Math.atan2(normal.x, normal.z) + (side < 0 ? Math.PI : 0) + (this.rngSignage() - 0.5) * 0.5
         const scale = 0.85 + this.rngSignage() * 0.6
-        const y = 4.5 + this.rngSignage() * 5
+        // Same die the old absolute height burned, re-read as ground
+        // clearance — the draw COUNT must not change or every signage roll
+        // after this one reshuffles.
+        const clearance = 0.6 + this.rngSignage() * 2.2
+        const groundY = groundHeightAt(p.y, off)
+        const half = 2.9 * scale
+        const y = groundY + clearance + half
         // Face roughly across the track so the driver reads them straight on.
         for (const flip of [0, Math.PI]) {
           dummy.position.set(pos.x, y, pos.z)
@@ -1336,16 +1356,32 @@ export class Scenery {
           dummy.updateMatrix()
           meshes[design].setMatrixAt(counters[design]++, dummy.matrix)
         }
+        // One pole per banner pair, buried 0.4 into the ground and reaching
+        // just past the sign's top rail.
+        const poleTop = y + half + 0.12
+        const poleBase = groundY - 0.4
+        dummy.position.set(pos.x, (poleBase + poleTop) / 2, pos.z)
+        dummy.rotation.set(0, 0, 0)
+        dummy.scale.set(1, poleTop - poleBase, 1)
+        dummy.updateMatrix()
+        poles.setMatrixAt(poleCount++, dummy.matrix)
       }
     }
     meshes.forEach((mesh, i) => {
       mesh.count = counters[i]
       mesh.instanceMatrix.needsUpdate = true
+      // Grounded things throw shadows — that anchor is half of what makes
+      // the pylons read as planted rather than parked (Rubén's audit ask).
+      mesh.castShadow = true
       // One group per DESIGN, not one for all the neon: the designs share a
       // geometry and differ only by texture, so a single name would let an
       // instance move between designs without the hash noticing.
       this.scene.add(tagGroup(mesh, `neon-signs-${i}`))
     })
+    poles.count = poleCount
+    poles.instanceMatrix.needsUpdate = true
+    poles.castShadow = true
+    this.scene.add(tagGroup(poles, 'neon-sign-poles'))
   }
 
   /** t of THE level crossing (0.55 into the Tabata→Komagome stretch) — shared by the crossing itself and the hill walls' gap. */
