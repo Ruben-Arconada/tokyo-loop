@@ -197,3 +197,18 @@ test('el retraso no se contabiliza si no se está grabando', () => {
   const costs = JSON.parse(log.export()).costs
   assert.equal(costs['lag:a:tmr-x'], undefined)
 })
+
+test('una grabación nueva no hereda segmentos de la anterior', () => {
+  const log = new PerfLog()
+  log.start({ prueba: 1 }, { programs: 0, textures: 0, texUploads: 0 })
+  log.setSegment('vieja')
+  frame(log, 16, 8, { programs: 0 })
+  log.stop()
+
+  log.start({ prueba: 2 }, { programs: 0, textures: 0, texUploads: 0 })
+  log.setSegment('nueva')
+  frame(log, 16, 8, { programs: 0 })
+  log.stop()
+
+  assert.deepEqual(Object.keys(JSON.parse(log.export()).segments), ['nueva'])
+})

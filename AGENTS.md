@@ -13,8 +13,10 @@ gráfico del ciclo 0.2.0 (atmósfera por distrito, halos, cristal de cabina,
 regla de anclaje al suelo) — **`docs/SISTEMAS-0.2.0.md`**, que además lista
 las condiciones firmadas por el panel; y **`docs/SISTEMAS-0.2.1.md`** para la
 vertical Susukino→Nishiki, el kit modular, los pasajeros híbridos, sus
-presupuestos y la comparación exacta contra 0.2.0. Quien toque gráficos lee
-los dos últimos primero.
+presupuestos y la comparación exacta contra 0.2.0; y
+**`docs/SISTEMAS-0.2.1.2.md`** para el pase de fabricación de cabina, sus
+texturas funcionales y el presupuesto post-merge. Quien toque gráficos lee
+los documentos que afecten a su sistema antes de editarlo.
 
 Dos reglas de ese ciclo que NO se pueden olvidar:
 
@@ -46,6 +48,12 @@ Reglas nacidas en 0.2.1:
    en desarrollo; producción registra la infracción y sigue. El test debe
    ejercer `enforceStatic/HybridArtBudget`, la misma unidad que llama el
    builder.
+9. **Detalle de cabina = ensamblado, no malla por tornillo.** Junta, wipers,
+   biseles, marcos, tornillos e interruptores viven en una malla fusionada; los
+   dos paneles laterales comparten geometría/material/textura. El informe real
+   se expone en `data-cab0212` y no puede pasar 20 draws, 3.500 tri, 10 texturas
+   y debe conservar cero luces/materiales lit. Las tres cámaras siguen siendo
+   parte del contrato.
 
 ## ⚠️ El origen es COMPARTIDO con los demás proyectos (incidente 2026-07-28)
 
@@ -255,6 +263,12 @@ mediodía); `box().rotateX()` gira alrededor del ojo del conductor, usa
 戸締灯 se enciende con puertas CERRADAS; el manómetro es BC/MR (la aguja SUBE
 al frenar); los testigos son aditivos para no tapar su leyenda; y la lluvia de
 `WindshieldFX` se recorta al cristal vía `CabInterior.windscreenNdc()`.
+
+El pase interno 0.2.1.2, publicado como 0.2.2, añade solo fabricación visible:
+gasket panorámico, wipers, biseles, juntas, tornillería, interruptores, 時刻表
+y paneles laterales. No subas esos documentos al HUD ni redibujes sus
+CanvasTexture por frame. El contrato, las capturas y la prueba física preparada
+están en `docs/SISTEMAS-0.2.1.2.md`.
 
 ## Publicar
 

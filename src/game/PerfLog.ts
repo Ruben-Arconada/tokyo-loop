@@ -255,6 +255,11 @@ export class PerfLog {
     this.maxTris = 0
     this.bins = []
     this.hitches = []
+    // A new recording is a new experiment. Without clearing these, running
+    // the cabin probe after the sector A/B exported both sets of rows and even
+    // accumulated repeated labels across sessions.
+    this.segment = null
+    this.segments.clear()
     this.startedAt = performance.now()
     this.binStart = this.startedAt
     this.binFrames = 0

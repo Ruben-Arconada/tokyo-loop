@@ -2,7 +2,17 @@ import * as THREE from 'three'
 import { mergeGeometries } from 'three/examples/jsm/utils/BufferGeometryUtils.js'
 import { CAB_SIDE_WINDOW, FLOOR_Y, HALF_W, ROOF_Y, WALL_T, WINDSCREEN } from './TrainConsist'
 import { MAX_NOTCH, MAX_SPEED_KMH, MIN_NOTCH } from './Train'
-import { gaugeAngle, makeCabAnnunciatorTexture, makeDestinationTexture, makeGaugeFaceTexture, makeScuffedPanelTexture } from './signage'
+import {
+  gaugeAngle,
+  makeCabAnnunciatorTexture,
+  makeCabEquipmentTexture,
+  makeCabSwitchBankTexture,
+  makeCabTimetableTexture,
+  makeDestinationTexture,
+  makeGaugeFaceTexture,
+  makeScuffedPanelTexture,
+} from './signage'
+import { enforceCab0212Budget, type Cab0212Report } from './cab0212Contract'
 
 /**
  * The driver's cab, built from the SAME numbers as the train you see from
@@ -103,6 +113,16 @@ const tilted = (w: number, h: number, d: number, rotX: number, x: number, y: num
   return g
 }
 
+/** A slender box joining two points on the windscreen plane. */
+const barBetween = (x0: number, y0: number, x1: number, y1: number, width: number, depth: number, z: number) => {
+  const dx = x1 - x0
+  const dy = y1 - y0
+  const g = new THREE.BoxGeometry(Math.hypot(dx, dy), width, depth)
+  g.rotateZ(Math.atan2(dy, dx))
+  g.translate((x0 + x1) / 2, (y0 + y1) / 2, z)
+  return g
+}
+
 /**
  * `mergeGeometries` returns null when the list mixes indexed and non-indexed
  * geometry, which is the trap this project has already fallen into once
@@ -158,6 +178,30 @@ function bakeShading(geo: THREE.BufferGeometry, tint: THREE.Color) {
   geo.setAttribute('color', new THREE.BufferAttribute(colors, 3))
 }
 
+/** Measures the actual post-merge cost rather than an aspirational design list. */
+function measureCab0212(group: THREE.Group): Cab0212Report {
+  let draws = 0
+  let triangles = 0
+  let lights = 0
+  let unlit = true
+  const textures = new Set<THREE.Texture>()
+  group.traverse((object) => {
+    if ((object as THREE.Light).isLight) lights++
+    const mesh = object as THREE.Mesh
+    if (!mesh.isMesh) return
+    const materials = Array.isArray(mesh.material) ? mesh.material : [mesh.material]
+    draws += materials.length
+    const count = mesh.geometry.index?.count ?? mesh.geometry.getAttribute('position')?.count ?? 0
+    triangles += Math.floor(count / 3)
+    for (const material of materials) {
+      if (!(material as THREE.MeshBasicMaterial).isMeshBasicMaterial) unlit = false
+      const map = (material as THREE.MeshBasicMaterial).map
+      if (map) textures.add(map)
+    }
+  })
+  return { draws, triangles, textures: textures.size, lights, unlit }
+}
+
 export interface CabInstrumentState {
   speedKmh: number
   notch: number
@@ -189,6 +233,7 @@ function frostRng(seed: number) {
 
 export class CabInterior {
   readonly group = new THREE.Group()
+  readonly report: Cab0212Report
 
   private readonly glassCanvas = document.createElement('canvas')
   private glassTex!: THREE.CanvasTexture
@@ -287,12 +332,16 @@ export class CabInterior {
     this.ebLamp = this.makeLamp(0xff4436, -0.84)
     this.buildControls()
     this.buildFittings(deskMat)
+    this.buildDetails()
     this.buildGlass()
 
     // No light in here at all. Every surface is unlit with its shading baked
     // in, so a lamp would have nothing to illuminate — the warm pool it used
     // to cast is now a tint on the room multiplier, which costs nothing and
     // cannot be thrown off by whichever way the train is pointing.
+    this.report = measureCab0212(this.group)
+    enforceCab0212Budget(this.report, import.meta.env.DEV)
+    if (import.meta.env.DEV) document.documentElement.dataset.cab0212 = JSON.stringify(this.report)
   }
 
   // ── Structure ─────────────────────────────────────────────────────────────
@@ -429,7 +478,9 @@ export class CabInterior {
     // desk actually carries — a switch bank, the horn plunger, a document tray.
     const bank = tilted(0.46, 0.035, 0.20, 0.16, -1.24, DESK_TOP + 0.06, fwd(1.16))
     parts.push(bank)
-    parts.push(box(0.30, 0.05, 0.17, 1.22, DESK_TOP + 0.07, fwd(1.2)))
+    // Full timetable tray. The old 30×17 cm block claimed to be a document
+    // holder but could not visibly hold even one sheet from this camera.
+    parts.push(tilted(0.50, 0.025, 0.34, 0.30, 1.22, DESK_TOP + 0.075, fwd(1.2)))
     parts.push(box(0.055, 0.075, 0.055, 0.9, DESK_TOP + 0.08, fwd(1.22)))
 
     const geo = merge([...parts, ...this.trim])
@@ -685,6 +736,156 @@ export class CabInterior {
     const mesh = new THREE.Mesh(geo, mat)
     this.group.add(mesh)
     this.disposables.push(geo)
+  }
+
+  /**
+   * The 0.2.1.2 manufacturing pass.
+   *
+   * The previous cab had the correct room and correct instruments but most of
+   * them still read as artwork stuck to one grey slab. One fused dark-accent
+   * mesh now supplies the things that make a desk feel assembled: rubber
+   * gasket, steel wipers, gauge bezels, panel seams, screws and switch toggles.
+   * Three small authored planes carry information that geometry cannot at
+   * phone size: the switch labels, timetable and side-wall service plate.
+   */
+  private buildDetails() {
+    const accents: THREE.BufferGeometry[] = []
+    const z = SCREEN_Z + 0.078
+    const glassW = WINDSCREEN.outer * 2.06
+    const glassH = (SCREEN_TOP - SCREEN_BOTTOM) * 1.035
+
+    // Panoramic rubber gasket. Still no centre pillar: the view contract wins.
+    accents.push(box(glassW, 0.045, 0.035, 0, SCREEN_BOTTOM - 0.012, z))
+    accents.push(box(glassW, 0.045, 0.035, 0, SCREEN_TOP + 0.012, z))
+    for (const side of [-1, 1]) {
+      accents.push(box(0.045, glassH, 0.035, side * glassW / 2, (SCREEN_TOP + SCREEN_BOTTOM) / 2, z))
+    }
+
+    // Two real parked wipers, built in pane space. The glass dressing already
+    // carries the faint swept haze; these are the hardware that explains it.
+    for (const side of [-1, 1]) {
+      const pivotX = side * 1.25
+      const elbowX = side * 0.58
+      const tipX = side * 0.14
+      const baseY = SCREEN_BOTTOM + 0.055
+      accents.push(barBetween(pivotX, baseY, elbowX, baseY + 0.08, 0.026, 0.024, z + 0.015))
+      accents.push(barBetween(elbowX, baseY + 0.08, tipX, baseY + 0.14, 0.018, 0.021, z + 0.018))
+      accents.push(barBetween(side * 0.86, baseY + 0.075, side * 0.17, baseY + 0.165, 0.034, 0.018, z + 0.022))
+    }
+
+    // Raised frames around the flat instruments.
+    const frame = (x: number, along: number, w: number, h: number) => {
+      const top = this.gaugeMount(x, BINNACLE_FACE + 0.007, along + h / 2)
+      const bottom = this.gaugeMount(x, BINNACLE_FACE + 0.007, along - h / 2)
+      const left = this.gaugeMount(x - w / 2, BINNACLE_FACE + 0.007, along)
+      const right = this.gaugeMount(x + w / 2, BINNACLE_FACE + 0.007, along)
+      accents.push(tilted(w, 0.018, 0.018, -BINNACLE_TILT, top.pos.x, top.pos.y, top.pos.z))
+      accents.push(tilted(w, 0.018, 0.018, -BINNACLE_TILT, bottom.pos.x, bottom.pos.y, bottom.pos.z))
+      accents.push(tilted(0.018, h, 0.018, -BINNACLE_TILT, left.pos.x, left.pos.y, left.pos.z))
+      accents.push(tilted(0.018, h, 0.018, -BINNACLE_TILT, right.pos.x, right.pos.y, right.pos.z))
+    }
+    frame(-1.02, 0.075, 0.60, 0.20)
+    frame(-1.02, -0.145, 0.62, 0.18)
+    frame(0.95, 0.02, 0.62, 0.19)
+    frame(1.43, -0.075, 0.35, 0.29)
+
+    // Physical bezels around both dial textures.
+    for (const [x, radius] of [[-0.36, 0.175], [0.24, 0.125]] as const) {
+      const mount = this.gaugeMount(x, BINNACLE_FACE + 0.007)
+      const ring = new THREE.TorusGeometry(radius + 0.011, 0.012, 6, 28)
+      ring.rotateX(mount.rotX)
+      ring.translate(mount.pos.x, mount.pos.y, mount.pos.z)
+      accents.push(ring)
+    }
+
+    // Binnacle seam and fasteners: enough to show separate service panels
+    // without drawing a grid over the controls.
+    {
+      const seam = this.gaugeMount(0, BINNACLE_FACE + 0.006, -0.19)
+      accents.push(tilted(DESK_HALF_W * 1.75, 0.012, 0.016, -BINNACLE_TILT, seam.pos.x, seam.pos.y, seam.pos.z))
+      for (const x of [-1.53, -0.68, 0.58, 1.52]) {
+        for (const along of [-0.18, 0.19]) {
+          const mount = this.gaugeMount(x, BINNACLE_FACE + 0.014, along)
+          const screw = new THREE.CylinderGeometry(0.012, 0.012, 0.016, 6)
+          screw.rotateX(Math.PI / 2 - BINNACLE_TILT)
+          screw.translate(mount.pos.x, mount.pos.y, mount.pos.z)
+          accents.push(screw)
+        }
+      }
+    }
+
+    // Five physical toggles over their single labelled face, on the front
+    // plane where the driver's normal view can actually see them.
+    for (let i = 0; i < 5; i++) {
+      const mount = this.gaugeMount(-1.02 + (i - 2) * 0.112, BINNACLE_FACE + 0.021, -0.145)
+      accents.push(tilted(0.024, 0.052, 0.025, -BINNACLE_TILT, mount.pos.x, mount.pos.y, mount.pos.z))
+    }
+
+    // A dark lip at the near edge makes the desk read as a moulded assembly
+    // rather than one uninterrupted horizontal plane.
+    accents.push(box(DESK_HALF_W * 1.98, 0.035, 0.035, 0, DESK_TOP + 0.047, DESK_NEAR_Z - 0.015))
+
+    const accentGeo = merge(accents)
+    bakeShading(accentGeo, new THREE.Color(0x303531))
+    const accentMat = new THREE.MeshBasicMaterial({ vertexColors: true, toneMapped: false })
+    const accentMesh = new THREE.Mesh(accentGeo, accentMat)
+    this.group.add(accentMesh)
+    this.roomMats.push(accentMat)
+    this.disposables.push(accentGeo, accentMat)
+
+    const addMappedPlane = (
+      geometry: THREE.PlaneGeometry,
+      texture: THREE.CanvasTexture,
+      position: THREE.Vector3,
+      rotation: THREE.Euler,
+    ) => {
+      const material = new THREE.MeshBasicMaterial({ map: texture, toneMapped: false })
+      const mesh = new THREE.Mesh(geometry, material)
+      mesh.position.copy(position)
+      mesh.rotation.copy(rotation)
+      this.group.add(mesh)
+      this.roomMats.push(material)
+      this.disposables.push(geometry, texture, material)
+    }
+
+    // Switch labels under the annunciators, in the normal driving view.
+    const switches = this.gaugeMount(-1.02, BINNACLE_FACE + 0.004, -0.145)
+    addMappedPlane(
+      new THREE.PlaneGeometry(0.60, 0.18),
+      makeCabSwitchBankTexture(),
+      switches.pos,
+      new THREE.Euler(-BINNACLE_TILT, 0, 0),
+    )
+
+    // A real clipped 時刻表, raised onto the right service panel so it remains
+    // legible without changing the driver's eye or tilting the camera down.
+    const timetable = this.gaugeMount(1.43, BINNACLE_FACE + 0.004, -0.075)
+    addMappedPlane(
+      new THREE.PlaneGeometry(0.33, 0.27),
+      makeCabTimetableTexture(),
+      timetable.pos,
+      new THREE.Euler(-BINNACLE_TILT, 0, 0),
+    )
+
+    // Side-wall line-voltage/speaker/safety assemblies. Both share one merged
+    // geometry and one texture, so looking either way reveals a working room
+    // without paying a second draw.
+    {
+      const panels: THREE.BufferGeometry[] = []
+      for (const side of [-1, 1]) {
+        const panel = new THREE.PlaneGeometry(0.62, 1.06)
+        panel.rotateY(-side * Math.PI / 2)
+        panel.translate(side * (INNER_HALF_W - 0.062), -0.02, fwd(0.42))
+        panels.push(panel)
+      }
+      const geometry = merge(panels)
+      const texture = makeCabEquipmentTexture()
+      const material = new THREE.MeshBasicMaterial({ map: texture, toneMapped: false })
+      const mesh = new THREE.Mesh(geometry, material)
+      this.group.add(mesh)
+      this.roomMats.push(material)
+      this.disposables.push(geometry, texture, material)
+    }
   }
 
   /**

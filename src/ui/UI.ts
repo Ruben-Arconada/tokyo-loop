@@ -34,6 +34,8 @@ export interface UICallbacks {
   onPerfToggle: () => void
   /** The automated probe: the game drives the whole diagnostic itself. Today it A/Bs the ring sectorisation; it used to hunt the per-station hitch, which is closed. */
   onProbeStart: () => void
+  /** Worst-case mobile cabin run: winter + blizzard + night, split into early/late thermal halves. */
+  onCabProbeStart: () => void
   onPerfExport: () => string
   onPerfClear: () => void
 }
@@ -676,6 +678,7 @@ export class UI {
           <span class="perf-title">Rendimiento</span>
           <button class="btn-perf">Medir rendimiento</button>
           <button class="btn-probe">🧪 Prueba A/B de sectores (auto, ~2 min)</button>
+          <button class="btn-probe btn-cab-probe">🚃 Prueba móvil de cabina (auto, ~6 min)</button>
           <p class="perf-headline">Sin datos todavía.</p>
           <div class="perf-actions hidden">
             <button class="btn-perf-copy">Copiar log</button>
@@ -714,6 +717,10 @@ export class UI {
     el.querySelector('.btn-probe')!.addEventListener('click', () => {
       this.toggleMenu()
       this.cb.onProbeStart()
+    })
+    el.querySelector('.btn-cab-probe')!.addEventListener('click', () => {
+      this.toggleMenu()
+      this.cb.onCabProbeStart()
     })
     // Clipboard writes must happen inside the gesture, so the export runs here
     // rather than being pushed in from the game loop.

@@ -1100,9 +1100,9 @@ body.cctv-look .game-canvas {
   cursor: pointer;
 }
 .btn-perf.recording { background: rgba(255, 92, 92, 0.22); border-color: rgba(255, 92, 92, 0.7); }
-/* Same shape as the manual button, one step quieter: it is the recommended
-   route, but it takes two minutes and drives the train, so it should not read
-   as the casual option. Keeps the 44px touch target. */
+/* Same shape as the manual button, one step quieter: these automated routes
+   take minutes and drive the train, so they should not read as casual options.
+   Both keep the 44px touch target. */
 .btn-probe {
   width: 100%;
   margin-top: var(--space-2);

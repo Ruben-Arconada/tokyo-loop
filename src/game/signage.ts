@@ -775,3 +775,188 @@ export function makeCabAnnunciatorTexture(labels: string[]): THREE.CanvasTexture
   tex.colorSpace = THREE.SRGBColorSpace
   return tex
 }
+
+/**
+ * The clipped paper timetable on the driver's desk.
+ *
+ * It is intentionally a single small texture instead of geometry per row:
+ * the card needs to read as real operating paperwork, but no phone will ever
+ * resolve raised letters at this size. The times are part of the cab artwork,
+ * not the simulation clock.
+ */
+export function makeCabTimetableTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas')
+  canvas.width = 384
+  canvas.height = 512
+  const ctx = canvas.getContext('2d')!
+
+  ctx.fillStyle = '#ddd8c7'
+  ctx.fillRect(0, 0, canvas.width, canvas.height)
+  ctx.strokeStyle = '#34352f'
+  ctx.lineWidth = 7
+  ctx.strokeRect(10, 10, canvas.width - 20, canvas.height - 20)
+
+  ctx.fillStyle = '#252720'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.font = '700 28px "Hiragino Sans", "Yu Gothic", sans-serif'
+  ctx.fillText('運転時刻表（下り）', canvas.width / 2, 43)
+
+  const rows = [
+    ['東京', '08:11', '08:11'],
+    ['横浜', '08:18', '08:19'],
+    ['すすきの', '08:25', '08:26'],
+    ['錦', '08:32', '08:33'],
+    ['奈良', '08:39', '08:40'],
+    ['高野山', '08:47', '08:48'],
+    ['金沢', '08:55', '08:56'],
+    ['高山', '09:03', '09:04'],
+  ] as const
+  const x = [20, 176, 274, 364]
+  const top = 68
+  const rowH = 51
+
+  ctx.strokeStyle = '#55574e'
+  ctx.lineWidth = 2
+  for (const xx of x) {
+    ctx.beginPath()
+    ctx.moveTo(xx, top)
+    ctx.lineTo(xx, top + rowH * (rows.length + 1))
+    ctx.stroke()
+  }
+  for (let r = 0; r <= rows.length + 1; r++) {
+    const yy = top + r * rowH
+    ctx.beginPath()
+    ctx.moveTo(x[0], yy)
+    ctx.lineTo(x[x.length - 1], yy)
+    ctx.stroke()
+  }
+
+  ctx.font = '700 20px "Hiragino Sans", "Yu Gothic", sans-serif'
+  ctx.fillText('駅名', (x[0] + x[1]) / 2, top + rowH / 2)
+  ctx.fillText('着', (x[1] + x[2]) / 2, top + rowH / 2)
+  ctx.fillText('発', (x[2] + x[3]) / 2, top + rowH / 2)
+
+  ctx.font = '600 19px "Hiragino Sans", "Yu Gothic", sans-serif'
+  rows.forEach((row, i) => {
+    const cy = top + rowH * (i + 1.5)
+    ctx.fillText(row[0], (x[0] + x[1]) / 2, cy)
+    ctx.fillText(row[1], (x[1] + x[2]) / 2, cy)
+    ctx.fillText(row[2], (x[2] + x[3]) / 2, cy)
+  })
+
+  const tex = new THREE.CanvasTexture(canvas)
+  tex.colorSpace = THREE.SRGBColorSpace
+  tex.anisotropy = 4
+  return tex
+}
+
+/** Five labelled desk switches, baked into one face under five physical toggles. */
+export function makeCabSwitchBankTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas')
+  canvas.width = 640
+  canvas.height = 192
+  const ctx = canvas.getContext('2d')!
+
+  ctx.fillStyle = '#343a35'
+  ctx.fillRect(0, 0, canvas.width, canvas.height)
+  ctx.strokeStyle = '#171a18'
+  ctx.lineWidth = 8
+  ctx.strokeRect(8, 8, canvas.width - 16, canvas.height - 16)
+
+  const labels = ['前照灯', '室内灯', '電笛', 'パンタ', '制御電源']
+  const cell = canvas.width / labels.length
+  labels.forEach((label, i) => {
+    const cx = cell * (i + 0.5)
+    ctx.fillStyle = '#d7d0b8'
+    ctx.font = '700 27px "Hiragino Sans", "Yu Gothic", sans-serif'
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    ctx.fillText(label, cx, 40)
+    ctx.fillStyle = '#151816'
+    ctx.fillRect(cx - 27, 68, 54, 68)
+    ctx.strokeStyle = '#73796f'
+    ctx.lineWidth = 4
+    ctx.strokeRect(cx - 27, 68, 54, 68)
+    ctx.fillStyle = '#aaa994'
+    ctx.font = '600 19px "Hiragino Sans", "Yu Gothic", sans-serif'
+    ctx.fillText(i < 3 ? '切　入' : '下　上', cx, 165)
+  })
+
+  const tex = new THREE.CanvasTexture(canvas)
+  tex.colorSpace = THREE.SRGBColorSpace
+  tex.anisotropy = 4
+  return tex
+}
+
+/**
+ * One service plate for the cab side wall: line-voltage dial, speaker grille
+ * and safety labels. These fittings are read at a grazing angle, so one
+ * authored plane communicates more than a handful of tiny 3D boxes would.
+ */
+export function makeCabEquipmentTexture(): THREE.CanvasTexture {
+  const canvas = document.createElement('canvas')
+  canvas.width = 256
+  canvas.height = 512
+  const ctx = canvas.getContext('2d')!
+
+  ctx.fillStyle = '#323832'
+  ctx.fillRect(0, 0, canvas.width, canvas.height)
+  ctx.strokeStyle = '#111411'
+  ctx.lineWidth = 8
+  ctx.strokeRect(8, 8, canvas.width - 16, canvas.height - 16)
+
+  ctx.fillStyle = '#d8cfb1'
+  ctx.textAlign = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.font = '700 24px "Hiragino Sans", "Yu Gothic", sans-serif'
+  ctx.fillText('架線電圧', canvas.width / 2, 34)
+
+  ctx.fillStyle = '#171a18'
+  ctx.beginPath()
+  ctx.arc(canvas.width / 2, 116, 70, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.strokeStyle = '#8e9488'
+  ctx.lineWidth = 6
+  ctx.stroke()
+  ctx.fillStyle = '#dcd8ca'
+  ctx.font = '700 22px Arial, sans-serif'
+  ctx.fillText('1.5', canvas.width / 2, 111)
+  ctx.font = '600 15px Arial, sans-serif'
+  ctx.fillText('kV', canvas.width / 2, 139)
+  ctx.strokeStyle = '#f0ba54'
+  ctx.lineWidth = 5
+  ctx.beginPath()
+  ctx.moveTo(canvas.width / 2, 116)
+  ctx.lineTo(92, 151)
+  ctx.stroke()
+
+  ctx.fillStyle = '#181b19'
+  ctx.fillRect(35, 206, 186, 112)
+  ctx.fillStyle = '#6f756c'
+  for (let y = 224; y < 306; y += 16) {
+    for (let x = 55; x < 210; x += 18) {
+      ctx.beginPath()
+      ctx.arc(x, y, 4.2, 0, Math.PI * 2)
+      ctx.fill()
+    }
+  }
+
+  const plates = [
+    ['信号炎管', '#d6cbb0', '#292b26'],
+    ['非常通報', '#b4483c', '#fff0db'],
+  ] as const
+  plates.forEach(([label, bg, fg], i) => {
+    const y = 348 + i * 67
+    ctx.fillStyle = bg
+    ctx.fillRect(31, y, 194, 48)
+    ctx.fillStyle = fg
+    ctx.font = '700 24px "Hiragino Sans", "Yu Gothic", sans-serif'
+    ctx.fillText(label, canvas.width / 2, y + 25)
+  })
+
+  const tex = new THREE.CanvasTexture(canvas)
+  tex.colorSpace = THREE.SRGBColorSpace
+  tex.anisotropy = 4
+  return tex
+}

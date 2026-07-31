@@ -9,7 +9,7 @@ import { Precipitation } from './Precipitation'
 import { TrainConsist, CAB_OFFSET } from './TrainConsist'
 import { CabInterior } from './CabInterior'
 import { requestedSectors, sectorizeWorld, setSectorsEnabled, type SectorizeReport } from './sectorize'
-import { probeLegPlan } from './probePlan'
+import { cabProbeSegment, probeLegPlan } from './probePlan'
 import { AmbienceTrack } from './zoneAmbience'
 import { GlowCards } from './glowCards'
 import { ArtPass021, type ArtPass021Report } from './ArtPass021'
@@ -492,7 +492,8 @@ export class Game {
       },
       onTeleport: (idx) => this.teleportToStation(idx),
       onPerfToggle: () => this.togglePerfRecording(),
-      onProbeStart: () => this.startProbe(),
+      onProbeStart: () => this.startProbe('sectors'),
+      onCabProbeStart: () => this.startProbe('cab'),
       onPerfExport: () => (this.perf.frames > 0 ? this.perf.export() : PerfLog.stored()),
       onPerfClear: () => {
         PerfLog.clearStored()
@@ -592,7 +593,7 @@ export class Game {
    * the moment it starts, because a frame-time number without the context it
    * was measured in is unfalsifiable.
    */
-  private togglePerfRecording(persistDuringRun = true) {
+  private togglePerfRecording(persistDuringRun = true, runContext: Record<string, unknown> = {}) {
     if (this.perf.recording) {
       this.perf.stop()
       setActivePerfLog(null)
@@ -645,6 +646,7 @@ export class Game {
         // work at all; this says whether the honest measurement is on the
         // table here or whether we are stuck with inference.
         gpuTimer: !!gl.getExtension('EXT_disjoint_timer_query_webgl2'),
+        ...runContext,
       }, {
         // Read here, before the lap's first render. Inferring this from the
         // first sample instead would fold whatever that render compiled into
@@ -1831,6 +1833,12 @@ export class Game {
   private static readonly PROBE_AB = true
   /** Four visits each — the first two arrive cold, the rest with everything already warm. */
   private static readonly PROBE_LEGS = 8
+  /**
+   * Three times the A/B run: long enough to cross the six-minute point where
+   * the reference iPhone previously throttled. Twelve legs per half keep the
+   * same two station approaches balanced in both thermal windows.
+   */
+  private static readonly CAB_PROBE_LEGS = 24
   /** After the announcement fires, keep going: the speech itself starts a couple of seconds later. */
   private static readonly PROBE_LINGER_SECONDS = 5
   /** A leg that never announces (something went wrong) must not hang the run. */
@@ -1839,32 +1847,76 @@ export class Game {
   /** Frames to draw in the cab BEFORE recording starts — see `arming` in startProbe. */
   private static readonly PROBE_ARM_FRAMES = 3
 
-  private probe: { leg: number; linger: number; legTime: number; arming: number; cameraBefore: CameraMode; abReady: boolean } | null = null
+  private probe: {
+    kind: 'sectors' | 'cab'
+    leg: number
+    totalLegs: number
+    linger: number
+    legTime: number
+    arming: number
+    cameraBefore: CameraMode
+    seasonBefore: Season
+    weatherBefore: Weather
+    weatherAutoBefore: boolean
+    hourBefore: number
+    timeScaleBefore: number
+    abReady: boolean
+  } | null = null
 
   /**
    * Runs the whole diagnostic by itself: forces the cab view, starts the
    * recording, alternates the two stations waiting for each arrival, then
    * stops and opens the menu with the log ready to copy.
    */
-  private startProbe() {
+  private startProbe(kind: 'sectors' | 'cab') {
     if (!this.started || this.probe) return
     if (this.perf.recording) this.togglePerfRecording()
-    const cameraBefore = this.cameraMode
+    const before = {
+      cameraBefore: this.cameraMode,
+      seasonBefore: this.season,
+      weatherBefore: this.weather,
+      weatherAutoBefore: this.weatherAuto,
+      hourBefore: this.dayNight.timeOfDay,
+      timeScaleBefore: this.timeScale,
+    }
     this.setCameraMode('cab')
+    this.lookYaw = 0
+    this.lookPitch = 0
+    if (kind === 'cab') {
+      // Reproducible worst case for the newly published cabin: the heaviest
+      // precipitation costume, a closed winter sky and no moving clock. These
+      // are temporary test conditions; endProbe restores every prior setting.
+      this.timeScale = 0
+      this.dayNight.timeOfDay = 22
+      this.setWeatherAuto(false)
+      this.season = 'winter'
+      this.weather = 'storm'
+      this.applyAtmosphere()
+    }
     // Armed for a few frames before recording begins: coming from an outside
     // view, the cab's own textures and shaders reach the GPU on its first
     // draw, and starting the log before that would open the lap with a spike
     // that belongs to the camera switch and not to any station.
     // The A/B needs both worlds on hand. Built lazily HERE, not at startup:
     // the pass costs a couple hundred ms and only the probe wants it.
-    const abReady = Game.PROBE_AB && (this.sectorReport.pairs.length > 0 || (this.sectorReport = sectorizeWorld(this.scene, { sectors: 6 })).pairs.length > 0)
-    this.probe = { leg: -1, linger: 0, legTime: 0, arming: Game.PROBE_ARM_FRAMES, cameraBefore, abReady }
+    const abReady = kind === 'sectors' && Game.PROBE_AB
+      && (this.sectorReport.pairs.length > 0 || (this.sectorReport = sectorizeWorld(this.scene, { sectors: 6 })).pairs.length > 0)
+    this.probe = {
+      kind,
+      totalLegs: kind === 'cab' ? Game.CAB_PROBE_LEGS : Game.PROBE_LEGS,
+      leg: -1,
+      linger: 0,
+      legTime: 0,
+      arming: Game.PROBE_ARM_FRAMES,
+      ...before,
+      abReady,
+    }
   }
 
   private nextProbeLeg() {
     const p = this.probe!
     p.leg++
-    if (p.leg >= Game.PROBE_LEGS) {
+    if (p.leg >= p.totalLegs) {
       this.finishProbe()
       return
     }
@@ -1885,13 +1937,20 @@ export class Game {
       const label = plan.sectorsOn ? 'sectors:on' : 'sectors:off'
       perfMark(label)
       this.perf.setSegment(label)
+    } else if (p.kind === 'cab') {
+      const label = cabProbeSegment(p.leg, p.totalLegs)
+      // The two rows answer the thermal question directly. Mark only the
+      // boundary; repeating the same tag every leg would drown useful events.
+      if (p.leg === 0 || p.leg === p.totalLegs / 2) perfMark(label)
+      this.perf.setSegment(label)
     }
     this.teleportToStation(Game.PROBE_STATIONS[plan.stationSlot])
     // Full power: the leg is 300 units and we want it driven, not crawled.
     this.train.setNotch(MAX_NOTCH)
     this.controls.syncNotch(MAX_NOTCH)
     const abLabel = p.abReady ? (plan.sectorsOn ? ' · sectores ON' : ' · sectores OFF') : ''
-    this.ui.showProbeToast(`Prueba A/B sectores${this.muted ? ' (SILENCIADA)' : ''} — tramo ${p.leg + 1} de ${Game.PROBE_LEGS}${abLabel}`)
+    const label = p.kind === 'cab' ? 'Prueba móvil cabina · invierno + ventisca + noche' : 'Prueba A/B sectores'
+    this.ui.showProbeToast(`${label}${this.muted ? ' (SILENCIADA)' : ''} — tramo ${p.leg + 1} de ${p.totalLegs}${abLabel}`)
   }
 
   private updateProbe(dt: number) {
@@ -1904,7 +1963,9 @@ export class Game {
         // that store on its own schedule and the flush would land exactly
         // where the unexplained stall lands — outside every timer we own.
         // The run stops by itself, and stopping persists.
-        this.togglePerfRecording(false)
+        this.togglePerfRecording(false, p.kind === 'cab'
+          ? { probe: 'cab-mobile', cab0212: this.cab.report }
+          : { probe: 'sectors-ab' })
         this.nextProbeLeg()
       }
       return
@@ -1927,10 +1988,11 @@ export class Game {
 
   /** Pausing mid-run makes the log unusable, so say so instead of leaving a half-run behind. */
   private abortProbe() {
+    const minutes = this.probe?.kind === 'cab' ? 6 : 2
     this.endProbe()
     this.ui.showHint(
       'Prueba cancelada',
-      'Se ha pausado a mitad, y eso deja recursos cargados fuera del registro: el log ya no diría la verdad. Vuelve a lanzarla y déjala terminar sola (unos 2 minutos).',
+      `Se ha pausado a mitad, y eso deja recursos cargados fuera del registro: el log ya no diría la verdad. Vuelve a lanzarla y déjala terminar sola (unos ${minutes} minutos).`,
     )
   }
 
@@ -1940,11 +2002,19 @@ export class Game {
     this.train.setNotch(0)
     this.controls.syncNotch(0)
     if (this.perf.recording) this.togglePerfRecording()
+    this.perf.setSegment(null)
     // However the run ended, the world goes back to WHOLE: the sectorised
     // copy is a measurement rig, not (yet) how the game ships.
     if (p.abReady) {
       setSectorsEnabled(this.sectorReport, false)
-      this.perf.setSegment(null)
+    }
+    if (p.kind === 'cab') {
+      this.timeScale = p.timeScaleBefore
+      this.dayNight.timeOfDay = p.hourBefore
+      this.season = p.seasonBefore
+      this.weather = p.weatherBefore
+      this.setWeatherAuto(p.weatherAutoBefore)
+      this.applyAtmosphere()
     }
     this.setCameraMode(p.cameraBefore)
   }

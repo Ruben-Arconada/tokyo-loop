@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { probeLegPlan } from '../src/game/probePlan.ts'
+import { cabProbeSegment, probeLegPlan } from '../src/game/probePlan.ts'
 
 // ————————————————————————————————————————————————————————————————
 // The A/B probe's schedule, which shipped confounded once: station and
@@ -47,4 +47,12 @@ test('stations alternate every leg so the destination roll rebuilds', () => {
 test('both conditions get the same share of legs', () => {
   const on = Array.from({ length: LEGS }, (_, leg) => probeLegPlan(leg, STATIONS)).filter((p) => p.sectorsOn).length
   assert.equal(on, LEGS / 2)
+})
+
+test('the six-minute cabin probe has two equal thermal windows', () => {
+  const labels = Array.from({ length: 24 }, (_, leg) => cabProbeSegment(leg, 24))
+  assert.equal(labels.filter((label) => label === 'cab:first-half').length, 12)
+  assert.equal(labels.filter((label) => label === 'cab:second-half').length, 12)
+  assert.equal(labels[11], 'cab:first-half')
+  assert.equal(labels[12], 'cab:second-half')
 })

@@ -30,3 +30,14 @@ export function probeLegPlan(leg: number, stationCount: number): ProbeLeg {
     sectorsOn: ((leg + 1) >> 1) % 2 === 1,
   }
 }
+
+export type CabProbeSegment = 'cab:first-half' | 'cab:second-half'
+
+/**
+ * Splits the long cabin run into two equal thermal windows. The names describe
+ * time order only: whether the second half is actually hotter is what the
+ * physical phone test must establish.
+ */
+export function cabProbeSegment(leg: number, totalLegs: number): CabProbeSegment {
+  return leg < totalLegs / 2 ? 'cab:first-half' : 'cab:second-half'
+}
