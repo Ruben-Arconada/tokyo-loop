@@ -31,13 +31,19 @@ export function probeLegPlan(leg: number, stationCount: number): ProbeLeg {
   }
 }
 
-export type CabProbeSegment = 'cab:first-half' | 'cab:second-half'
+export type GraphicsProbeSegment =
+  | 'control:nishiki:first-half'
+  | 'green:nara:first-half'
+  | 'control:nishiki:second-half'
+  | 'green:nara:second-half'
 
 /**
  * Splits the long cabin run into two equal thermal windows. The names describe
  * time order only: whether the second half is actually hotter is what the
  * physical phone test must establish.
  */
-export function cabProbeSegment(leg: number, totalLegs: number): CabProbeSegment {
-  return leg < totalLegs / 2 ? 'cab:first-half' : 'cab:second-half'
+export function graphicsProbeSegment(leg: number, totalLegs: number, stationSlot: number): GraphicsProbeSegment {
+  const place = stationSlot === 0 ? 'control:nishiki' : 'green:nara'
+  const thermalWindow = leg < totalLegs / 2 ? 'first-half' : 'second-half'
+  return `${place}:${thermalWindow}`
 }

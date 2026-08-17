@@ -128,6 +128,7 @@ export type WorldStream =
   | 'art021-backdrop' // 0.2.1: composition-only offsets for the legacy skyline
   | 'art021-susukino-edge' // 0.2.1: near-track urban vertical slice
   | 'art021-nishiki-edge' // 0.2.1: near-track market vertical slice
+  | 'art023-nara-edge' // 0.2.3: fused green park edge between Nishiki and Nara
 
 /**
  * A seeded stand-in for `Math.random` that also carries the small helpers the

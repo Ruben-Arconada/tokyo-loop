@@ -32,6 +32,7 @@ if (import.meta.env.DEV) {
     static: game.artReport,
     hybrid: game.passengerArtReport,
   })
+  document.documentElement.dataset.art023 = JSON.stringify(game.art023Report)
   // The audio singleton has no other reachable handle, and every sound in the
   // game is synthesized — reading gain nodes from the console is the only way
   // to check a mix without ears on the device.

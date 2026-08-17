@@ -616,15 +616,13 @@ export class City {
         break
       }
       case 'nara': {
+        // ArtPass023 replaces these ten trunks + ten crowns with one fused
+        // park batch. Preserve the exact thirty city-stream draws (radius,
+        // x, z × 10) so every landmark built after Nara keeps its 0.2.2 seed.
         for (let i = 0; i < 10; i++) {
-          const trunk = new THREE.Mesh(new THREE.CylinderGeometry(0.5, 0.7, 4), new THREE.MeshStandardMaterial({ color: 0x4a3527 }))
-          const canopy = new THREE.Mesh(new THREE.SphereGeometry(3 + this.rngCity() * 2, 8, 6), new THREE.MeshStandardMaterial({ color: 0x5f8a4a, roughness: 1 }))
-          const gx = -30 - this.rngCity() * 30
-          const gz = 20 + this.rngCity() * 20
-          trunk.position.set(gx, 2, gz)
-          canopy.position.set(gx, 5.5, gz)
-          trunk.castShadow = canopy.castShadow = true
-          group.add(trunk, canopy)
+          this.rngCity()
+          this.rngCity()
+          this.rngCity()
         }
         break
       }

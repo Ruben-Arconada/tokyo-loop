@@ -9,10 +9,11 @@ import { Precipitation } from './Precipitation'
 import { TrainConsist, CAB_OFFSET } from './TrainConsist'
 import { CabInterior } from './CabInterior'
 import { requestedSectors, sectorizeWorld, setSectorsEnabled, type SectorizeReport } from './sectorize'
-import { cabProbeSegment, probeLegPlan } from './probePlan'
+import { graphicsProbeSegment, probeLegPlan } from './probePlan'
 import { AmbienceTrack } from './zoneAmbience'
 import { GlowCards } from './glowCards'
 import { ArtPass021, type ArtPass021Report } from './ArtPass021'
+import { ArtPass023, type ArtPass023Report } from './ArtPass023'
 import type { HybridPassengerReport } from './HybridPassengers021'
 import { NEON_SIGNS } from './Scenery'
 import type { CameraMode } from './cameraModes'
@@ -186,6 +187,7 @@ export class Game {
   private train: Train
   private city: City
   private artPass021: ArtPass021
+  private artPass023: ArtPass023
   private passengers: Passengers
   private scenery: Scenery
   private dayNight: DayNightCycle
@@ -267,6 +269,8 @@ export class Game {
   sectorReport!: SectorizeReport
   /** Auditable cost and scope of the 0.2.1 visual vertical slice. */
   artReport!: ArtPass021Report
+  /** Auditable incremental cost and scope of the 0.2.3 Nara green slice. */
+  art023Report!: ArtPass023Report
   passengerArtReport!: HybridPassengerReport
   /** Reused every rainy frame — the windscreen's screen-space box. */
   private readonly wsClip = { x0: -1, y0: -1, x1: 1, y1: 1 }
@@ -439,6 +443,8 @@ export class Game {
     this.scenery = new Scenery(this.scene, this.track)
     this.artPass021 = new ArtPass021(this.scene, this.track)
     this.artReport = this.artPass021.report
+    this.artPass023 = new ArtPass023(this.scene, this.track)
+    this.art023Report = this.artPass023.report
     this.dayNight = new DayNightCycle(this.scene)
     this.consist = new TrainConsist(this.scene, this.track)
     this.buildTrackVisual()
@@ -493,7 +499,7 @@ export class Game {
       onTeleport: (idx) => this.teleportToStation(idx),
       onPerfToggle: () => this.togglePerfRecording(),
       onProbeStart: () => this.startProbe('sectors'),
-      onCabProbeStart: () => this.startProbe('cab'),
+      onGraphicsProbeStart: () => this.startProbe('graphics023'),
       onPerfExport: () => (this.perf.frames > 0 ? this.perf.export() : PerfLog.stored()),
       onPerfClear: () => {
         PerfLog.clearStored()
@@ -731,6 +737,7 @@ export class Game {
     this.scenery.setWeather(this.weather)
     this.city.setSeason(this.season)
     this.artPass021.setSeason(this.season)
+    this.artPass023.setSeason(this.season)
     for (const pool of this.terrainPools) applySeasonToPool(pool, this.season)
     // The rail corridor joins the winter: ballast whites over (overdriven
     // against its dark texture) and the beaten-earth band fades under snow.
@@ -924,7 +931,7 @@ export class Game {
    * left-behind penalty — a jump is a test action, not a service failure —
    * and the timetable resyncs to ON TIME at the landing point.
    */
-  private teleportToStation(idx: number) {
+  private teleportToStation(idx: number, announce = true) {
     if (!this.started) return
     // Abandon any in-progress stop cleanly: melody off, sprites back to
     // their queues, no transfer left half-counted.
@@ -955,7 +962,7 @@ export class Game {
     }
     this.controls.syncNotch(0)
     perfMark('teleport')
-    this.ui.showTeleportToast(idx)
+    if (announce) this.ui.showTeleportToast(idx)
     this.updateCameraFromTrain()
     if (!this.running) this.renderOnce()
   }
@@ -1809,8 +1816,10 @@ export class Game {
   // gets thrown away. So the game drives instead.
   // ————————————————————————————————————————————————————————————————
 
-  /** Kiyomizu and Fushimi Inari, alternating: two stations far enough apart to share nothing. */
-  private static readonly PROBE_STATIONS = [9, 18]
+  /** The historical sector A/B remains on its two distant, deliberately unequal scenes. */
+  private static readonly SECTOR_PROBE_STATIONS = [9, 18]
+  /** 0.2.3 alternates the adjacent control (Nishiki) and authored green hero (Nara). */
+  private static readonly GRAPHICS_PROBE_STATIONS = [3, 4]
   /**
    * The button's job CHANGED with the sectorisation experiment (Rubén's call).
    * The per-station hitch it used to hunt is closed — it was speechSynthesis,
@@ -1838,7 +1847,7 @@ export class Game {
    * the reference iPhone previously throttled. Twelve legs per half keep the
    * same two station approaches balanced in both thermal windows.
    */
-  private static readonly CAB_PROBE_LEGS = 24
+  private static readonly GRAPHICS_PROBE_LEGS = 24
   /** After the announcement fires, keep going: the speech itself starts a couple of seconds later. */
   private static readonly PROBE_LINGER_SECONDS = 5
   /** A leg that never announces (something went wrong) must not hang the run. */
@@ -1848,7 +1857,7 @@ export class Game {
   private static readonly PROBE_ARM_FRAMES = 3
 
   private probe: {
-    kind: 'sectors' | 'cab'
+    kind: 'sectors' | 'graphics023'
     leg: number
     totalLegs: number
     linger: number
@@ -1860,6 +1869,7 @@ export class Game {
     weatherAutoBefore: boolean
     hourBefore: number
     timeScaleBefore: number
+    sectorsBefore: boolean
     abReady: boolean
   } | null = null
 
@@ -1868,7 +1878,7 @@ export class Game {
    * recording, alternates the two stations waiting for each arrival, then
    * stops and opens the menu with the log ready to copy.
    */
-  private startProbe(kind: 'sectors' | 'cab') {
+  private startProbe(kind: 'sectors' | 'graphics023') {
     if (!this.started || this.probe) return
     if (this.perf.recording) this.togglePerfRecording()
     const before = {
@@ -1878,12 +1888,20 @@ export class Game {
       weatherAutoBefore: this.weatherAuto,
       hourBefore: this.dayNight.timeOfDay,
       timeScaleBefore: this.timeScale,
+      // A developer may enter with `?sectors=6`. The graphics log promises
+      // sectors:off, so remember the actual tree state instead of inferring it
+      // from the normal production URL.
+      sectorsBefore: this.sectorReport.pairs.some(({ original }) => !original.parent),
     }
     this.setCameraMode('cab')
     this.lookYaw = 0
     this.lookPitch = 0
-    if (kind === 'cab') {
-      // Reproducible worst case for the newly published cabin: the heaviest
+    if (kind === 'graphics023') {
+      // Whole world BEFORE the seasonal pass: seasonal pools retain handles
+      // to the originals, so recolouring while pieces are live would update a
+      // hidden copy and make the winter probe visually false.
+      if (before.sectorsBefore) setSectorsEnabled(this.sectorReport, false)
+      // Reproducible worst case for the newly published green slice: the heaviest
       // precipitation costume, a closed winter sky and no moving clock. These
       // are temporary test conditions; endProbe restores every prior setting.
       this.timeScale = 0
@@ -1903,7 +1921,7 @@ export class Game {
       && (this.sectorReport.pairs.length > 0 || (this.sectorReport = sectorizeWorld(this.scene, { sectors: 6 })).pairs.length > 0)
     this.probe = {
       kind,
-      totalLegs: kind === 'cab' ? Game.CAB_PROBE_LEGS : Game.PROBE_LEGS,
+      totalLegs: kind === 'graphics023' ? Game.GRAPHICS_PROBE_LEGS : Game.PROBE_LEGS,
       leg: -1,
       linger: 0,
       legTime: 0,
@@ -1927,7 +1945,8 @@ export class Game {
     // `leg % 2`, so sectors:off only ever measured the Kiyomizu climb and
     // sectors:on only ever the Fushimi run. Now stations alternate every leg
     // and the condition runs ABBA over them.
-    const plan = probeLegPlan(p.leg, Game.PROBE_STATIONS.length)
+    const stations = p.kind === 'graphics023' ? Game.GRAPHICS_PROBE_STATIONS : Game.SECTOR_PROBE_STATIONS
+    const plan = probeLegPlan(p.leg, stations.length)
     // Flip BEFORE the teleport: the jump already absorbs a discontinuity, so
     // the swap's own cost lands in the between-legs seam and not mid-drive.
     if (p.abReady) {
@@ -1937,19 +1956,22 @@ export class Game {
       const label = plan.sectorsOn ? 'sectors:on' : 'sectors:off'
       perfMark(label)
       this.perf.setSegment(label)
-    } else if (p.kind === 'cab') {
-      const label = cabProbeSegment(p.leg, p.totalLegs)
-      // The two rows answer the thermal question directly. Mark only the
-      // boundary; repeating the same tag every leg would drown useful events.
-      if (p.leg === 0 || p.leg === p.totalLegs / 2) perfMark(label)
+    } else if (p.kind === 'graphics023') {
+      const label = graphicsProbeSegment(p.leg, p.totalLegs, plan.stationSlot)
+      // Four rows isolate place and thermal half. Mark each transition because
+      // station alternates every leg while the segment owns the actual split.
+      perfMark(label)
       this.perf.setSegment(label)
     }
-    this.teleportToStation(Game.PROBE_STATIONS[plan.stationSlot])
+    // The persistent probe status already names the destination. Suppress the
+    // ordinary teleport toast or both cards overlap for three seconds on each
+    // mobile leg, exactly where the tester needs a clean progress readout.
+    this.teleportToStation(stations[plan.stationSlot], false)
     // Full power: the leg is 300 units and we want it driven, not crawled.
     this.train.setNotch(MAX_NOTCH)
     this.controls.syncNotch(MAX_NOTCH)
     const abLabel = p.abReady ? (plan.sectorsOn ? ' · sectores ON' : ' · sectores OFF') : ''
-    const label = p.kind === 'cab' ? 'Prueba móvil cabina · invierno + ventisca + noche' : 'Prueba A/B sectores'
+    const label = p.kind === 'graphics023' ? 'Prueba gráfica 0.2.3 · Nara ↔ Nishiki · invierno + ventisca + noche' : 'Prueba A/B sectores'
     this.ui.showProbeToast(`${label}${this.muted ? ' (SILENCIADA)' : ''} — tramo ${p.leg + 1} de ${p.totalLegs}${abLabel}`)
   }
 
@@ -1963,8 +1985,14 @@ export class Game {
         // that store on its own schedule and the flush would land exactly
         // where the unexplained stall lands — outside every timer we own.
         // The run stops by itself, and stopping persists.
-        this.togglePerfRecording(false, p.kind === 'cab'
-          ? { probe: 'cab-mobile', cab0212: this.cab.report }
+        this.togglePerfRecording(false, p.kind === 'graphics023'
+          ? {
+              probe: 'graphics-023-mobile',
+              art023: this.art023Report,
+              cab0212: this.cab.report,
+              route: ['nishiki', 'nara'],
+              sectors: 'off',
+            }
           : { probe: 'sectors-ab' })
         this.nextProbeLeg()
       }
@@ -1981,14 +2009,21 @@ export class Game {
   }
 
   private finishProbe() {
+    const kind = this.probe!.kind
     this.endProbe()
     // Straight to the menu, where the log is waiting behind «Copiar log».
     this.ui.openPauseMenu()
+    if (kind === 'graphics023') {
+      this.ui.showHint(
+        'Prueba gráfica 0.2.3 completada',
+        'Copia el log desde este menú y anota si el móvil estaba frío, templado, caliente o incómodo al terminar. El mundo y la hora ya se han restaurado.',
+      )
+    }
   }
 
   /** Pausing mid-run makes the log unusable, so say so instead of leaving a half-run behind. */
   private abortProbe() {
-    const minutes = this.probe?.kind === 'cab' ? 6 : 2
+    const minutes = this.probe?.kind === 'graphics023' ? 6 : 2
     this.endProbe()
     this.ui.showHint(
       'Prueba cancelada',
@@ -1999,6 +2034,7 @@ export class Game {
   private endProbe() {
     const p = this.probe!
     this.probe = null
+    this.ui.hideProbeProgress()
     this.train.setNotch(0)
     this.controls.syncNotch(0)
     if (this.perf.recording) this.togglePerfRecording()
@@ -2008,13 +2044,14 @@ export class Game {
     if (p.abReady) {
       setSectorsEnabled(this.sectorReport, false)
     }
-    if (p.kind === 'cab') {
+    if (p.kind === 'graphics023') {
       this.timeScale = p.timeScaleBefore
       this.dayNight.timeOfDay = p.hourBefore
       this.season = p.seasonBefore
       this.weather = p.weatherBefore
       this.setWeatherAuto(p.weatherAutoBefore)
       this.applyAtmosphere()
+      if (p.sectorsBefore) setSectorsEnabled(this.sectorReport, true)
     }
     this.setCameraMode(p.cameraBefore)
   }
@@ -2243,6 +2280,7 @@ export class Game {
     }
     perfPhase('f:city', () => this.city.update(dt, this.dayNight.nightFactor, this.train.targetStationIndex))
     perfPhase('f:art021', () => this.artPass021.update(this.dayNight.nightFactor))
+    perfPhase('f:art023', () => this.artPass023.update(this.dayNight.nightFactor))
     // Real seconds, not clock-scaled: the train runs in real time, so if
     // arrivals followed the accelerated day the platform would win by default.
     perfPhase('f:flow', () => this.flow.update(dt, this.dayNight.timeOfDay))

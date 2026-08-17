@@ -270,6 +270,25 @@ y paneles laterales. No subas esos documentos al HUD ni redibujes sus
 CanvasTexture por frame. El contrato, las capturas y la prueba física preparada
 están en `docs/SISTEMAS-0.2.1.2.md`.
 
+## 🌿 0.2.3: Nara es la tercera familia, y SUSTITUYE el landmark legacy
+
+`src/game/ArtPass023.ts` demuestra `green` en Nara, contigua a Nishiki. Usa el
+kit neutral `ArtKit.ts`; no copies `ArtPass021` para la siguiente familia. Su
+contrato real es ≤3 draws de día, ≤4 de invierno, ≤12k tri, 0 texturas y 0
+luces. Solo la malla opaca de estación proyecta sombra.
+
+Las veinte mallas antiguas de árboles de `City.addLandmarkProps('nara')` ya no
+existen, pero sus **30 llamadas a `rngCity` sí**: radio/x/z × 10. No las borres
+ni las reordenes o todos los landmarks posteriores cambiarán de semilla. El
+borde green usa su propio flujo `art023-nara-edge` y todo apoyo nace de
+`artFrameAt`/`groundHeightAt`.
+
+La sonda larga habitual ahora es **«🌿 Prueba gráfica 0.2.3»**: 24 tramos
+Nishiki↔Nara, invierno+ventisca+22:00, cuatro segmentos por lugar/mitad térmica.
+La A/B de sectores sigue Kiyomizu↔Fushimi y no cambia. Inicio y Pausa muestran
+versión+commit porque una PWA móvil no se puede certificar sin saber qué build
+sirvió. Contrato, capturas y estado honesto en `docs/SISTEMAS-0.2.3.md`.
+
 ## Publicar
 
 Ritual completo en la memoria del proyecto. Resumen: `npm test` +

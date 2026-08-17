@@ -1,6 +1,6 @@
 import test from 'node:test'
 import assert from 'node:assert/strict'
-import { cabProbeSegment, probeLegPlan } from '../src/game/probePlan.ts'
+import { graphicsProbeSegment, probeLegPlan } from '../src/game/probePlan.ts'
 
 // ————————————————————————————————————————————————————————————————
 // The A/B probe's schedule, which shipped confounded once: station and
@@ -49,10 +49,19 @@ test('both conditions get the same share of legs', () => {
   assert.equal(on, LEGS / 2)
 })
 
-test('the six-minute cabin probe has two equal thermal windows', () => {
-  const labels = Array.from({ length: 24 }, (_, leg) => cabProbeSegment(leg, 24))
-  assert.equal(labels.filter((label) => label === 'cab:first-half').length, 12)
-  assert.equal(labels.filter((label) => label === 'cab:second-half').length, 12)
-  assert.equal(labels[11], 'cab:first-half')
-  assert.equal(labels[12], 'cab:second-half')
+test('the six-minute graphics probe balances Nara and Nishiki in both thermal windows', () => {
+  const labels = Array.from({ length: 24 }, (_, leg) => {
+    const plan = probeLegPlan(leg, STATIONS)
+    return graphicsProbeSegment(leg, 24, plan.stationSlot)
+  })
+  for (const label of [
+    'control:nishiki:first-half',
+    'green:nara:first-half',
+    'control:nishiki:second-half',
+    'green:nara:second-half',
+  ]) {
+    assert.equal(labels.filter((entry) => entry === label).length, 6, label)
+  }
+  assert.equal(labels[11], 'green:nara:first-half')
+  assert.equal(labels[12], 'control:nishiki:second-half')
 })

@@ -34,8 +34,8 @@ export interface UICallbacks {
   onPerfToggle: () => void
   /** The automated probe: the game drives the whole diagnostic itself. Today it A/Bs the ring sectorisation; it used to hunt the per-station hitch, which is closed. */
   onProbeStart: () => void
-  /** Worst-case mobile cabin run: winter + blizzard + night, split into early/late thermal halves. */
-  onCabProbeStart: () => void
+  /** Worst-case 0.2.3 Nara↔Nishiki run, split by place and thermal half. */
+  onGraphicsProbeStart: () => void
   onPerfExport: () => string
   onPerfClear: () => void
 }
@@ -87,6 +87,7 @@ export class UI {
   private atmoOverlay: HTMLDivElement
   private teleportOverlay: HTMLDivElement
   private toastEl: HTMLDivElement
+  private probeProgressEl: HTMLDivElement
   private menuOpen = false
   private atmoOpen = false
   private paused = false
@@ -164,6 +165,11 @@ export class UI {
     this.toastEl = document.createElement('div')
     this.toastEl.className = 'toast'
     mount.appendChild(this.toastEl)
+
+    this.probeProgressEl = document.createElement('div')
+    this.probeProgressEl.className = 'probe-progress'
+    this.probeProgressEl.setAttribute('role', 'status')
+    mount.appendChild(this.probeProgressEl)
 
     this.startOverlay = this.buildStartOverlay()
     mount.appendChild(this.startOverlay)
@@ -472,9 +478,14 @@ export class UI {
     if (!this.menuOpen) this.toggleMenu()
   }
 
-  /** Progress line while the automated probe runs, so a two-minute test does not look like a hang. */
+  /** Persistent progress while an automated probe runs; a six-minute test must not look frozen. */
   showProbeToast(text: string) {
-    this.flashToast(text, 'good')
+    this.probeProgressEl.textContent = text
+    this.probeProgressEl.classList.add('show')
+  }
+
+  hideProbeProgress() {
+    this.probeProgressEl.classList.remove('show')
   }
 
   showTeleportToast(stationIndex: number) {
@@ -600,6 +611,7 @@ export class UI {
     el.innerHTML = `
       <div class="overlay-card">
         <h1><span class="title-ja" lang="ja">ジャパンループ</span> <span class="title-en">Japan Loop</span></h1>
+        <p class="build-stamp">v${__APP_VERSION__} · ${__APP_COMMIT__}</p>
         <p class="tagline">Sé el maquinista. Una vuelta completa a un Japón en miniatura — templos, aldeas, neón y mar — de madrugada a madrugada.</p>
         <ul class="howto"></ul>
         <button class="btn-start">Subir a la cabina 🚃</button>
@@ -641,6 +653,7 @@ export class UI {
     el.innerHTML = `
       <div class="overlay-card" role="dialog" aria-modal="true" aria-label="Pausa">
         <h2>Pausa</h2>
+        <p class="build-stamp">v${__APP_VERSION__} · ${__APP_COMMIT__}</p>
         <button class="btn-resume">Reanudar</button>
         <div class="time-scale-row">
           <span>Velocidad del ciclo día/noche</span>
@@ -678,7 +691,7 @@ export class UI {
           <span class="perf-title">Rendimiento</span>
           <button class="btn-perf">Medir rendimiento</button>
           <button class="btn-probe">🧪 Prueba A/B de sectores (auto, ~2 min)</button>
-          <button class="btn-probe btn-cab-probe">🚃 Prueba móvil de cabina (auto, ~6 min)</button>
+          <button class="btn-probe btn-graphics-probe">🌿 Prueba gráfica 0.2.3 (auto, ~6 min)</button>
           <p class="perf-headline">Sin datos todavía.</p>
           <div class="perf-actions hidden">
             <button class="btn-perf-copy">Copiar log</button>
@@ -718,9 +731,9 @@ export class UI {
       this.toggleMenu()
       this.cb.onProbeStart()
     })
-    el.querySelector('.btn-cab-probe')!.addEventListener('click', () => {
+    el.querySelector('.btn-graphics-probe')!.addEventListener('click', () => {
       this.toggleMenu()
-      this.cb.onCabProbeStart()
+      this.cb.onGraphicsProbeStart()
     })
     // Clipboard writes must happen inside the gesture, so the export runs here
     // rather than being pushed in from the game loop.

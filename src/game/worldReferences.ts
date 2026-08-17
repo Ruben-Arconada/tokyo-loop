@@ -59,12 +59,20 @@ export interface SeasonReference {
  * · the four new snow meshes participate only in winter.
  * Hybrid passengers are dynamic by contract and therefore do not enter these
  * static references. Captured through `?canon&checkWorld`.
+ *
+ * Re-captured 2026-08-18 for 0.2.3's deliberate green vertical slice:
+ * · Nara gains the fused timber/kawara station shell and park edge;
+ * · ten loose trunks + ten loose crowns are removed from the legacy landmark;
+ * · the new winter batch participates only in winter.
+ * The thirty city-stream draws previously consumed by those trees remain in
+ * place, so landmarks after Nara keep their historical deterministic layout.
+ * Captured twice through `?canon&checkWorld` before accepting this table.
  */
 export const WORLD_REFERENCES: Record<Season, SeasonReference> = {
-  spring: { semantic: '3d7118d1', structural: '490ad6bf' },
-  summer: { semantic: 'cfd7949a', structural: '8f127d66' },
-  autumn: { semantic: '0c78532f', structural: '927deefa' },
-  winter: { semantic: '61da4b27', structural: 'b6e46a69' },
+  spring: { semantic: '34d9dd41', structural: '5c112856' },
+  summer: { semantic: '214c25c6', structural: '7fe341ef' },
+  autumn: { semantic: '69c0ac07', structural: '37dc7acf' },
+  winter: { semantic: 'a1f1c3bf', structural: '6dc5929c' },
 }
 
 // ————————————————————————————————————————————————————————————————

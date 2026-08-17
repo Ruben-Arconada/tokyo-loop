@@ -1,13 +1,20 @@
 import * as THREE from 'three'
-import { mergeGeometries } from 'three/addons/utils/BufferGeometryUtils.js'
 import type { Track } from './Track'
-import { groundHeightAt } from './Track'
-import { STATIONS } from '../data/stations'
 import { PLATFORM_GEOM } from './City'
 import { worldStream } from './Rng'
 import { tagGroup } from './worldHash'
 import type { Season } from './Seasons'
 import { enforceStaticArtBudget, type Art021StaticReport } from './art021Contract'
+import {
+  artFrameAt as frameAt,
+  artStationFrame as stationFrame,
+  artStationSide as stationSide,
+  artTrianglesOf as trianglesOf,
+  createArtBatches,
+  GeometryBatch,
+  makeArtMaterial as makeMaterial,
+  type ArtBatchKind as BatchKind,
+} from './ArtKit'
 
 /**
  * 0.2.1 visual vertical slice.
@@ -29,96 +36,6 @@ const PLATFORM_OUTER = PLATFORM_GEOM.outer
 const PLATFORM_MID = (PLATFORM_INNER + PLATFORM_OUTER) / 2
 const STATION_LEN = PLATFORM_GEOM.len
 const BAY = 14
-
-const UNIT_BOX = new THREE.BoxGeometry(1, 1, 1)
-const UNIT_CYLINDER_6 = new THREE.CylinderGeometry(0.5, 0.5, 1, 6)
-const UNIT_CYLINDER_8 = new THREE.CylinderGeometry(0.5, 0.5, 1, 8)
-
-type BatchKind = 'opaque' | 'glass' | 'light' | 'snow'
-
-class GeometryBatch {
-  private geometries: THREE.BufferGeometry[] = []
-  private readonly dummy = new THREE.Object3D()
-  private readonly world = new THREE.Matrix4()
-
-  get empty() {
-    return this.geometries.length === 0
-  }
-
-  add(
-    base: THREE.BufferGeometry,
-    parent: THREE.Matrix4,
-    position: THREE.Vector3,
-    scale: THREE.Vector3,
-    color: number,
-    rotation = new THREE.Euler(),
-  ) {
-    this.dummy.position.copy(position)
-    this.dummy.scale.copy(scale)
-    this.dummy.rotation.copy(rotation)
-    this.dummy.updateMatrix()
-    this.world.multiplyMatrices(parent, this.dummy.matrix)
-
-    const geometry = base.clone()
-    geometry.applyMatrix4(this.world)
-    const count = geometry.getAttribute('position').count
-    const c = new THREE.Color(color)
-    const colors = new Float32Array(count * 3)
-    for (let i = 0; i < count; i++) {
-      colors[i * 3] = c.r
-      colors[i * 3 + 1] = c.g
-      colors[i * 3 + 2] = c.b
-    }
-    geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3))
-    this.geometries.push(geometry)
-  }
-
-  box(
-    parent: THREE.Matrix4,
-    xyz: [number, number, number],
-    scale: [number, number, number],
-    color: number,
-    rotation?: [number, number, number],
-  ) {
-    this.add(
-      UNIT_BOX,
-      parent,
-      new THREE.Vector3(...xyz),
-      new THREE.Vector3(...scale),
-      color,
-      rotation ? new THREE.Euler(...rotation) : undefined,
-    )
-  }
-
-  cylinder(
-    parent: THREE.Matrix4,
-    xyz: [number, number, number],
-    scale: [number, number, number],
-    color: number,
-    sides: 6 | 8 = 8,
-    rotation?: [number, number, number],
-  ) {
-    this.add(
-      sides === 6 ? UNIT_CYLINDER_6 : UNIT_CYLINDER_8,
-      parent,
-      new THREE.Vector3(...xyz),
-      new THREE.Vector3(...scale),
-      color,
-      rotation ? new THREE.Euler(...rotation) : undefined,
-    )
-  }
-
-  finish() {
-    if (this.geometries.length === 0) return null
-    const merged = mergeGeometries(this.geometries, false)
-    if (!merged) throw new Error('ArtPass021: incompatible geometry batch')
-    for (const g of this.geometries) g.dispose()
-    this.geometries.length = 0
-    merged.computeBoundingBox()
-    merged.computeBoundingSphere()
-    return merged
-  }
-}
 
 interface Palette {
   structure: number
@@ -148,28 +65,6 @@ const MARKET: Palette = {
   roof: 0x31383c,
   accent: 0xa34032,
   warm: 0xffc76c,
-}
-
-function frameAt(track: Track, t: number, sideOffset = 0, yaw = 0) {
-  const p = track.pointAt(t)
-  const tangent = track.tangentAt(t)
-  const normal = new THREE.Vector3(-tangent.z, 0, tangent.x).normalize()
-  const pos = p.clone().addScaledVector(normal, sideOffset)
-  const obj = new THREE.Object3D()
-  obj.position.set(pos.x, sideOffset === 0 ? p.y : groundHeightAt(p.y, sideOffset), pos.z)
-  obj.lookAt(obj.position.clone().add(tangent))
-  obj.rotateY(yaw)
-  obj.updateMatrixWorld(true)
-  return obj.matrixWorld.clone()
-}
-
-function stationFrame(track: Track, stationIndex: number) {
-  const marker = track.markerFor(stationIndex)
-  return frameAt(track, marker.tFraction)
-}
-
-function stationSide(stationIndex: number) {
-  return STATIONS[stationIndex].doorSide === 'left' ? 1 : -1
 }
 
 function addCrossBraces(batch: GeometryBatch, frame: THREE.Matrix4, x: number, z: number, color: number, side: number) {
@@ -523,53 +418,6 @@ function buildMarketEdge(opaque: GeometryBatch, lights: GeometryBatch, track: Tr
   }
 }
 
-function makeMaterial(kind: BatchKind) {
-  if (kind === 'glass') {
-    return new THREE.MeshStandardMaterial({
-      color: 0xffffff,
-      vertexColors: true,
-      transparent: true,
-      opacity: 0.36,
-      roughness: 0.28,
-      metalness: 0.08,
-      depthWrite: false,
-    })
-  }
-  if (kind === 'light') {
-    return new THREE.MeshStandardMaterial({
-      color: 0xffffff,
-      vertexColors: true,
-      emissive: 0xffffff,
-      emissiveIntensity: 0.22,
-      roughness: 0.55,
-    })
-  }
-  if (kind === 'snow') {
-    return new THREE.MeshStandardMaterial({
-      color: 0xffffff,
-      vertexColors: true,
-      roughness: 1,
-    })
-  }
-  return new THREE.MeshStandardMaterial({
-    color: 0xffffff,
-    vertexColors: true,
-    // The canopies are deep and the game has one sun, not a forest of fill
-    // lights. A tiny warm floor keeps timber/steel readable from the CCTV and
-    // side window without adding real lights or flattening daylight.
-    emissive: 0x705a48,
-    emissiveIntensity: 0.085,
-    roughness: 0.76,
-    metalness: 0.08,
-  })
-}
-
-function trianglesOf(geometry: THREE.BufferGeometry) {
-  return geometry.index
-    ? geometry.index.count / 3
-    : geometry.getAttribute('position').count / 3
-}
-
 export type ArtPass021Report = Art021StaticReport
 
 export class ArtPass021 {
@@ -585,12 +433,7 @@ export class ArtPass021 {
       name: string,
       build: (batches: Record<BatchKind, GeometryBatch>) => void,
     ) => {
-      const batches: Record<BatchKind, GeometryBatch> = {
-        opaque: new GeometryBatch(),
-        glass: new GeometryBatch(),
-        light: new GeometryBatch(),
-        snow: new GeometryBatch(),
-      }
+      const batches = createArtBatches()
       build(batches)
       for (const kind of ['opaque', 'glass', 'light', 'snow'] as const) {
         const geometry = batches[kind].finish()
