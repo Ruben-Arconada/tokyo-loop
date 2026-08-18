@@ -15,9 +15,10 @@ requiere siete notas ≥8.
 
 **Resultado: CONSENSO 7/7. Media: 8,74.**
 
-El panel aprueba publicar 0.2.3 en GitHub Pages para comenzar la certificación
-móvil. No declara todavía aprobados temperatura/FPS sostenidos ni reapertura
-offline física.
+El panel aprobó publicar 0.2.3 en GitHub Pages para comenzar la certificación
+móvil. En el momento del voto todavía no declaraba aprobados temperatura/FPS
+sostenidos ni reapertura offline física; esas puertas se cerraron después con
+la compilación publicada.
 
 ## Correcciones nacidas de la ronda final
 
@@ -52,5 +53,17 @@ coincidan.
 
 Última puerta local tras los remates: TypeScript limpio, 55/55 pruebas, build
 de producción verde y recarga offline correcta después de matar el servidor
-que servía `dist` bajo `/tokyo-loop/`. Las siguientes puertas son CI/Pages y
-después el móvil físico de Rubén.
+que servía `dist` bajo `/tokyo-loop/`.
+
+## Cierre físico posterior al panel
+
+CI y GitHub Pages quedaron verdes para `537065f`. Rubén ejecutó después la
+sonda completa en un iPhone: 419,7 s, 59,9 FPS de media, p95 de 18,3 ms, siete
+frames por encima de 33 ms, cero pausas largas y sin degradación apreciable en
+la segunda mitad. El dispositivo terminó templado —algo más caliente junto al
+procesador—, confirmó mejora visual y reabrió correctamente la PWA tras
+cerrarla por completo y activar modo avión.
+
+Con las tres puertas aprobadas, **0.2.3 queda certificada en el iPhone probado**.
+El informe trazable y su límite de alcance están en
+[`certificacion-movil-0.2.3.md`](certificacion-movil-0.2.3.md).

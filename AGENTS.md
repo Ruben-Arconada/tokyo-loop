@@ -289,6 +289,14 @@ La A/B de sectores sigue Kiyomizu↔Fushimi y no cambia. Inicio y Pausa muestran
 versión+commit porque una PWA móvil no se puede certificar sin saber qué build
 sirvió. Contrato, capturas y estado honesto en `docs/SISTEMAS-0.2.3.md`.
 
+La prueba física de `0.2.3 · 537065f` quedó aprobada el 2026-08-18 en el iPhone
+probado: 419,7 s, 59,9 FPS, p95 18,3 ms, siete frames >33 ms, sin pausas ni
+deriva entre mitades; temperatura templada —algo mayor junto al procesador—,
+mejora visual confirmada y reapertura correcta en modo avión. El alcance exacto
+y los cuatro segmentos están en
+`docs/panel-equipo/certificacion-movil-0.2.3.md`; no extrapoles este certificado
+a dispositivos no probados.
+
 ## Publicar
 
 Ritual completo en la memoria del proyecto. Resumen: `npm test` +

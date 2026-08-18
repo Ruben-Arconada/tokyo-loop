@@ -7,8 +7,9 @@ no solo de color— con una tercera familia. El microtramo Susukino → Nishiki 
 Nara pasa de cañón urbano a mercado estrecho y finalmente a un andén bajo y
 abierto junto a un parque. Nara es la estación hero.
 
-La versión se prepara para publicación y validación móvil; este documento no
-declara que una prueba física que todavía debe hacer Rubén ya esté aprobada.
+La versión fue publicada y su validación física quedó aprobada en el iPhone
+probado. El resultado completo, ligado a la compilación `537065f`, está en
+`docs/panel-equipo/certificacion-movil-0.2.3.md`.
 
 ## 1. Decisión por consenso
 
@@ -118,7 +119,7 @@ semántico y estructural”. La tabla y el motivo del cambio viven en
 La consola queda sin errores propios. Continúa únicamente el aviso conocido de
 deprecación de `THREE.Clock`, anterior y fuera de este pase.
 
-## 7. Prueba móvil preparada
+## 7. Prueba móvil y certificación física
 
 El menú conserva intacta **«🧪 Prueba A/B de sectores»** y reemplaza la vieja
 sonda de cabina por **«🌿 Prueba gráfica 0.2.3 (auto, ~6 min)»**.
@@ -140,7 +141,7 @@ Al tocarla:
 Inicio y Pausa muestran `v0.2.3 · <commit>`, para comprobar que la PWA no está
 sirviendo una generación anterior.
 
-### Protocolo físico que debe hacer Rubén
+### Protocolo físico reproducible
 
 - abrir Pages/PWA y confirmar `v0.2.3` más el commit publicado;
 - ejecutar la prueba sin pausar ni cambiar de aplicación;
@@ -150,10 +151,26 @@ sirviendo una generación anterior.
 - cerrar por completo, activar modo avión y reabrir desde el icono;
 - confirmar inicio, cabina, Nara y nueva generación sin red.
 
-Hasta recibir ese log y el resultado offline, 0.2.3 queda **publicada para
-certificación móvil**, no certificada en móvil.
+### Resultado recibido
 
-## 8. Puertas verificadas antes de publicar
+Rubén ejecutó la sonda publicada en un iPhone con iOS 18.7 y Safari 26.6 como
+PWA. El propio log confirmó `v0.2.3 · 537065f`, 419,7 s y 25.149 frames bajo
+invierno + ventisca + noche:
+
+- 59,9 FPS de media, p95 de 18,3 ms y siete frames por encima de 33 ms;
+- sin pausas largas, sin nuevos programas de GPU y sin degradación térmica
+  medible entre las dos mitades;
+- teléfono templado, quizá algo más caliente en la zona del procesador, pero
+  no caliente ni incómodo;
+- Nara se percibe visualmente mejor;
+- cierre completo y reapertura correcta desde el icono en modo avión.
+
+0.2.3 queda **certificada en el móvil probado**. El alcance y el análisis por
+segmento se conservan en
+[`certificacion-movil-0.2.3.md`](panel-equipo/certificacion-movil-0.2.3.md);
+no se generaliza el dictamen a modelos que no hayan ejecutado la prueba.
+
+## 8. Puertas verificadas para el cierre
 
 - `npm test`: 55/55;
 - `npx tsc --noEmit`;
@@ -164,3 +181,5 @@ certificación móvil**, no certificada en móvil.
 - build servido bajo `/tokyo-loop/`, recargado correctamente después de matar
   el servidor local (service worker/offline de producción);
 - dictamen 7/7 en `docs/panel-equipo/resultado-0.2.3.md`.
+- CI y despliegue de GitHub Pages verdes para `537065f`;
+- sonda física, valoración térmica/visual y reapertura offline aprobadas.
